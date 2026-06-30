@@ -115,6 +115,17 @@ static MOUNT_ERROR_TRY_AGAIN_BUTTON_ID: LazyLock<widget::Id> =
 pub(crate) static REPLACE_BUTTON_ID: LazyLock<widget::Id> =
     LazyLock::new(|| widget::Id::new("replace-button"));
 
+/// Most recent completed/failed operations to retain for the history view.
+const MAX_OPERATION_HISTORY: usize = 256;
+
+/// Drop the oldest entries once an operation-history map exceeds [`MAX_OPERATION_HISTORY`]. The
+/// maps are keyed by an ascending operation id, so the smallest keys are the oldest.
+fn cap_operation_history<V>(history: &mut BTreeMap<u64, V>) {
+    while history.len() > MAX_OPERATION_HISTORY {
+        history.pop_first();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Mode {
     App,
@@ -1490,6 +1501,7 @@ impl App {
                 }
 
                 self.complete_operations.insert(id, op);
+                cap_operation_history(&mut self.complete_operations);
             }
         }
         // Close progress notification if all relevant operations are finished
@@ -1534,6 +1546,7 @@ impl App {
                 self.progress_operations.remove(&id);
                 self.failed_operations
                     .insert(id, (op, controller, err.to_string()));
+                cap_operation_history(&mut self.failed_operations);
             }
         }
         if !failed.is_empty() {
@@ -3322,16 +3335,20 @@ impl Application for App {
                             log::warn!("TODO: retry operations");
                         }
                         DialogPage::ExtractPassword { id, password } => {
-                            let (operation, _, _err) = self.failed_operations.get(&id).unwrap();
-                            let new_op = match &operation {
-                                Operation::Extract { to, paths, .. } => Operation::Extract {
+                            // The failed operation may have been evicted from the capped history;
+                            // skip the retry rather than panicking when it is gone.
+                            if let Some((Operation::Extract { to, paths, .. }, _, _)) =
+                                self.failed_operations.get(&id)
+                            {
+                                let new_op = Operation::Extract {
                                     to: to.clone(),
                                     paths: paths.clone(),
                                     password: Some(password),
-                                },
-                                _ => unreachable!(),
-                            };
-                            tasks.push(self.operation(new_op));
+                                };
+                                tasks.push(self.operation(new_op));
+                            } else {
+                                log::warn!("failed operation {id} not available to retry");
+                            }
                         }
                         DialogPage::MountError {
                             mounter_key,
@@ -7743,5 +7760,24 @@ pub(crate) mod test_utils {
             path.display(),
             tab_path.display()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BTreeMap, MAX_OPERATION_HISTORY, cap_operation_history};
+
+    #[test]
+    fn cap_operation_history_keeps_the_newest_and_bounds_growth() {
+        let extra = 50;
+        let mut history: BTreeMap<u64, ()> =
+            (0..(MAX_OPERATION_HISTORY as u64 + extra)).map(|id| (id, ())).collect();
+
+        cap_operation_history(&mut history);
+
+        assert_eq!(history.len(), MAX_OPERATION_HISTORY);
+        // The oldest (smallest ids) are evicted; the newest are kept.
+        assert!(!history.contains_key(&0));
+        assert!(history.contains_key(&(MAX_OPERATION_HISTORY as u64 + extra - 1)));
     }
 }

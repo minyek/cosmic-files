@@ -431,6 +431,13 @@ impl LargeImageManager {
             self.decoded_images.len()
         );
         self.decoded_images.clear();
+        // These mirror decoded_images one entry per viewed image; clear them together so they
+        // don't grow for the life of the session. Keep generation counters for decodes still in
+        // flight, so a late completion is still recognised as outdated.
+        self.decoded_display_sizes.clear();
+        self.decode_errors.clear();
+        self.decode_generations
+            .retain(|path, _| self.decoding_images.contains(path));
     }
 
     pub fn cache_size(&self) -> usize {
@@ -597,5 +604,32 @@ impl LargeImageManager {
             );
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LargeImageManager;
+    use std::path::PathBuf;
+
+    #[test]
+    fn clear_cache_clears_orphan_maps_and_retains_in_flight_generations() {
+        let mut manager = LargeImageManager::default();
+        let viewed = PathBuf::from("/viewed.png");
+        let in_flight = PathBuf::from("/in_flight.png");
+
+        manager.decoded_display_sizes.insert(viewed.clone(), (100, 100));
+        manager.decode_errors.insert(viewed.clone(), "boom".to_string());
+        manager.decode_generations.insert(viewed.clone(), 3);
+        // A decode still running for another path keeps its generation counter.
+        manager.decoding_images.insert(in_flight.clone());
+        manager.decode_generations.insert(in_flight.clone(), 1);
+
+        manager.clear_cache();
+
+        assert!(manager.decoded_display_sizes.is_empty());
+        assert!(manager.decode_errors.is_empty());
+        assert_eq!(manager.decode_generations.get(&in_flight), Some(&1));
+        assert!(!manager.decode_generations.contains_key(&viewed));
     }
 }
