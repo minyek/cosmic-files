@@ -235,19 +235,30 @@ impl AsRef<str> for MimeApp {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct MimeAppCache {
     apps: Vec<Arc<MimeApp>>,
     cache: FxHashMap<Mime, Vec<Arc<MimeApp>>>,
     terminals: Vec<Arc<MimeApp>>,
+    // Resolved once during `reload` (off-thread) so `terminal` never spawns `xdg-mime` on the
+    // GUI thread.
+    default_terminal_id: Option<String>,
 }
 
 impl MimeAppCache {
-    pub fn new() -> Self {
-        let mut mime_app_cache = Self {
+    /// An empty cache that has not scanned desktop entries yet. Cheap and non-blocking, for
+    /// constructing on the GUI thread before [`MimeAppCache::new`] is built off-thread.
+    pub fn empty() -> Self {
+        Self {
             apps: Vec::new(),
             cache: FxHashMap::default(),
             terminals: Vec::new(),
-        };
+            default_terminal_id: None,
+        }
+    }
+
+    pub fn new() -> Self {
+        let mut mime_app_cache = Self::empty();
         mime_app_cache.reload();
         mime_app_cache
     }
@@ -497,6 +508,8 @@ impl MimeAppCache {
             );
         }
 
+        self.default_terminal_id = Self::query_default_terminal();
+
         let elapsed = start.elapsed();
         tracing::info!(target: "mime-apps", "loaded mime app cache in {elapsed:?}");
     }
@@ -515,7 +528,7 @@ impl MimeAppCache {
             .map_or_else(Vec::new, |apps| apps.iter().map(|app| app.icon()).collect())
     }
 
-    fn get_default_terminal(&self) -> Option<String> {
+    fn query_default_terminal() -> Option<String> {
         let output = process::Command::new("xdg-mime")
             .args(["query", "default", "x-scheme-handler/terminal"])
             .output()
@@ -539,8 +552,10 @@ impl MimeAppCache {
 
         let mut preference_order = vec!["com.system76.CosmicTerm".to_string()];
 
-        if let Some(id) = self.get_default_terminal() {
-            preference_order.insert(0, id);
+        // Read the cached default-terminal id (resolved off-thread during reload) rather than
+        // spawning xdg-mime here, on the GUI thread.
+        if let Some(id) = &self.default_terminal_id {
+            preference_order.insert(0, id.clone());
         }
 
         for id in &preference_order {
@@ -556,14 +571,17 @@ impl MimeAppCache {
     }
 
     #[cfg(not(feature = "desktop"))]
-    pub fn set_default(&mut self, mime: Mime, id: String) {
+    pub fn write_default(mime: Mime, id: String) {
         log::warn!(
             "failed to set default handler for {mime:?} to {id:?}: desktop feature not enabled"
         );
     }
 
+    /// Persist `id` as the default handler for `mime` in the user's mimeapps.list. This reads
+    /// and writes the list file, so it blocks on I/O; call it off the GUI thread and refresh
+    /// the cache afterwards via [`MimeAppCache::new`].
     #[cfg(feature = "desktop")]
-    pub fn set_default(&mut self, mime: Mime, mut id: String) {
+    pub fn write_default(mime: Mime, mut id: String) {
         let Some(path) = cosmic_mime_apps::local_list_path() else {
             log::warn!("failed to find mimeapps.list path");
             return;
@@ -590,13 +608,8 @@ impl MimeAppCache {
 
         let mut string = list.to_string();
         string.push('\n');
-        match fs::write(&path, string) {
-            Ok(()) => {
-                self.reload();
-            }
-            Err(err) => {
-                log::warn!("failed to write {}: {}", path.display(), err);
-            }
+        if let Err(err) = fs::write(&path, string) {
+            log::warn!("failed to write {}: {}", path.display(), err);
         }
     }
 }

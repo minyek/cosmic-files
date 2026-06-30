@@ -1713,6 +1713,8 @@ pub enum Command {
     AutoScroll(Option<f32>),
     ChangeLocation(String, Location, Option<Vec<PathBuf>>),
     ContextMenu(Option<Point>, Option<window::Id>),
+    EditLocationSubmit(EditLocation),
+    ParseDesktopEntry(PathBuf),
     Delete(Vec<PathBuf>),
     DropFiles(PathBuf, ClipboardPaste),
     ClearRecents,
@@ -1744,6 +1746,7 @@ pub enum Message {
     Config(TabConfig),
     ContextAction(Action),
     ContextMenu(Option<Point>, Option<window::Id>),
+    DesktopEntryParsed(PathBuf, Vec<String>),
     LocationContextMenuPoint(Option<Point>),
     LocationContextMenuIndex(Option<Point>, Option<usize>),
     LocationMenuAction(LocationMenuAction),
@@ -2342,15 +2345,25 @@ impl Item {
         self.mime.type_() == mime::IMAGE || self.mime.type_() == mime::TEXT
     }
 
-    pub fn file_metadata(&self) -> Option<Metadata> {
+    /// Full metadata available without filesystem I/O. Only local paths cache it
+    /// (`ItemMetadata::Path`); a gvfs item would need a blocking network stat, so this returns
+    /// `None` for it and GUI-thread callers render from the cached `ItemMetadata` fields (size,
+    /// mtime) instead of statting every frame.
+    pub fn cached_metadata(&self) -> Option<Metadata> {
         match &self.metadata {
             ItemMetadata::Path { metadata, .. } => Some(metadata.clone()),
-            #[cfg(feature = "gvfs")]
-            ItemMetadata::GvfsPath { .. } => self.path_opt().and_then(|p| fs::metadata(p).ok()),
-            _ => {
-                //TODO: other metadata types
-                None
-            }
+            _ => None,
+        }
+    }
+
+    /// Human-readable size text for a directory item, from the cached dir-size calculation
+    /// (empty when there is nothing to show).
+    fn dir_size_text(&self) -> String {
+        match &self.dir_size {
+            DirSize::Calculating(_) => fl!("calculating"),
+            DirSize::Directory(size) => format_size(*size),
+            DirSize::NotDirectory => String::new(),
+            DirSize::Error(err) => err.clone(),
         }
     }
 
@@ -2459,17 +2472,12 @@ impl Item {
             }
         }
 
-        if let Some(metadata) = self.file_metadata() {
+        if let Some(metadata) = self.cached_metadata() {
             if metadata.is_dir() {
                 if let Some(children) = self.metadata.children_count() {
                     details = details.push(widget::text::body(fl!("items", items = children)));
                 }
-                let size = match &self.dir_size {
-                    DirSize::Calculating(_) => fl!("calculating"),
-                    DirSize::Directory(size) => format_size(*size),
-                    DirSize::NotDirectory => String::new(),
-                    DirSize::Error(err) => err.clone(),
-                };
+                let size = self.dir_size_text();
                 if !size.is_empty() {
                     details = details.push(widget::text::body(fl!("item-size", size = size)));
                 }
@@ -2572,16 +2580,44 @@ impl Item {
             }
         }
 
-        if let Some(path) = self.path_opt()
-            && let Ok(img) = image::image_dimensions(path)
-        {
-            let (width, height) = img;
+        // Network items don't cache full metadata; render size and modified from the cached
+        // listing rather than a per-frame blocking network stat. created/accessed/permissions
+        // would need a stat we won't do on the GUI thread, so they are omitted for gvfs items.
+        #[cfg(feature = "gvfs")]
+        if let ItemMetadata::GvfsPath { .. } = &self.metadata {
+            if self.metadata.is_dir() {
+                if let Some(children) = self.metadata.children_count() {
+                    details = details.push(widget::text::body(fl!("items", items = children)));
+                }
+                let size = self.dir_size_text();
+                if !size.is_empty() {
+                    details = details.push(widget::text::body(fl!("item-size", size = size)));
+                }
+            } else if let Some(size) = self.metadata.file_size() {
+                details = details.push(widget::text::body(fl!(
+                    "item-size",
+                    size = format_size(size)
+                )));
+            }
+            if let Some(time) = self.metadata.modified() {
+                let date_time_formatter = date_time_formatter(military_time);
+                let time_formatter = time_formatter(military_time);
+                details = details.push(widget::text::body(fl!(
+                    "item-modified",
+                    modified = format_time(time, &date_time_formatter, &time_formatter).to_string()
+                )));
+            }
+        }
+
+        // Dimensions are precomputed off-thread at scan time (Item::image_dimensions); reading
+        // the file header here, on the GUI thread, would block on slow/network mounts every
+        // frame the preview is shown.
+        if let Some((width, height)) = self.image_dimensions {
             details = details.push(widget::text::body(format!("{width}x{height}")));
         }
         column = column.push(details);
 
-        if let Some(metadata) = self.file_metadata()
-            && !metadata.is_dir()
+        if !self.metadata.is_dir()
             && let Some(path) = self.path_opt()
         {
             let control: Element<'_, Message> = match &self.checksums {
@@ -2632,9 +2668,14 @@ impl Item {
         if let Some(path) = self.path_opt()
             && self.selected
         {
-            column = column.push(
-                widget::button::standard(fl!("open")).on_press(Message::Open(Some(path.clone()))),
-            );
+            // Decide navigate-vs-open from cached metadata so Message::Open's handler never
+            // stats the path on the GUI thread.
+            let message = if self.metadata.is_dir() {
+                Message::Location(Location::Path(path.clone()))
+            } else {
+                Message::Open(Some(path.clone()))
+            };
+            column = column.push(widget::button::standard(fl!("open")).on_press(message));
         }
 
         if !settings.is_empty() {
@@ -2772,6 +2813,9 @@ pub struct Tab {
     pub location_context_menu_point: Option<Point>,
     pub location_context_menu_index: Option<usize>,
     pub context_menu: Option<Point>,
+    // Desktop-entry action names for the .desktop file under the open context menu, parsed
+    // off-thread when the menu opens so context_menu never parses the file on the GUI thread.
+    pub context_menu_desktop_entry: Option<(PathBuf, Vec<String>)>,
     pub mode: Mode,
     pub scroll_opt: Option<AbsoluteOffset>,
     pub size_opt: Cell<Option<Size>>,
@@ -2917,6 +2961,7 @@ impl Tab {
             location_ancestors,
             location_title,
             context_menu: None,
+            context_menu_desktop_entry: None,
             location_context_menu_point: None,
             location_context_menu_index: None,
             mode: Mode::App,
@@ -3025,6 +3070,30 @@ impl Tab {
         } else {
             Vec::new()
         }
+    }
+
+    /// Whether this tab's scanned listing contains an entry named `name`, and if so whether
+    /// it is a directory — read from the cached items with no filesystem I/O. Used by the
+    /// dialog builders to flag name collisions without stat-ing on the GUI thread.
+    pub fn find_entry_is_dir(&self, name: &str) -> Option<bool> {
+        self.items_opt.as_ref()?.iter().find_map(|item| {
+            let item_name = item.path_opt()?.file_name()?.to_str()?;
+            (item_name == name).then(|| item.metadata.is_dir())
+        })
+    }
+
+    /// Selected paths paired with their directory flag, read from already-scanned
+    /// metadata. Unlike re-stating each path, this never touches the filesystem, so it is
+    /// safe to call on the GUI thread even when the selection lives on a slow/network mount.
+    pub fn selected_paths_with_dir(&self) -> Vec<(PathBuf, bool)> {
+        let Some(ref items) = self.items_opt else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter(|item| item.selected)
+            .filter_map(|item| Some((item.path_opt()?.to_path_buf(), item.metadata.is_dir())))
+            .collect()
     }
 
     pub fn select_all(&mut self) {
@@ -3750,6 +3819,24 @@ impl Tab {
                         item.selected = false;
                     }
                 }
+
+                // Parse a lone .desktop selection's actions off-thread when the menu opens;
+                // drop any stale cache otherwise so context_menu never parses on the GUI thread.
+                self.context_menu_desktop_entry = None;
+                if self.context_menu.is_some()
+                    && let Some(items) = self.items_opt.as_ref()
+                {
+                    let mut selected = items.iter().filter(|item| item.selected);
+                    if let (Some(item), None) = (selected.next(), selected.next())
+                        && let Some(path) = item.path_opt()
+                        && path.extension().and_then(|s| s.to_str()) == Some("desktop")
+                    {
+                        commands.push(Command::ParseDesktopEntry(path.clone()));
+                    }
+                }
+            }
+            Message::DesktopEntryParsed(path, action_names) => {
+                self.context_menu_desktop_entry = Some((path, action_names));
             }
             Message::LocationContextMenuPoint(point_opt) => {
                 self.context_menu = None;
@@ -3849,22 +3936,11 @@ impl Tab {
                 self.edit_location = Some(self.location.clone().into());
             }
             Message::EditLocationSubmit => {
-                if let Some(mut edit_location) = self.edit_location.take() {
-                    // Select first completion if current location does not exist
-                    if edit_location.selected.is_none()
-                        && edit_location
-                            .completions
-                            .as_ref()
-                            .is_some_and(|completions| !completions.is_empty())
-                        && edit_location
-                            .location
-                            .path_opt()
-                            .is_some_and(|path| !path.exists())
-                    {
-                        edit_location.selected = Some(0);
-                    }
-
-                    cd = edit_location.resolve();
+                if let Some(edit_location) = self.edit_location.take() {
+                    // Resolving the edited path stats it (existence check + canonicalize); defer
+                    // that off-thread via Command::EditLocationSubmit so pressing Enter on a path
+                    // on a slow mount does not block the GUI thread.
+                    commands.push(Command::EditLocationSubmit(edit_location));
                 }
             }
             Message::EditLocationTab => {
@@ -4260,19 +4336,10 @@ impl Tab {
                 }
             }
             Message::Location(location) => {
-                // Workaround to support favorited files
-                match &location {
-                    Location::Path(path) => {
-                        if path.is_dir() {
-                            cd = Some(location);
-                        } else {
-                            commands.push(Command::OpenFile(vec![path.clone()]));
-                        }
-                    }
-                    _ => {
-                        cd = Some(location);
-                    }
-                }
+                // Every sender of Message::Location passes a directory (breadcrumbs, mounts, and
+                // on_nav_select, which routes favorited *files* to OpenFile off-thread), so no
+                // is_dir stat is needed here on the GUI thread.
+                cd = Some(location);
             }
             Message::LocationUp => {
                 // Sets location to the path's parent
@@ -4285,12 +4352,10 @@ impl Tab {
             }
             Message::Open(path_opt) => {
                 match path_opt {
+                    // The only sender (the preview Open button) routes directories through
+                    // Message::Location, so an explicit path here is always a file to open.
                     Some(path) => {
-                        if path.is_dir() {
-                            cd = Some(Location::Path(path));
-                        } else {
-                            commands.push(Command::OpenFile(vec![path]));
-                        }
+                        commands.push(Command::OpenFile(vec![path]));
                     }
                     // Open selected items
                     None => {
@@ -4612,10 +4677,13 @@ impl Tab {
                     for item in self.items_opt().map_or(Vec::new(), |items| {
                         items.iter().filter(|item| item.selected).collect()
                     }) {
+                        // Read the mode from cached metadata only; a gvfs item would need a
+                        // blocking network stat (and chmod over the network would not apply
+                        // anyway), so such items are skipped rather than stat-ed here.
                         #[cfg(unix)]
                         if let (Some(path), Some(mode)) = (
                             item.path_opt(),
-                            item.file_metadata().map(|metadata| metadata.mode()),
+                            item.cached_metadata().map(|metadata| metadata.mode()),
                         ) {
                             permissions.push((path.clone(), set_mode_part(mode, shift, bits)));
                         }
@@ -4714,15 +4782,13 @@ impl Tab {
                     Location::Desktop(to, ..)
                     | Location::Path(to)
                     | Location::Network(_, _, Some(to)) => {
-                        if let Ok(entries) = fs::read_dir(&to) {
-                            for i in entries.into_iter().filter_map(Result::ok) {
-                                let i = i.path();
-                                from.paths.retain(|p| &i != p);
-                                if from.paths.is_empty() {
-                                    log::info!("All dropped files already in target directory.");
-                                    return commands;
-                                }
-                            }
+                        // A dropped file already living directly in `to` would be copied onto
+                        // itself; comparing each path's parent to `to` skips those without
+                        // listing the directory, which would block the GUI thread on a slow mount.
+                        from.paths.retain(|p| p.parent() != Some(to.as_path()));
+                        if from.paths.is_empty() {
+                            log::info!("All dropped files already in target directory.");
+                            return commands;
                         }
                         commands.push(Command::DropFiles(to, from));
                     }
@@ -6672,7 +6738,7 @@ impl Tab {
         for item in selected_items.iter() {
             *mime_type_counts.entry(item.mime.to_string()).or_insert(0) += 1;
 
-            if let Some(metadata) = item.file_metadata() {
+            if let Some(metadata) = item.cached_metadata() {
                 if metadata.is_dir() {
                     match &item.dir_size {
                         DirSize::Calculating(_) => {
@@ -6705,6 +6771,25 @@ impl Tab {
                     );
                     mode_group.insert(get_mode_part(mode, MODE_SHIFT_GROUP));
                     mode_other.insert(get_mode_part(mode, MODE_SHIFT_OTHER));
+                }
+            }
+
+            // Network items don't cache full metadata; aggregate their size from the cached
+            // listing rather than a per-frame blocking network stat (their permissions, which
+            // would also need a stat, are omitted).
+            #[cfg(feature = "gvfs")]
+            if let ItemMetadata::GvfsPath { .. } = &item.metadata {
+                if item.metadata.is_dir() {
+                    match &item.dir_size {
+                        DirSize::Calculating(_) => calculating_dir_size = true,
+                        DirSize::Directory(size) => {
+                            total_size = total_size.saturating_add(*size);
+                        }
+                        DirSize::NotDirectory => (),
+                        DirSize::Error(err) => dir_size_error = Some(err.clone()),
+                    }
+                } else if let Some(size) = item.metadata.file_size() {
+                    total_size = total_size.saturating_add(size);
                 }
             }
         }
@@ -7533,6 +7618,34 @@ mod tests {
 
         assert_eq!(0, path.read_dir()?.count());
         assert!(actual.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn cached_metadata_reflects_scan_without_restat() -> io::Result<()> {
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let path = fs.path().to_owned();
+        let items = scan_path(&path, IconSizes::default());
+        assert!(!items.is_empty());
+
+        // Every locally-scanned item exposes cached metadata whose is_dir matches the cached
+        // ItemMetadata; the preview/permission paths read this instead of stat-ing.
+        for item in &items {
+            let cached = item.cached_metadata();
+            assert!(cached.is_some(), "local scanned item should cache metadata");
+            assert_eq!(cached.unwrap().is_dir(), item.metadata.is_dir());
+        }
+
+        // Remove the backing files; cached_metadata still returns the scan-time values, which
+        // proves it never re-stats (what keeps it safe to call on the GUI thread).
+        drop(fs);
+        for item in &items {
+            if let Some(item_path) = item.path_opt() {
+                assert!(!item_path.exists());
+            }
+            assert!(item.cached_metadata().is_some());
+        }
 
         Ok(())
     }

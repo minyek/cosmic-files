@@ -10,7 +10,6 @@ use cosmic::widget::{
     self, Row, button, column, container, divider, responsive_menu_bar, space, text,
 };
 use cosmic::{Element, theme};
-use i18n_embed::LanguageLoader;
 use mime_guess::Mime;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -176,18 +175,11 @@ pub fn context_menu<'a>(
             .map(|(i, action)| menu_item(action.name.clone(), Action::RunContextAction(i)).into())
             .collect::<Vec<Element<'a, tab::Message>>>()
     };
-    // Parse the desktop entry if it is the only selection
+    // A lone .desktop selection gets the special menu. Its per-app action items come from
+    // tab.context_menu_desktop_entry, parsed off-thread when the menu opened, so the menu
+    // builder (which runs every frame) never parses the file on the GUI thread.
     #[cfg(feature = "desktop")]
-    let selected_desktop_entry = selected_desktop_entry.and_then(|path| {
-        if selected == 1 {
-            let lang_id = crate::localize::LANGUAGE_LOADER.current_language();
-            let language = lang_id.language.as_str();
-            // Cache?
-            cosmic::desktop::load_desktop_file(&[language.into()], path.into())
-        } else {
-            None
-        }
-    });
+    let selected_desktop_entry = selected_desktop_entry.filter(|_| selected == 1);
 
     let mut children: Vec<Element<_>> = Vec::new();
     match (&tab.mode, &tab.location) {
@@ -205,13 +197,20 @@ pub fn context_menu<'a>(
                 if !Trash::is_empty_cached() {
                     children.push(menu_item(fl!("empty-trash"), Action::EmptyTrash).into());
                 }
-            } else if let Some(entry) = selected_desktop_entry {
+            } else if selected_desktop_entry.is_some() {
                 children.push(menu_item(fl!("open"), Action::Open).into());
                 #[cfg(feature = "desktop")]
-                {
-                    children.extend(entry.desktop_actions.into_iter().enumerate().map(
-                        |(i, action)| menu_item(action.name, Action::ExecEntryAction(i)).into(),
-                    ));
+                if let Some(desktop_path) = selected_desktop_entry {
+                    // Action names come from the off-thread parse cached on the tab; until it
+                    // lands (a frame or two), only "open" shows.
+                    let action_names = tab
+                        .context_menu_desktop_entry
+                        .as_ref()
+                        .filter(|(path, _)| path.as_path() == desktop_path)
+                        .map_or(&[][..], |(_, names)| names.as_slice());
+                    children.extend(action_names.iter().enumerate().map(|(i, name)| {
+                        menu_item(name.clone(), Action::ExecEntryAction(i)).into()
+                    }));
                 }
                 children.push(divider::horizontal::light().into());
                 children.push(menu_item(fl!("rename"), Action::Rename).into());

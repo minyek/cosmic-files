@@ -25,7 +25,7 @@ use recently_used_xbel::update_recently_used;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{self, Instant};
 use std::{env, fmt, fs};
 
@@ -567,6 +567,18 @@ struct App {
 }
 
 impl App {
+    /// Whether `name` already exists in `parent`, with its directory flag, derived from the
+    /// picker's already-scanned listing instead of a filesystem `stat`: the dialog is rebuilt
+    /// in `view` every frame and must never block on a slow/network mount. `None` means the
+    /// entry isn't present, or the picker isn't showing `parent`; folder creation remains the
+    /// authoritative existence check.
+    fn existing_entry_in_dir(&self, parent: &Path, name: &str) -> Option<bool> {
+        if self.tab.location.path_opt().map(PathBuf::as_path) != Some(parent) {
+            return None;
+        }
+        self.tab.find_entry_is_dir(name)
+    }
+
     fn button_view(&self) -> Element<'_, Message> {
         let cosmic_theme::Spacing {
             space_xxxs,
@@ -1152,21 +1164,24 @@ impl Application for App {
                     dialog = dialog.tertiary_action(widget::text::body(fl!("name-no-slashes")));
                     None
                 } else {
-                    let path = parent.join(name);
-                    if path.exists() {
-                        if path.is_dir() {
+                    match self.existing_entry_in_dir(parent, name) {
+                        Some(true) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("folder-already-exists")));
-                        } else {
+                            None
+                        }
+                        Some(false) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("file-already-exists")));
+                            None
                         }
-                        None
-                    } else {
-                        if name.starts_with('.') {
-                            dialog = dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                        None => {
+                            if name.starts_with('.') {
+                                dialog =
+                                    dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                            }
+                            Some(Message::DialogComplete)
                         }
-                        Some(Message::DialogComplete)
                     }
                 };
 
