@@ -498,6 +498,7 @@ impl LargeImageManager {
         &mut self,
         path: &PathBuf,
         display_dimensions: Option<(u32, u32)>,
+        original_dimensions: Option<(u32, u32)>,
     ) -> (bool, Option<(u32, u32)>, u64) {
         self.clear_error(path);
         let is_currently_decoding = self.is_decoding(path);
@@ -514,7 +515,10 @@ impl LargeImageManager {
             return (false, None, generation);
         }
 
-        let Some((width, height)) = get_image_dimensions(path) else {
+        // Reuse the dimensions captured off-thread at thumbnail time; reading the image header on
+        // the GUI thread would stall it. Fall back to a header read when absent.
+        let Some((width, height)) = original_dimensions.or_else(|| get_image_dimensions(path))
+        else {
             self.store_error(path.clone(), "Failed to read image dimensions".to_string());
             return (false, None, 0);
         };

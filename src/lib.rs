@@ -4,7 +4,7 @@
 use cosmic::app::Settings;
 use cosmic::iced::Limits;
 use std::path::PathBuf;
-use std::{env, fs, process};
+use std::{env, process};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -180,11 +180,19 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => PathBuf::from(arg),
             };
-            match fs::canonicalize(&path) {
-                Ok(absolute) => Location::Path(absolute),
-                Err(err) => {
-                    log::warn!("failed to canonicalize {}: {}", path.display(), err);
-                    continue;
+            // Absolutize a relative argument against the invoking directory before daemonize()
+            // changes the working directory to "/". current_dir() is a cheap getcwd of our own
+            // process; canonicalizing would stat-walk every component and block startup on a slow
+            // target. `.`/`..` and symlinks resolve later in normalize() and the launch-location scan.
+            if path.is_absolute() {
+                Location::Path(path)
+            } else {
+                match env::current_dir() {
+                    Ok(dir) => Location::Path(dir.join(path)),
+                    Err(err) => {
+                        log::warn!("failed to resolve {}: {}", path.display(), err);
+                        continue;
+                    }
                 }
             }
         };

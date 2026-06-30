@@ -26,6 +26,24 @@ pub mod reader;
 use self::recursive::{Context, Method};
 pub mod recursive;
 
+// item_from_path does fs::metadata + a read_dir/gvfs stat; run it on compio's blocking pool
+// (operations run under the compio runtime) to keep that I/O off the executor task on a slow mount.
+async fn build_replace_item(path: PathBuf) -> Option<Box<tab::Item>> {
+    match compio::runtime::spawn_blocking(move || tab::item_from_path(path, IconSizes::default()))
+        .await
+    {
+        Ok(Ok(item)) => Some(Box::new(item)),
+        Ok(Err(err)) => {
+            log::warn!("{err}");
+            None
+        }
+        Err(_) => {
+            log::warn!("failed to build replace item: spawn_blocking task panicked");
+            None
+        }
+    }
+}
+
 async fn handle_replace(
     msg_tx: Arc<TokioMutex<Sender<Message>>>,
     file_from: PathBuf,
@@ -33,20 +51,11 @@ async fn handle_replace(
     multiple: bool,
     conflict_count: usize,
 ) -> ReplaceResult {
-    let item_from = match tab::item_from_path(file_from, IconSizes::default()) {
-        Ok(ok) => Box::new(ok),
-        Err(err) => {
-            log::warn!("{err}");
-            return ReplaceResult::Cancel;
-        }
+    let Some(item_from) = build_replace_item(file_from).await else {
+        return ReplaceResult::Cancel;
     };
-
-    let item_to = match tab::item_from_path(file_to, IconSizes::default()) {
-        Ok(ok) => Box::new(ok),
-        Err(err) => {
-            log::warn!("{err}");
-            return ReplaceResult::Cancel;
-        }
+    let Some(item_to) = build_replace_item(file_to).await else {
+        return ReplaceResult::Cancel;
     };
 
     let (tx, mut rx) = mpsc::channel(1);

@@ -48,7 +48,7 @@ use tokio::sync::mpsc;
 use trash::{TrashItem, TrashItemMetadata, TrashItemSize};
 use walkdir::WalkDir;
 
-use crate::app::{Action, PreviewItem, PreviewKind};
+use crate::app::{Action, PreviewKind};
 use crate::clipboard::{ClipboardCopy, ClipboardKind, ClipboardPaste};
 use crate::config::{
     ContextActionPreset, DesktopConfig, ICON_SCALE_MAX, ICON_SIZE_GRID, IconSizes, TabConfig,
@@ -302,6 +302,28 @@ fn has_trailing_sep(path: &Path) -> bool {
         .last()
         .copied()
         .is_some_and(|b| path::is_separator(b as char))
+}
+
+/// Collapse `.` and `..` segments textually, without touching the filesystem, so it is safe to
+/// call on the GUI thread. A leading `..` on a relative path (nothing to pop) is preserved, and
+/// `..` never escapes the root.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    use path::Component;
+    let mut components: Vec<Component> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match components.last() {
+                Some(Component::Normal(_)) => {
+                    components.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => components.push(component),
+            },
+            other => components.push(other),
+        }
+    }
+    components.iter().map(|component| component.as_os_str()).collect()
 }
 
 fn tab_complete(path: &Path) -> Result<Vec<(String, PathBuf)>, Box<dyn Error>> {
@@ -1515,15 +1537,13 @@ impl Location {
             } else {
                 self.clone()
             }
-        } else if let Some(mut path) = self.path_opt().cloned() {
-            // Canonicalize path, if possible
-            if let Ok(canonical) = fs::canonicalize(&path) {
-                path = canonical;
-            }
-            // Add trailing slash if location is a directory
-            if path.is_dir() {
-                path.push("");
-            }
+        } else if let Some(path) = self.path_opt() {
+            // Resolve `.`/`..` and add the directory's trailing separator lexically; stat-walking
+            // every path component and symlink would block the GUI thread on slow or network
+            // mounts. The separator is unconditional because a location addresses a directory and
+            // its string form is the persisted per-folder sort-setting key.
+            let mut path = lexically_normalize(&Self::expand_tilde(path.clone()));
+            path.push("");
             self.with_path(path)
         } else {
             self.clone()
@@ -1727,6 +1747,7 @@ pub enum Command {
     OpenInNewWindow(PathBuf),
     OpenTrash,
     Preview(PreviewKind),
+    PreviewPath(PathBuf),
     RunContextAction(usize),
     SetOpenWith(Mime, String),
     SetPermissions(PathBuf, u32),
@@ -1775,6 +1796,7 @@ pub enum Message {
     ItemRight,
     ItemUp,
     Location(Location),
+    LocationSelect(Location, Vec<PathBuf>),
     LocationUp,
     Open(Option<PathBuf>),
     Reload,
@@ -2784,7 +2806,9 @@ impl Mode {
 }
 
 struct SearchContext {
-    results_rx: mpsc::Receiver<SearchItem>,
+    // Items are built off-thread in the search worker (item_from_search_item does read_dir /
+    // gvfs / image-header I/O); the GUI-thread drain only inserts the finished Item.
+    results_rx: mpsc::Receiver<Item>,
     ready: Arc<atomic::AtomicBool>,
     last_modified_opt: Arc<RwLock<Option<SystemTime>>>,
 }
@@ -3494,10 +3518,14 @@ impl Tab {
             .get()
             .map(|size| (size.width as u32, size.height as u32));
 
+        // Reuse the dimensions read off-thread at thumbnail time; recovering them here would
+        // re-read the image header on the GUI thread.
+        let original_dimensions = *original_dims;
+
         // Try to decode the image using LargeImageManager with adaptive resolution
         let (should_decode, target_dimensions, generation) = self
             .large_image_manager
-            .try_decode(&path, display_dimensions);
+            .try_decode(&path, display_dimensions, original_dimensions);
         if should_decode {
             vec![Command::Iced(
                 cosmic::iced::Task::perform(
@@ -3570,6 +3598,10 @@ impl Tab {
     pub fn update(&mut self, message: Message, modifiers: Modifiers) -> Vec<Command> {
         let mut commands = Vec::new();
         let mut cd = None;
+        // Paths to select once `cd` finishes navigating, set only by Message::LocationSelect (a
+        // typed/completed file redirected to its parent off-thread). When None, the cd block
+        // selects the directory navigated away from.
+        let mut cd_selection: Option<Vec<PathBuf>> = None;
         let mut history_i_opt = None;
         let mod_ctrl = modifiers.contains(Modifiers::CTRL) && self.mode.multiple();
         let mod_shift = modifiers.contains(Modifiers::SHIFT) && self.mode.multiple();
@@ -3868,21 +3900,10 @@ impl Tab {
                     }
                     LocationMenuAction::Preview(ancestor_index) => {
                         if let Some(path) = path_for_index(ancestor_index) {
-                            //TODO: blocking code, run in command
-                            match item_from_path(&path, IconSizes::default()) {
-                                Ok(item) => {
-                                    commands.push(Command::Preview(PreviewKind::Custom(
-                                        PreviewItem(Box::new(item)),
-                                    )));
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "failed to get item from path {}: {}",
-                                        path.display(),
-                                        err
-                                    );
-                                }
-                            }
+                            // item_from_path blocks (fs::metadata + read_dir/gvfs stat); build the
+                            // ancestor's Item off-thread via Command::PreviewPath so a breadcrumb
+                            // on a slow mount never freezes the GUI.
+                            commands.push(Command::PreviewPath(path));
                         }
                     }
                     LocationMenuAction::AddToSidebar(ancestor_index) => {
@@ -3926,7 +3947,10 @@ impl Tab {
                     && !matches!(edit_location.location, Location::Network(..))
                 {
                     edit_location.selected = Some(selected);
-                    cd = edit_location.resolve();
+                    // The file-vs-directory decision (a completed file opens its parent with it
+                    // selected) stats the path, which blocks on slow mounts; resolve it off-thread
+                    // via Command::EditLocationSubmit.
+                    commands.push(Command::EditLocationSubmit(edit_location));
                 }
             }
             Message::EditLocationEnable => {
@@ -4341,6 +4365,13 @@ impl Tab {
                 // is_dir stat is needed here on the GUI thread.
                 cd = Some(location);
             }
+            Message::LocationSelect(location, paths) => {
+                // A typed/completed file path, resolved off-thread to its parent directory plus the
+                // file to select. The parent is a directory, so navigating it needs no GUI-thread
+                // stat.
+                cd = Some(location);
+                cd_selection = Some(paths);
+            }
             Message::LocationUp => {
                 // Sets location to the path's parent
                 // Does nothing if path is root or location is Trash
@@ -4567,25 +4598,23 @@ impl Tab {
                     if let Some(items) = &mut self.items_opt {
                         if finished || context.ready.swap(false, atomic::Ordering::SeqCst) {
                             let duration = Instant::now();
-                            while let Ok(search_item) = context.results_rx.try_recv() {
+                            while let Ok(item) = context.results_rx.try_recv() {
                                 //TODO: combine this with column_sort logic, they must match!
-                                let index =
-                                    if let SearchItem::Path(_, _, ref metadata) = search_item {
-                                        let item_modified = metadata.modified().ok();
-                                        match items.binary_search_by(|other| {
-                                            item_modified.cmp(&other.metadata.modified())
-                                        }) {
-                                            Ok(index) => index,
-                                            Err(index) => index,
-                                        }
-                                    } else {
-                                        items.len()
-                                    };
+                                // The Item is already built off-thread; trash results append,
+                                // path results sort by modified time.
+                                let index = if matches!(item.metadata, ItemMetadata::Trash { .. }) {
+                                    items.len()
+                                } else {
+                                    let item_modified = item.metadata.modified();
+                                    match items.binary_search_by(|other| {
+                                        item_modified.cmp(&other.metadata.modified())
+                                    }) {
+                                        Ok(index) => index,
+                                        Err(index) => index,
+                                    }
+                                };
 
                                 if index < MAX_SEARCH_RESULTS {
-                                    //TODO: use correct IconSizes
-                                    let item =
-                                        item_from_search_item(search_item, IconSizes::default());
                                     items.insert(index, item);
                                 }
                                 // Ensure that updates make it to the GUI in a timely manner
@@ -4935,30 +4964,15 @@ impl Tab {
                     _ => {}
                 }
             } else {
-                // Select parent if location is not directory
-                let mut selected_paths = None;
-                if let Some(path) = location.path_opt()
-                    && !path.is_dir()
-                    && let Some(parent) = path.parent()
-                {
-                    selected_paths = Some(vec![path.clone()]);
-                    location = location.with_path(parent.to_path_buf());
-                }
-                if location != self.location || selected_paths.is_some() {
-                    if location.path_opt().is_none_or(|path| path.is_dir()) {
-                        if selected_paths.is_none() {
-                            selected_paths =
-                                self.location.path_opt().map(|path| vec![path.clone()]);
-                        }
-                        self.change_location(&location, history_i_opt);
-                        commands.push(Command::ChangeLocation(
-                            self.title(),
-                            location,
-                            selected_paths,
-                        ));
-                    } else {
-                        log::warn!("tried to cd to {location:?} which is not a directory");
-                    }
+                // `cd` always holds a directory: its senders decide file-vs-directory from cached
+                // metadata or an off-thread stat (a typed/completed file arrives redirected to its
+                // parent via Message::LocationSelect, which carries the file to select). Stat-ing
+                // here would freeze the GUI on slow mounts.
+                if location != self.location || cd_selection.is_some() {
+                    let selected_paths = cd_selection
+                        .or_else(|| self.location.path_opt().map(|path| vec![path.clone()]));
+                    self.change_location(&location, history_i_opt);
+                    commands.push(Command::ChangeLocation(self.title(), location, selected_paths));
                 }
             }
         }
@@ -7291,7 +7305,16 @@ impl Tab {
                                                 }
                                             }
 
-                                            match results_tx.blocking_send(search_item) {
+                                            // item_from_search_item does read_dir, gvfs stats and
+                                            // image-header reads per result; build the Item here on
+                                            // the worker thread so the GUI-thread SearchReady drain
+                                            // only inserts it.
+                                            //TODO: use correct IconSizes
+                                            let item = item_from_search_item(
+                                                search_item,
+                                                IconSizes::default(),
+                                            );
+                                            match results_tx.blocking_send(item) {
                                                 Ok(()) => {
                                                     if ready.swap(true, atomic::Ordering::SeqCst) {
                                                         true
@@ -7476,7 +7499,7 @@ mod tests {
     use test_log::test;
 
     use super::{
-        ItemMetadata, ItemThumbnail, Location, Message, Tab, folder_name,
+        Command, ItemMetadata, ItemThumbnail, Location, Message, Tab, folder_name,
         respond_to_scroll_direction, scan_path,
     };
     use crate::app::test_utils::{
@@ -7679,6 +7702,80 @@ mod tests {
             let (_name, found_home) = folder_name(&home);
             assert!(found_home);
         }
+    }
+
+    #[test]
+    fn normalize_resolves_dot_segments_without_canonicalizing() {
+        // `.`/`..` are collapsed lexically with no filesystem access: a non-existent path (which
+        // fs::canonicalize would error on, leaving the `..` unresolved) still resolves cleanly.
+        // This pins that normalize() never stat-walks the path on the GUI thread.
+        let normalized = Location::Path(PathBuf::from("/no/such/dir/../sibling/./leaf")).normalize();
+        assert_eq!(normalized.path_opt().unwrap(), Path::new("/no/such/sibling/leaf"));
+    }
+
+    #[test]
+    fn normalize_marks_directories_with_a_trailing_separator() {
+        // The trailing separator keeps a location's string form (the persisted per-folder
+        // sort-setting key) stable, and is added without a stat.
+        let normalized = Location::Path(PathBuf::from("/no/such/dir")).normalize();
+        assert_eq!(normalized.to_string(), "/no/such/dir/");
+    }
+
+    #[test]
+    fn tab_location_select_navigates_and_carries_selection() -> io::Result<()> {
+        // A typed/completed file resolves off-thread to (parent dir, file) and arrives as
+        // Message::LocationSelect. The tab must navigate to the directory with no GUI-thread stat
+        // and forward the file to select once the off-thread rescan completes.
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let path = fs.path();
+        let dir = filter_dirs(path)?
+            .next()
+            .expect("temp directory should have at least one directory");
+        let file = dir.join("selected.txt");
+        fs::write(&file, b"x")?;
+
+        let mut tab = Tab::new(
+            Location::Path(path.to_owned()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+
+        let commands = tab.update(
+            Message::LocationSelect(Location::Path(dir.clone()), vec![file.clone()]),
+            Modifiers::empty(),
+        );
+
+        assert_eq_tab_path(&tab, &dir);
+        let carries_selection = commands.iter().any(|command| {
+            matches!(command, Command::ChangeLocation(_, _, Some(selection)) if *selection == vec![file.clone()])
+        });
+        assert!(
+            carries_selection,
+            "LocationSelect should forward the file selection to Command::ChangeLocation"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalize_keeps_symlinks_unresolved() -> io::Result<()> {
+        // normalize() must not resolve symlinks: doing so would stat-walk every component and
+        // block the GUI thread. The kernel follows the link when the directory is read, so
+        // navigation is unaffected and the clicked path is preserved.
+        let temp = TempDir::new()?;
+        let real = temp.path().join("real");
+        fs::create_dir(&real)?;
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link)?;
+
+        let normalized = Location::Path(link.clone()).normalize();
+        // Path equality ignores the trailing separator, so this asserts the link was NOT
+        // rewritten to `real`.
+        assert_eq!(normalized.path_opt().unwrap(), link.as_path());
+        Ok(())
     }
 
     #[test]

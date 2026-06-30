@@ -386,6 +386,8 @@ pub enum Message {
         is_dir: bool,
     },
     NavMenuAction(NavMenuAction),
+    NavMenuOpenWith(PathBuf, Box<tab::Item>),
+    PreviewReady(Option<Entity>, Box<tab::Item>),
     NetworkAuth(MounterKey, String, MounterAuth, mpsc::Sender<MounterAuth>),
     NetworkDriveInput(String),
     NetworkDriveOpenEntityAfterMount {
@@ -874,8 +876,15 @@ impl App {
             if mime == "application/x-desktop" {
                 #[cfg(feature = "desktop")]
                 {
-                    // Try opening desktop application
-                    Self::launch_desktop_entries(&paths);
+                    // DesktopEntry::from_path reads the .desktop file, which blocks on a slow/removable
+                    // mount; parse off-thread (the spawn_detached launch is already non-blocking).
+                    tasks.push(Task::future(async move {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            Self::launch_desktop_entries(&paths);
+                        })
+                        .await;
+                        cosmic::action::none()
+                    }));
                     continue;
                 }
             } else if mime == "application/x-executable" || mime == "application/vnd.appimage" {
@@ -919,14 +928,7 @@ impl App {
             for path in paths {
                 match open::that_detached(&path) {
                     Ok(()) => {
-                        if self.config.show_recents {
-                            let _ = recently_used_xbel::update_recently_used(
-                                &path,
-                                Self::APP_ID.to_string(),
-                                "cosmic-files".to_string(),
-                                None,
-                            );
-                        }
+                        self.record_recently_used(vec![path]);
                     }
                     Err(err) => {
                         log::warn!("failed to open {}: {}", path.display(), err);
@@ -988,6 +990,33 @@ impl App {
         }
     }
 
+    /// Record opened paths in `recently-used.xbel` on a detached thread: the xbel read+rewrite
+    /// blocks (painfully so on a networked home), and recents are best-effort.
+    fn record_recently_used(&self, paths: Vec<PathBuf>) {
+        if !self.config.show_recents || paths.is_empty() {
+            return;
+        }
+        std::thread::spawn(move || {
+            for path in paths {
+                let _ = recently_used_xbel::update_recently_used(
+                    &path,
+                    Self::APP_ID.to_string(),
+                    "cosmic-files".to_string(),
+                    None,
+                );
+            }
+        });
+    }
+
+    /// Clear `recently-used.xbel` off the GUI thread (best-effort, see `record_recently_used`).
+    fn clear_recently_used() {
+        std::thread::spawn(|| {
+            if let Err(err) = recently_used_xbel::clear_recently_used() {
+                log::warn!("failed to clear recents history: {}", err);
+            }
+        });
+    }
+
     fn launch_from_mime_cache<P>(&self, mime: &Mime, paths: &[P]) -> bool
     where
         P: std::fmt::Debug + AsRef<Path> + AsRef<std::ffi::OsStr>,
@@ -1001,16 +1030,12 @@ impl App {
             for (i, mut command) in commands.into_iter().enumerate() {
                 match spawn_detached(&mut command) {
                     Ok(()) => {
-                        if self.config.show_recents {
-                            for path in paths {
-                                let _ = recently_used_xbel::update_recently_used(
-                                    &path.into(),
-                                    Self::APP_ID.to_string(),
-                                    "cosmic-files".to_string(),
-                                    None,
-                                );
-                            }
-                        }
+                        self.record_recently_used(
+                            paths
+                                .iter()
+                                .map(|path| <P as AsRef<Path>>::as_ref(path).to_path_buf())
+                                .collect(),
+                        );
 
                         return true;
                     }
@@ -3362,14 +3387,7 @@ impl Application for App {
                                 {
                                     match spawn_detached(&mut command) {
                                         Ok(()) => {
-                                            if self.config.show_recents {
-                                                let _ = recently_used_xbel::update_recently_used(
-                                                    &path,
-                                                    Self::APP_ID.to_string(),
-                                                    "cosmic-files".to_string(),
-                                                    None,
-                                                );
-                                            }
+                                            self.record_recently_used(vec![path.clone()]);
                                         }
                                         Err(err) => {
                                             log::warn!(
@@ -4602,11 +4620,12 @@ impl Application for App {
                             ]));
                         }
                         tab::Command::EditLocationSubmit(edit_location) => {
-                            // Pick the first completion when the typed path does not exist, then
-                            // resolve it (canonicalizing) — both stat the path, so run them
-                            // off-thread and navigate via Message::Location once resolved.
+                            // Picking the first completion, resolving it, and the file-vs-directory
+                            // check all stat the path; run them off-thread so submitting a path on a
+                            // slow mount never blocks the GUI. A resolved file navigates to its
+                            // parent with the file selected.
                             commands.push(Task::future(async move {
-                                let location_opt = tokio::task::spawn_blocking(move || {
+                                let target = tokio::task::spawn_blocking(move || {
                                     let mut edit_location = edit_location;
                                     if edit_location.selected.is_none()
                                         && edit_location
@@ -4620,16 +4639,37 @@ impl Application for App {
                                     {
                                         edit_location.selected = Some(0);
                                     }
-                                    edit_location.resolve()
+                                    let location = edit_location.resolve()?;
+                                    // normalize() appends a trailing separator; strip it so the
+                                    // path is probed as a file.
+                                    let redirect = location
+                                        .path_opt()
+                                        .map(|path| path.components().as_path().to_path_buf())
+                                        .filter(|path| path.is_file())
+                                        .and_then(|path| Some((path.parent()?.to_path_buf(), path)));
+                                    Some(match redirect {
+                                        Some((parent, file)) => {
+                                            (location.with_path(parent), Some(file))
+                                        }
+                                        None => (location, None),
+                                    })
                                 })
                                 .await
                                 .ok()
                                 .flatten();
-                                match location_opt {
-                                    Some(location) => cosmic::action::app(Message::TabMessage(
-                                        Some(entity),
-                                        tab::Message::Location(location),
-                                    )),
+                                match target {
+                                    Some((location, None)) => cosmic::action::app(
+                                        Message::TabMessage(
+                                            Some(entity),
+                                            tab::Message::Location(location),
+                                        ),
+                                    ),
+                                    Some((location, Some(file))) => cosmic::action::app(
+                                        Message::TabMessage(
+                                            Some(entity),
+                                            tab::Message::LocationSelect(location, vec![file]),
+                                        ),
+                                    ),
                                     None => cosmic::action::none(),
                                 }
                             }));
@@ -4767,12 +4807,7 @@ impl Application for App {
                             commands.push(self.update(Message::PasteContents(to, from)));
                         }
                         tab::Command::ClearRecents => {
-                            match recently_used_xbel::clear_recently_used() {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    log::warn!("failed to clear recents history: {}", err);
-                                }
-                            }
+                            Self::clear_recently_used();
                         }
                         tab::Command::EmptyTrash => {
                             return self.push_dialog(
@@ -4838,6 +4873,35 @@ impl Application for App {
                         tab::Command::Preview(kind) => {
                             self.context_page = ContextPage::Preview(Some(entity), kind);
                             self.set_show_context(true);
+                        }
+                        tab::Command::PreviewPath(path) => {
+                            // item_from_path blocks (fs::metadata + read_dir/gvfs stat); build it
+                            // off-thread and show it in Message::PreviewReady so a breadcrumb
+                            // ancestor on a slow mount never freezes the GUI.
+                            commands.push(Task::future(async move {
+                                match tokio::task::spawn_blocking(move || {
+                                    let item = tab::item_from_path(&path, IconSizes::default());
+                                    (path, item)
+                                })
+                                .await
+                                {
+                                    Ok((_, Ok(item))) => cosmic::action::app(
+                                        Message::PreviewReady(Some(entity), Box::new(item)),
+                                    ),
+                                    Ok((path, Err(err))) => {
+                                        log::warn!(
+                                            "failed to get item from path {}: {}",
+                                            path.display(),
+                                            err
+                                        );
+                                        cosmic::action::none()
+                                    }
+                                    Err(err) => {
+                                        log::warn!("failed to get item from path: {err}");
+                                        cosmic::action::none()
+                                    }
+                                }
+                            }));
                         }
                         tab::Command::SetOpenWith(mime, id) => {
                             // Writing mimeapps.list and rebuilding the cache blocks on I/O; do
@@ -5369,13 +5433,27 @@ impl Application for App {
                 return self
                     .update(Message::TabMessage(None, tab::Message::Location(location)));
             }
+            Message::NavMenuOpenWith(path, item) => {
+                return self.push_dialog(
+                    DialogPage::OpenWith {
+                        path,
+                        mime: item.mime,
+                        selected: 0,
+                        store_opt: "x-scheme-handler/mime"
+                            .parse::<mime_guess::Mime>()
+                            .ok()
+                            .and_then(|mime| self.mime_app_cache.get(&mime).first().cloned()),
+                    },
+                    None,
+                );
+            }
+            Message::PreviewReady(entity_opt, item) => {
+                self.context_page =
+                    ContextPage::Preview(entity_opt, PreviewKind::Custom(PreviewItem(item)));
+                self.set_show_context(true);
+            }
             Message::NavMenuAction(action) => match action {
-                NavMenuAction::ClearRecents => match recently_used_xbel::clear_recently_used() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        log::warn!("failed to clear recents history: {}", err);
-                    }
-                },
+                NavMenuAction::ClearRecents => Self::clear_recently_used(),
                 NavMenuAction::EmptyTrash => {
                     return self
                         .push_dialog(DialogPage::EmptyTrash, Some(EMPTY_TRASH_BUTTON_ID.clone()));
@@ -5397,31 +5475,33 @@ impl Application for App {
                         .and_then(Location::path_opt)
                         .cloned()
                     {
-                        match tab::item_from_path(&path, IconSizes::default()) {
-                            Ok(item) => {
-                                return self.push_dialog(
-                                    DialogPage::OpenWith {
-                                        path,
-                                        mime: item.mime,
-                                        selected: 0,
-                                        store_opt: "x-scheme-handler/mime"
-                                            .parse::<mime_guess::Mime>()
-                                            .ok()
-                                            .and_then(|mime| {
-                                                self.mime_app_cache.get(&mime).first().cloned()
-                                            }),
-                                    },
-                                    None,
-                                );
+                        // item_from_path does fs::metadata + a read_dir/gvfs stat; the path is a
+                        // sidebar favorite, so a dead/slow network favorite would freeze the GUI.
+                        // Build the Item off-thread and open the dialog in Message::NavMenuOpenWith.
+                        return Task::future(async move {
+                            match tokio::task::spawn_blocking(move || {
+                                let item = tab::item_from_path(&path, IconSizes::default());
+                                (path, item)
+                            })
+                            .await
+                            {
+                                Ok((path, Ok(item))) => cosmic::action::app(
+                                    Message::NavMenuOpenWith(path, Box::new(item)),
+                                ),
+                                Ok((path, Err(err))) => {
+                                    log::warn!(
+                                        "failed to get item for path {}: {}",
+                                        path.display(),
+                                        err
+                                    );
+                                    cosmic::action::none()
+                                }
+                                Err(err) => {
+                                    log::warn!("failed to get item for path: {err}");
+                                    cosmic::action::none()
+                                }
                             }
-                            Err(err) => {
-                                log::warn!(
-                                    "failed to get item for path {}: {}",
-                                    path.display(),
-                                    err
-                                );
-                            }
-                        }
+                        });
                     }
                 }
                 NavMenuAction::RunContextAction(entity, action) => {
@@ -5514,23 +5594,36 @@ impl Application for App {
                         .nav_model
                         .data::<Location>(entity)
                         .and_then(Location::path_opt)
+                        .cloned()
                     {
-                        match tab::item_from_path(path, IconSizes::default()) {
-                            Ok(item) => {
-                                self.context_page = ContextPage::Preview(
+                        // item_from_path does fs::metadata + a read_dir/gvfs stat on a sidebar
+                        // favorite; build the Item off-thread and show it in Message::PreviewReady
+                        // so a dead/slow network favorite never freezes the GUI.
+                        return Task::future(async move {
+                            match tokio::task::spawn_blocking(move || {
+                                let item = tab::item_from_path(&path, IconSizes::default());
+                                (path, item)
+                            })
+                            .await
+                            {
+                                Ok((_, Ok(item))) => cosmic::action::app(Message::PreviewReady(
                                     None,
-                                    PreviewKind::Custom(PreviewItem(Box::new(item))),
-                                );
-                                self.set_show_context(true);
+                                    Box::new(item),
+                                )),
+                                Ok((path, Err(err))) => {
+                                    log::warn!(
+                                        "failed to get item from path {}: {}",
+                                        path.display(),
+                                        err
+                                    );
+                                    cosmic::action::none()
+                                }
+                                Err(err) => {
+                                    log::warn!("failed to get item from path: {err}");
+                                    cosmic::action::none()
+                                }
                             }
-                            Err(err) => {
-                                log::warn!(
-                                    "failed to get item from path {}: {}",
-                                    path.display(),
-                                    err
-                                );
-                            }
-                        }
+                        });
                     }
                 }
 
@@ -7145,7 +7238,15 @@ impl Application for App {
                             },
                         );
 
-                        match (watcher_res, Trash::folders()) {
+                        // Enumerating the trash bins reads the filesystem; run it on the blocking
+                        // pool so this one-shot subscription setup never stalls the executor.
+                        let trash_folders = tokio::task::spawn_blocking(Trash::folders)
+                            .await
+                            .unwrap_or_else(|err| {
+                                log::warn!("failed to enumerate trash folders: {err}");
+                                Ok(std::collections::HashSet::new())
+                            });
+                        match (watcher_res, trash_folders) {
                             (Ok(mut watcher), Ok(trash_bins)) => {
                                 // Watch the "bins" themselves as well as the files folder where
                                 // trashed items are placed. This allows us to avoid recursively

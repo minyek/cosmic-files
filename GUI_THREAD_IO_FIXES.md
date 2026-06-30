@@ -23,6 +23,45 @@ The fixes are grouped by how often the blocking call fired.
 
 ---
 
+## The call the first pass missed — `Location::normalize()` (every navigation)
+
+The audit above chased individual `is_dir`/`read_dir`/`exists`/`try_exists` calls but overlooked
+the heaviest and most pervasive one: `Location::normalize()` called `fs::canonicalize` (a
+`realpath()` stat-walk of *every* path component, resolving every symlink) **and** `path.is_dir()`
+— both on the GUI thread.
+
+`normalize()` runs on essentially every navigation, twice (the cd-consumption block in
+`Tab::update`, then again in `change_location`), once more when the scan result is applied
+(`Message::TabRescan`), and on every tab-title / per-folder sort-key computation. On a slow or
+network-backed mount each `canonicalize` is several blocking round-trips, so clicking a sidebar
+favourite that points at such a mount (e.g. `/mnt/data/Temp`) froze the UI for 1–2 s — exactly the
+"favourite is slow to show its contents, UI won't respond until it has rendered" symptom — even
+though the directory *scan* itself was already off-thread. `canonicalize` is strictly more I/O than
+any of the single-`stat` calls the first pass did fix, which is why it dominated.
+
+- **Now:** `normalize()` is filesystem-free. `.`/`..` are collapsed lexically
+  (`lexically_normalize`) and the directory's trailing separator is added unconditionally; there is
+  no `canonicalize` and no `is_dir`. The cd-consumption block in `Tab::update` likewise no longer
+  stats: it dropped both the `!is_dir` "redirect a file to its parent" probe and the `is_dir` "is
+  this a directory" guard. Every navigation source already passes a directory — favourites resolve
+  dir-vs-file off-thread in `Message::NavSelectChecked`, item clicks use cached metadata, and
+  history/breadcrumbs/mounts are inherently directories. The one source that can name a *file* — a
+  typed or completed path in the location bar — now makes the file→parent decision off-thread (in
+  the `EditLocationSubmit` resolver, which also serves `EditLocationComplete`) and arrives as
+  `Message::LocationSelect(parent, file)`, navigating to the parent with the file selected and no
+  GUI-thread stat.
+- **Impact (intentional behavior change):** symlinks are no longer resolved to their targets on
+  navigation. The kernel still follows the link when the directory is read, so the folder opens and
+  lists identically; only the path shown in the breadcrumb / stored in history stays as the path the
+  user navigated to. This is a net improvement: a symlinked favourite now shows and **highlights**
+  as the active favourite (the canonicalising version rewrote the path so it no longer matched the
+  stored favourite). Two minor consequences: two paths to the same physical directory (via a
+  symlink) no longer dedupe in history, and the persisted per-folder sort-setting key for a
+  *symlinked* directory changes once. Non-symlinked paths — the overwhelming majority — are
+  unaffected, and the unconditional trailing separator keeps their sort-setting keys stable.
+
+---
+
 ## Tier 1 — render path (fired every frame)
 
 These ran inside `view`/`dialog`/`nav_bar` builders, so they re-hit the
@@ -172,17 +211,70 @@ every frame.
 - **Now:** reads the mode from cached metadata only; gvfs items are skipped (a
   chmod over the network would not apply anyway) rather than stat-ed.
 
+### L3 — `run()` canonicalized each path argument before the event loop
+- **Was:** `run()` called `fs::canonicalize` on every path argument while parsing argv
+  (to make it absolute before `daemonize()` changes the working directory to `/`),
+  blocking process startup on a slow mount — the same `canonicalize` stat-walk as the
+  `normalize()` case above, just earlier, before there is any UI or Task runtime.
+- **Now:** a relative argument is made absolute by joining it onto `env::current_dir()`
+  (a cheap getcwd of our own process, not a stat of the slow target); `.`/`..` and
+  symlinks are left to `normalize()` and the off-thread launch-location scan (L1).
+- **Impact:** a path argument that does not exist now opens an empty tab at that path
+  instead of being silently skipped (the old `canonicalize`-error `continue`). Validating
+  existence would require the per-argument stat this fix removes, and an empty tab is
+  consistent with how missing locations are handled elsewhere.
+
+---
+
+## Second audit — remaining per-action blocking
+
+A follow-up audit over every GUI-thread path confirmed the first pass had cleared all
+**per-frame** (render-tier) blocking; the misses that remained were **per-action**. Each is
+fixed with the same patterns — build off-thread, read cached metadata, or derive from the
+already-scanned listing.
+
+- **Search results built on the GUI thread.** The `Message::SearchReady` drain called
+  `item_from_search_item` (a `read_dir` child-count, gvfs stat, image-header read and `.desktop`
+  parse) once per streamed result. The `Item` is now built in the search worker (already in
+  `spawn_blocking`) and the drain only inserts it.
+- **Sidebar-favorite items built inline.** The nav-menu *Open with* and *Preview* actions ran
+  `item_from_path` on a favorite path; a dead/slow network favorite froze the UI. Both build the
+  `Item` off-thread (`Message::NavMenuOpenWith` / `Message::PreviewReady`).
+- **Breadcrumb preview built inline.** `LocationMenuAction::Preview` built the ancestor's `Item`
+  inline; it now defers to `Command::PreviewPath` → off-thread build → `Message::PreviewReady`.
+- **Gallery re-read the image header.** `LargeImageManager::try_decode` read the header on every
+  gallery decode; it now reuses the dimensions cached on the item at thumbnail time and reads only
+  when they are absent.
+- **`.desktop` launch parsed inline.** `launch_desktop_entries` parsed the `.desktop` file on the
+  GUI thread; the parse now runs in `spawn_blocking`.
+- **`recently-used.xbel` written inline** at five sites (file-open, mime-cache launch, OpenWith,
+  and the two ClearRecents handlers); the read+rewrite now runs fire-and-forget off the GUI thread.
+- **File-picker dialog** (its own sub-app GUI thread) carried six of the same blocking calls the
+  main app had already fixed: a `canonicalize` in `Dialog::new`, an `is_dir` per favorite in the
+  nav model, an inline `create_dir`, an `fs::metadata` re-stat on watch events, and `is_dir`/
+  `exists` in the Open/Save handlers. Each now mirrors the main app (off-thread, cached metadata,
+  or the scanned listing).
+- **Conflict resolution & trash-watcher startup.** `handle_replace` built both conflict items with
+  `item_from_path` in its async body; they now run on compio's blocking pool (operations run under
+  compio). The trash-watcher subscription enumerated trash bins inline at startup; that runs on the
+  blocking pool too.
+
 ---
 
 ## Verification
 
 - `cargo test`, `cargo test --no-default-features`, and `cargo test --all-features`
-  all pass (43 tests).
+  all pass (47 tests).
 - `cargo build --release` succeeds with no warnings in the default/all-features
   configurations.
 - A unit test (`cached_metadata_reflects_scan_without_restat`) pins the contract
   that `Item::cached_metadata()` returns scan-time metadata and never re-stats
   (it keeps returning the cached value after the backing files are removed).
+- Four unit tests pin the `normalize()` change: `normalize` collapses `.`/`..`
+  lexically on a non-existent path (`fs::canonicalize` would fail and leave them
+  unresolved), marks directories with a trailing separator without a dir-stat, and
+  keeps a symlink path unresolved; a fourth checks `Message::LocationSelect`
+  navigates to the parent directory and forwards the file to select.
 
 ## Summary of intentional behavior changes
 
@@ -193,3 +285,4 @@ every frame.
 | mime-app "open with" lists | Empty for a brief moment at startup | Populated off-thread within a frame or two; opening still works via fallback |
 | Sidebar/desktop context menus | Custom actions appear a frame or two after opening | Avoids a per-frame parse/stat; layout is stable |
 | Create/rename "already exists" hint | Derived from the open tab's listing; skipped if no tab shows the target dir | The create/rename operation remains the authoritative collision guard |
+| Navigation path resolution | Symlinks are no longer resolved to their targets on navigation; the path the user navigated to is kept | The kernel still follows the link when the directory is read, so listing is identical; keeps the breadcrumb and favourite-highlight correct and removes a per-navigation GUI-thread `canonicalize` stat-walk. Only a symlinked directory's history-dedup and persisted sort-key change |

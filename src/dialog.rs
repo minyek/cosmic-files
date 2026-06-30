@@ -38,7 +38,7 @@ use crate::config::{
 use crate::key_bind::key_binds;
 use crate::localize::LANGUAGE_SORTER;
 use crate::mounter::{MOUNTERS, MounterItem, MounterItems, MounterKey, MounterMessage};
-use crate::tab::{self, ItemMetadata, Location, SearchLocation, Tab};
+use crate::tab::{self, Location, SearchLocation, Tab};
 use crate::zoom::{zoom_in_view, zoom_out_view, zoom_to_default};
 use crate::{fl, home_dir, menu, mime_icon};
 
@@ -275,15 +275,9 @@ impl<M: Send + 'static> Dialog<M> {
         core.set_main_window_id(Some(window_id));
         let flags = Flags {
             kind: dialog_settings.kind,
-            path_opt: dialog_settings.path_opt.as_ref().and_then(|path| {
-                match fs::canonicalize(path) {
-                    Ok(ok) => Some(ok),
-                    Err(err) => {
-                        log::warn!("failed to canonicalize {}: {}", path.display(), err);
-                        None
-                    }
-                }
-            }),
+            // Tab::new normalizes this path lexically; canonicalizing it here would stat-walk
+            // every component and freeze dialog launch on a slow mount.
+            path_opt: dialog_settings.path_opt,
             window_id,
             config_handler,
             config,
@@ -913,14 +907,9 @@ impl App {
                 nav_model = nav_model.insert(move |b| {
                     b.text(name.clone())
                         .icon(
-                            widget::icon::icon(if path.is_dir() {
-                                tab::folder_icon_symbolic(&path, 16)
-                            } else {
-                                widget::icon::from_name("text-x-generic-symbolic")
-                                    .size(16)
-                                    .handle()
-                            })
-                            .size(16),
+                            // Use the folder icon for every favorite, as the main nav model does;
+                            // stat-ing each one with is_dir would block on a dead/slow network favorite.
+                            widget::icon::icon(tab::folder_icon_symbolic(&path, 16)).size(16),
                         )
                         .data(Location::Path(path.clone()))
                 });
@@ -1424,18 +1413,28 @@ impl Application for App {
                     match dialog_page {
                         DialogPage::NewFolder { parent, name } => {
                             let path = parent.join(name);
-                            match fs::create_dir(&path) {
-                                Ok(()) => {
-                                    // cd to directory
-                                    let message = Message::TabMessage(tab::Message::Location(
-                                        Location::Path(path),
-                                    ));
-                                    return self.update(message);
+                            // fs::create_dir blocks; create off-thread and cd into the new folder
+                            // on success so a slow mount does not freeze the dialog.
+                            return Task::future(async move {
+                                match tokio::task::spawn_blocking(move || {
+                                    let result = fs::create_dir(&path);
+                                    (path, result)
+                                })
+                                .await
+                                {
+                                    Ok((path, Ok(()))) => cosmic::action::app(Message::TabMessage(
+                                        tab::Message::Location(Location::Path(path)),
+                                    )),
+                                    Ok((path, Err(err))) => {
+                                        log::warn!("failed to create {}: {}", path.display(), err);
+                                        cosmic::action::none()
+                                    }
+                                    Err(err) => {
+                                        log::warn!("failed to create folder: {err}");
+                                        cosmic::action::none()
+                                    }
                                 }
-                                Err(err) => {
-                                    log::warn!("failed to create {}: {}", path.display(), err);
-                                }
-                            }
+                            });
                         }
                         DialogPage::Replace { .. } => {
                             return self.update(Message::Save(true));
@@ -1600,51 +1599,15 @@ impl Application for App {
             Message::NotifyEvents(events) => {
                 log::debug!("{events:?}");
 
+                // Rescan the tab off-thread for any event touching its directory; re-stating the
+                // changed item here on the GUI thread would block on a slow mount.
                 if let Some(path) = self.tab.location.path_opt() {
-                    let mut contains_change = false;
-                    for event in &events {
-                        for event_path in &event.paths {
-                            if event_path.starts_with(path) {
-                                if let notify::EventKind::Modify(
-                                    notify::event::ModifyKind::Metadata(_)
-                                    | notify::event::ModifyKind::Data(_),
-                                ) = event.kind
-                                {
-                                    // If metadata or data changed, find the matching item and reload it
-                                    //TODO: this could be further optimized by looking at what exactly changed
-                                    if let Some(items) = &mut self.tab.items_opt {
-                                        for item in items.iter_mut() {
-                                            if item.path_opt() == Some(event_path) {
-                                                //TODO: reload more, like mime types?
-                                                match fs::metadata(event_path) {
-                                                    Ok(new_metadata) => {
-                                                        if let ItemMetadata::Path {
-                                                            metadata, ..
-                                                        } = &mut item.metadata
-                                                        {
-                                                            *metadata = new_metadata;
-                                                        }
-                                                    }
-                                                    Err(err) => {
-                                                        log::warn!(
-                                                            "failed to reload metadata for {}: {}",
-                                                            path.display(),
-                                                            err
-                                                        );
-                                                    }
-                                                }
-                                                //TODO item.thumbnail_opt =
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    // Any other events reload the whole tab
-                                    contains_change = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    let contains_change = events.iter().any(|event| {
+                        event
+                            .paths
+                            .iter()
+                            .any(|event_path| event_path.starts_with(path))
+                    });
                     if contains_change {
                         return self.rescan_tab(None);
                     }
@@ -1661,31 +1624,28 @@ impl Application for App {
                 }
             },
             Message::Open => {
-                let mut paths = Vec::new();
-                if let Some(items) = self.tab.items_opt() {
-                    for item in items {
-                        if item.selected
-                            && let Some(path) = item.path_opt()
-                        {
-                            paths.push(path.clone());
-                            if self.flags.config.show_recents {
-                                let _ = update_recently_used(
-                                    path,
-                                    Self::APP_ID.to_string(),
-                                    "cosmic-files".to_string(),
-                                    None,
-                                );
-                            }
-                        }
+                // Cached (path, is_dir) pairs; the legality check below must stay off the GUI thread.
+                let paths = self.tab.selected_paths_with_dir();
+
+                // Record recents off the GUI thread (best-effort; the xbel rewrite blocks).
+                if self.flags.config.show_recents {
+                    for (path, _) in &paths {
+                        let path = path.clone();
+                        std::thread::spawn(move || {
+                            let _ = update_recently_used(
+                                &path,
+                                Self::APP_ID.to_string(),
+                                "cosmic-files".to_string(),
+                                None,
+                            );
+                        });
                     }
                 }
 
-                // Ensure selection is allowed
-                //TODO: improve tab logic so this doesn't block the open button so often
-                for path in &paths {
-                    let path_is_dir = path.is_dir();
-                    if path_is_dir != self.flags.kind.is_dir() {
-                        if path_is_dir && paths.len() == 1 {
+                // Ensure selection is allowed, deciding dir-vs-file from cached metadata.
+                for (path, path_is_dir) in &paths {
+                    if *path_is_dir != self.flags.kind.is_dir() {
+                        if *path_is_dir && paths.len() == 1 {
                             // If the only selected item is a directory and we are selecting files, cd to it
                             let message = Message::TabMessage(tab::Message::Location(
                                 Location::Path(path.clone()),
@@ -1700,7 +1660,9 @@ impl Application for App {
 
                 // If there are proper matching items, return them
                 if !paths.is_empty() {
-                    self.result_opt = Some(DialogResult::Open(paths));
+                    self.result_opt = Some(DialogResult::Open(
+                        paths.into_iter().map(|(path, _)| path).collect(),
+                    ));
                     return window::close(self.flags.window_id);
                 }
 
@@ -1723,13 +1685,17 @@ impl Application for App {
                     && !filename.is_empty()
                     && let Some(tab_path) = self.tab.location.path_opt()
                 {
+                    let tab_path = tab_path.clone();
+                    // Decide existence/dir-ness from the picker's scanned listing to avoid stat-ing
+                    // the typed path on the GUI thread; the save operation remains the authoritative guard.
+                    let existing = self.existing_entry_in_dir(&tab_path, filename);
                     let path = tab_path.join(filename);
-                    if path.is_dir() {
-                        // cd to directory
+                    if existing == Some(true) {
+                        // The typed name is an existing directory: cd into it.
                         let message =
                             Message::TabMessage(tab::Message::Location(Location::Path(path)));
                         return self.update(message);
-                    } else if !replace && path.exists() {
+                    } else if !replace && existing.is_some() {
                         self.dialog_pages.push_back(DialogPage::Replace {
                             filename: filename.clone(),
                         });
