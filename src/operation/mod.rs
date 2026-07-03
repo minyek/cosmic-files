@@ -860,7 +860,8 @@ impl Operation {
 
                     let _items_opt = compio::runtime::spawn_blocking(|| trash::delete(path))
                         .await
-                        .map_err(wrap_compio_spawn_error)?;
+                        .map_err(wrap_compio_spawn_error)?
+                        .map_err(|e| OperationError::from_err(e, &controller))?;
                     //TODO: items_opt allows for easy restore
                 }
                 Ok(OperationSelection::default())
@@ -1328,6 +1329,41 @@ mod tests {
         };
 
         future::join(handle_messages, handle_copy).await.1
+    }
+
+    /// Simple wrapper around `[Operation::Delete]`
+    async fn operation_delete(paths: Vec<PathBuf>) -> Result<OperationSelection, OperationError> {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let handle_delete = async move {
+            Operation::Delete { paths }
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+
+        // Drain progress messages so the bounded channel never blocks the operation.
+        let handle_messages = async move { while rx.next().await.is_some() {} };
+
+        future::join(handle_messages, handle_delete).await.1
+    }
+
+    #[test(compio::test)]
+    async fn delete_surfaces_error_when_trash_fails() -> io::Result<()> {
+        // Trashing a path that does not exist fails inside `trash::delete`. That failure must
+        // surface as an operation error rather than being swallowed into a false success, which
+        // would report the delete as completed while nothing was trashed.
+        let fs = empty_fs()?;
+        let missing = fs.path().join("does-not-exist");
+        assert!(!missing.exists());
+
+        let result = operation_delete(vec![missing]).await;
+
+        assert!(
+            result.is_err(),
+            "Delete of a nonexistent path should surface an error, not report success"
+        );
+
+        Ok(())
     }
 
     #[test(compio::test)]
