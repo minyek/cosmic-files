@@ -341,6 +341,7 @@ pub enum Message {
     Config(Config),
     Copy(Option<Entity>),
     CopyPath(Option<Entity>),
+    CopyText(String),
     CopyTo(Option<Entity>),
     CopyToResult(DialogResult),
     CosmicSettings(&'static str),
@@ -2961,6 +2962,9 @@ impl Application for App {
                 let path_strings: Vec<String> =
                     paths.into_iter().map(|p| p.display().to_string()).collect();
                 let text = path_strings.join("\n");
+                return clipboard::write(text);
+            }
+            Message::CopyText(text) => {
                 return clipboard::write(text);
             }
             Message::CopyTo(entity_opt) => {
@@ -5667,13 +5671,18 @@ impl Application for App {
                 let (operation, _, err) = self.failed_operations.get(id)?;
 
                 //TODO: nice description of error
+                let error_text = format!("{operation:#?}\n{err}");
                 widget::dialog()
                     .title("Failed operation")
-                    .body(format!("{operation:#?}\n{err}"))
+                    .body(error_text.clone())
                     .icon(icon::from_name("dialog-error").size(64))
                     //TODO: retry action
                     .primary_action(
                         widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    )
+                    .secondary_action(
+                        widget::button::standard(fl!("copy-to-clipboard"))
+                            .on_press(Message::CopyText(error_text)),
                     )
             }
             DialogPage::FailedOperations(ids) => {
@@ -5686,13 +5695,18 @@ impl Application for App {
                     .collect();
 
                 //TODO: nice description of error
+                let error_text = errors.join("\n\n");
                 widget::dialog()
                     .title("Failed operations")
-                    .body(errors.join("\n\n"))
+                    .body(error_text.clone())
                     .icon(icon::from_name("dialog-error").size(64))
                     //TODO: retry action
                     .primary_action(
                         widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    )
+                    .secondary_action(
+                        widget::button::standard(fl!("copy-to-clipboard"))
+                            .on_press(Message::CopyText(error_text)),
                     )
             }
             DialogPage::ExtractPassword { id, password } => widget::dialog()
