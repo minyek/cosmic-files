@@ -26,6 +26,7 @@ use icu::locale::preferences::extensions::unicode::keywords::HourCycle;
 use image::{DynamicImage, ImageReader};
 use jiff_icu::ConvertFrom;
 use mime_guess::{Mime, mime};
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1033,9 +1034,9 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
     if !remote_scannable {
         match fs::read_dir(tab_path) {
             Ok(entries) => {
-                items = entries
+                let dir_entries: Vec<fs::DirEntry> = entries
                     .filter_map(|entry_res| {
-                        let entry = entry_res
+                        entry_res
                             .inspect_err(|err| {
                                 log::warn!(
                                     "failed to read entry in {}: {}",
@@ -1043,8 +1044,23 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
                                     err
                                 )
                             })
-                            .ok()?;
+                            .ok()
+                    })
+                    .collect();
 
+                for entry in &dir_entries {
+                    let path = entry.path();
+                    if entry.file_name().to_str() == Some(".hidden") && path.is_file() {
+                        hidden_files = parse_hidden_file(&path);
+                    }
+                }
+
+                // Each entry's metadata read and MIME sniff is an independent syscall; run
+                // them concurrently so a large or slow-mount directory doesn't serialize
+                // every entry's I/O behind the last one.
+                items = dir_entries
+                    .into_par_iter()
+                    .filter_map(|entry| {
                         let path = entry.path();
 
                         let name = entry
@@ -1058,10 +1074,6 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
                                 )
                             })
                             .ok()?;
-
-                        if name == ".hidden" && path.is_file() {
-                            hidden_files = parse_hidden_file(&path);
-                        }
 
                         let metadata = fs::metadata(&path)
                             .inspect_err(|err| {
