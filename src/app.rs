@@ -1549,6 +1549,17 @@ impl App {
         })
     }
 
+    /// Rescans `entity` at `location` unless a watcher-triggered rescan for that tab is
+    /// already running, in which case it just flags one more rescan to run once the
+    /// in-flight one completes. Without this, a burst of debounced watcher batches for a
+    /// busy directory queues an unbounded pile of concurrent scans instead of coalescing.
+    fn rescan_tab_if_idle(&mut self, entity: Entity, location: Location) -> Option<Task<Message>> {
+        if !self.tab_model.data_mut::<Tab>(entity)?.begin_rescan_if_idle() {
+            return None;
+        }
+        Some(self.update_tab(entity, location, None))
+    }
+
     fn rescan_trash(&mut self) -> Task<Message> {
         let needs_reload: Box<[_]> = self
             .tab_model
@@ -3707,7 +3718,7 @@ impl Application for App {
 
                 let commands = needs_reload
                     .into_iter()
-                    .map(|(entity, location)| self.update_tab(entity, location, None));
+                    .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
                 return Task::batch(commands);
             }
             Message::NotifyWatcher(mut watcher_wrapper) => match watcher_wrapper.watcher_opt.take()
@@ -4738,9 +4749,19 @@ impl Application for App {
             }
             Message::TabRescan(entity, mut location, parent_item_opt, items, selection_paths) => {
                 location = location.normalize();
+                let selection_paths_present = selection_paths.is_some();
+
+                let mut matched = false;
+                let mut rescan_pending = false;
+                let mut current_location = None;
+
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(entity) {
+                    rescan_pending = tab.finish_rescan_and_take_pending();
                     tab.location = tab.location.normalize();
-                    if location == tab.location {
+                    matched = location == tab.location;
+                    current_location = Some(tab.location.clone());
+
+                    if matched {
                         tab.parent_item_opt = parent_item_opt;
                         tab.set_items(items);
                         let location_str = location.to_string();
@@ -4754,31 +4775,48 @@ impl Application for App {
                         tab.sort_name = sort.0;
                         tab.sort_direction = sort.1;
 
-                        let mut tasks = Vec::with_capacity(2);
-
                         if let Some(selection_paths) = selection_paths {
                             tab.select_paths(selection_paths);
-
-                            // Ensure selected path is scrolled to after redraw
-                            tasks.push(Task::done(cosmic::action::app(Message::TabMessage(
-                                Some(entity),
-                                tab::Message::ScrollToFocused,
-                            ))));
                         }
-
-                        tasks.push(clipboard::read_data::<ClipboardPaste>().map(|p| {
-                            cosmic::action::app(Message::CutPaths(match p {
-                                Some(s) => match s.kind {
-                                    ClipboardKind::Copy => Vec::new(),
-                                    ClipboardKind::Cut { .. } => s.paths,
-                                },
-                                None => Vec::new(),
-                            }))
-                        }));
-
-                        return Task::batch(tasks);
                     }
                 }
+
+                if !matched {
+                    // Stale rescan superseded by a location change in the meantime; if a
+                    // watcher event still wants a rescan, run it for wherever the tab is now.
+                    return match current_location {
+                        Some(location) if rescan_pending => self
+                            .rescan_tab_if_idle(entity, location)
+                            .unwrap_or_else(Task::none),
+                        _ => Task::none(),
+                    };
+                }
+
+                let mut tasks = Vec::with_capacity(3);
+
+                if selection_paths_present {
+                    // Ensure selected path is scrolled to after redraw
+                    tasks.push(Task::done(cosmic::action::app(Message::TabMessage(
+                        Some(entity),
+                        tab::Message::ScrollToFocused,
+                    ))));
+                }
+
+                tasks.push(clipboard::read_data::<ClipboardPaste>().map(|p| {
+                    cosmic::action::app(Message::CutPaths(match p {
+                        Some(s) => match s.kind {
+                            ClipboardKind::Copy => Vec::new(),
+                            ClipboardKind::Cut { .. } => s.paths,
+                        },
+                        None => Vec::new(),
+                    }))
+                }));
+
+                if rescan_pending && let Some(location) = current_location {
+                    tasks.extend(self.rescan_tab_if_idle(entity, location));
+                }
+
+                return Task::batch(tasks);
             }
             Message::TabView(entity_opt, view) => {
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());

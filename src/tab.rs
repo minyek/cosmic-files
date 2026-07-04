@@ -2789,6 +2789,10 @@ pub struct Tab {
     pub gallery: bool,
     pub(crate) parent_item_opt: Option<Box<Item>>,
     pub(crate) items_opt: Option<Vec<Item>>,
+    /// A watcher-triggered rescan for this tab is currently running.
+    pub(crate) rescan_in_flight: bool,
+    /// A watcher event arrived while `rescan_in_flight`; run one more rescan once it completes.
+    pub(crate) rescan_pending: bool,
     pub dnd_hovered: Option<(Location, Instant)>,
     pub(crate) scrollable_id: widget::Id,
     select_focus: Option<usize>,
@@ -2936,6 +2940,8 @@ impl Tab {
             gallery: false,
             parent_item_opt: None,
             items_opt: None,
+            rescan_in_flight: false,
+            rescan_pending: false,
             scrollable_id,
             select_focus: None,
             select_range: None,
@@ -2955,6 +2961,27 @@ impl Tab {
     pub fn title(&self) -> String {
         //TODO: is it possible to return a &str?
         self.location_title.clone()
+    }
+
+    /// Returns `true` if a watcher-triggered rescan should be started now. If one is
+    /// already in flight, this instead flags one more rescan to run once it completes and
+    /// returns `false` — coalescing a burst of watcher events into a single follow-up scan
+    /// instead of piling up a new scan per event.
+    pub fn begin_rescan_if_idle(&mut self) -> bool {
+        if self.rescan_in_flight {
+            self.rescan_pending = true;
+            false
+        } else {
+            self.rescan_in_flight = true;
+            true
+        }
+    }
+
+    /// Marks the in-flight rescan as finished, returning whether a follow-up rescan was
+    /// requested (via [`Tab::begin_rescan_if_idle`]) while it ran and should start now.
+    pub fn finish_rescan_and_take_pending(&mut self) -> bool {
+        self.rescan_in_flight = false;
+        std::mem::take(&mut self.rescan_pending)
     }
 
     pub const fn items_opt(&self) -> Option<&Vec<Item>> {
@@ -7532,6 +7559,84 @@ mod tests {
 
         assert_eq!(0, path.read_dir()?.count());
         assert!(actual.is_empty());
+
+        Ok(())
+    }
+
+    fn test_tab(fs: &TempDir) -> Tab {
+        Tab::new(
+            Location::Path(fs.path().to_owned()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        )
+    }
+
+    #[test]
+    fn begin_rescan_if_idle_starts_a_scan_when_idle() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        assert!(tab.begin_rescan_if_idle());
+
+        Ok(())
+    }
+
+    #[test]
+    fn begin_rescan_if_idle_coalesces_concurrent_watcher_events() -> io::Result<()> {
+        // Reproduces the rescan storm: a burst of debounced watcher batches for a busy
+        // directory (e.g. Chrome cancelling many downloads in a row) must not queue an
+        // unbounded pile of concurrent scans, one per batch.
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        assert!(
+            tab.begin_rescan_if_idle(),
+            "first event with no scan running should start one"
+        );
+        for _ in 0..10 {
+            assert!(
+                !tab.begin_rescan_if_idle(),
+                "events arriving while a scan is in flight must not start another"
+            );
+        }
+
+        assert!(
+            tab.finish_rescan_and_take_pending(),
+            "the pileup of events during the scan should coalesce into one pending rescan"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn finish_rescan_with_no_pending_events_does_not_request_another_scan() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        assert!(tab.begin_rescan_if_idle());
+        assert!(
+            !tab.finish_rescan_and_take_pending(),
+            "no watcher event arrived while the scan ran, so no follow-up is needed"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn finish_rescan_allows_a_fresh_scan_to_start_afterwards() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        assert!(tab.begin_rescan_if_idle());
+        assert!(!tab.finish_rescan_and_take_pending());
+
+        assert!(
+            tab.begin_rescan_if_idle(),
+            "once the previous scan finished cleanly, a new event should start a fresh scan"
+        );
 
         Ok(())
     }

@@ -766,6 +766,14 @@ impl App {
         })
     }
 
+    /// Rescans the dialog's tab unless a watcher-triggered rescan is already running, in
+    /// which case it just flags one more rescan to run once the in-flight one completes.
+    /// Without this, a burst of debounced watcher batches for a busy directory queues an
+    /// unbounded pile of concurrent scans instead of coalescing.
+    fn rescan_tab_if_idle(&mut self) -> Option<Task<Message>> {
+        self.tab.begin_rescan_if_idle().then(|| self.rescan_tab(None))
+    }
+
     fn search_get(&self) -> Option<&str> {
         match &self.tab.location {
             Location::Search(_, term, ..) => Some(term),
@@ -1631,7 +1639,7 @@ impl Application for App {
                         }
                     }
                     if contains_change {
-                        return self.rescan_tab(None);
+                        return self.rescan_tab_if_idle().unwrap_or_else(Task::none);
                     }
                 }
             }
@@ -1907,6 +1915,8 @@ impl Application for App {
                 return Task::batch(commands);
             }
             Message::TabRescan(location, parent_item_opt, mut items, selection_paths) => {
+                let rescan_pending = self.tab.finish_rescan_and_take_pending();
+
                 if location == self.tab.location {
                     // Filter
                     if let Some(filter_i) = self.filter_selected
@@ -1968,20 +1978,32 @@ impl Application for App {
                     }
 
                     // Reset focus on location change
-                    if self.search_get().is_some() {
-                        return widget::text_input::focus(self.search_id.clone());
-                    }
-                    if let DialogKind::SaveFile { filename } = &self.flags.kind {
-                        return Task::batch([
+                    let focus_task = if self.search_get().is_some() {
+                        widget::text_input::focus(self.search_id.clone())
+                    } else if let DialogKind::SaveFile { filename } = &self.flags.kind {
+                        Task::batch([
                             widget::text_input::focus(self.filename_id.clone()),
                             widget::text_input::select_until_last(
                                 self.filename_id.clone(),
                                 filename,
                                 '.',
                             ),
-                        ]);
-                    }
-                    return widget::text_input::focus(self.filename_id.clone());
+                        ])
+                    } else {
+                        widget::text_input::focus(self.filename_id.clone())
+                    };
+
+                    return if rescan_pending {
+                        let mut tasks = vec![focus_task];
+                        tasks.extend(self.rescan_tab_if_idle());
+                        Task::batch(tasks)
+                    } else {
+                        focus_task
+                    };
+                }
+
+                if rescan_pending {
+                    return self.rescan_tab_if_idle().unwrap_or_else(Task::none);
                 }
             }
             Message::TabView(view) => {
