@@ -118,4 +118,5 @@ Unchanged clauses retain their original test mappings and passed the fresh full
 matrix. The symlink-badge audit remains passed. Its optional combined-scenario
 coverage limits are not additional user acceptance requirements.
 
-Only local integration and the requested release build from `master` remain.
+Local integration and the requested release build from `master` are complete.
+See the [delivery record](2026-10-02-main-delivery.md).

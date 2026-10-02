@@ -1,0 +1,18 @@
+{
+  "source_commit": "66dac3fdb2735fc927c1c63686935537c1e8cc34",
+  "binaries": {
+    "cosmic-files": {
+      "sha256": "541f99d5b6c01b45e17ee88498dc53f87cbf06eadf66767ce59d301b9a1205d6",
+      "size": 66213048
+    },
+    "cosmic-files-applet": {
+      "sha256": "b63a5480253754739c58dfa99f55b2a3b00307e40162a6d2dfaf9c546e55ab51",
+      "size": 51838176
+    },
+    "cosmic-files-thumbnailer": {
+      "sha256": "6e5651702ef872b08bc549b653931b1bedd55c930b041feadbfac2e40984e274",
+      "size": 6388984
+    }
+  },
+  "temporary_install_verified": true
+}
