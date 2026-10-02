@@ -1,0 +1,117 @@
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.Daemon' requested by ':1.2' (uid=1001 pid=85 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.portal.Desktop' requested by ':1.3' (uid=1001 pid=138 comm="dbus-send --reply-timeout=100 --print-reply=litera" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.Daemon'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.UDisks2VolumeMonitor' requested by ':1.2' (uid=1001 pid=85 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.PermissionStore' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+fuse: device /dev/fuse not found. Kernel module not loaded?
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.freedesktop.impl.portal.PermissionStore'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.portal.Documents' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.freedesktop.portal.Documents'
+fuse: device /dev/fuse not found. Kernel module not loaded?
+error: fuse init failed: Can't mount path /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/wayland/runtime/doc
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.155: Document portal fuse mount point unknown: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: The name :1.8 was not provided by any .service files
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.155: Choosing gtk.portal for org.freedesktop.impl.portal.Access as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.UDisks2VolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.AfcVolumeMonitor' requested by ':1.2' (uid=1001 pid=85 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:176): Gtk-WARNING **: 19:35:12.169: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.AfcVolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.GoaVolumeMonitor' requested by ':1.2' (uid=1001 pid=85 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gnome.OnlineAccounts' requested by ':1.11' (uid=1001 pid=203 comm="/usr/libexec/gvfs-goa-volume-monitor" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.179: Choosing gtk.portal for org.freedesktop.impl.portal.Settings as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:232): Gtk-WARNING **: 19:35:12.189: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.190: Failed to create settings proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.190: Not providing Settings portal: No working backend
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.190: Choosing gtk.portal for org.freedesktop.impl.portal.FileChooser as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:266): Gtk-WARNING **: 19:35:12.200: cannot open display:
+goa-daemon-Message: 19:35:12.201: goa-daemon version 3.58.1 starting
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.202: Failed to create file chooser proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.202: Choosing gtk.portal for org.freedesktop.impl.portal.AppChooser as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gnome.Identity' requested by ':1.12' (uid=1001 pid=213 comm="/usr/libexec/goa-daemon" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gnome.OnlineAccounts'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.GoaVolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.GPhoto2VolumeMonitor' requested by ':1.2' (uid=1001 pid=85 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gnome.Identity'
+
+(process:284): libgoaidentity-WARNING **: 19:35:12.210: GoaKerberosIdentityManager: Using polling for change notification for credential cache type 'KCM'
+
+(xdg-desktop-portal-gtk:281): Gtk-WARNING **: 19:35:12.212: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.214: Failed to create app chooser proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.214: Choosing gtk.portal for org.freedesktop.impl.portal.Print as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:295): Gtk-WARNING **: 19:35:12.223: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.225: Failed to create print proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.225: Choosing gtk.portal for org.freedesktop.impl.portal.Notification as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.GPhoto2VolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.MTPVolumeMonitor' requested by ':1.2' (uid=1001 pid=85 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:298): Gtk-WARNING **: 19:35:12.235: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.237: Failed to create notification proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.237: Choosing gtk.portal for org.freedesktop.impl.portal.Inhibit as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:307): Gtk-WARNING **: 19:35:12.247: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.MTPVolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.249: Failed to create inhibit proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.249: The location portal requires an access impl
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.249: The camera portal requires an access impl
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.249: Choosing gtk.portal for org.freedesktop.impl.portal.Account as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:319): Gtk-WARNING **: 19:35:12.258: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.259: Failed to create account proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.259: Choosing gtk.portal for org.freedesktop.impl.portal.Email as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:323): Gtk-WARNING **: 19:35:12.271: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.273: Failed to create email proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.273: Choosing gtk.portal for org.freedesktop.impl.portal.DynamicLauncher as a last-resort fallback
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.freedesktop.impl.portal.desktop.gtk' requested by ':1.5' (uid=1001 pid=142 comm="/usr/libexec/xdg-desktop-portal" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+
+(xdg-desktop-portal-gtk:326): Gtk-WARNING **: 19:35:12.282: cannot open display:
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activated service 'org.freedesktop.impl.portal.desktop.gtk' failed: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+
+(/usr/libexec/xdg-desktop-portal:142): xdg-desktop-portal-WARNING **: 19:35:12.284: Failed to create dynamic_launcher proxy: Error calling StartServiceByName for org.freedesktop.impl.portal.desktop.gtk: Process org.freedesktop.impl.portal.desktop.gtk exited with status 1
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.freedesktop.portal.Desktop'
+/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/main-preparation/scripts/gui_acceptance.py:143: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  if any(g > 120 and b > 100 and r < g * 0.8 for r, g, b in frame.crop((20, 15, 45, 35)).getdata()):
+A connection to the bus can't be made

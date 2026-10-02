@@ -1,0 +1,8 @@
+[2m2026-10-02T18:35:11.922532Z[0m [31mERROR[0m [2mcosmic_settings_config::shortcuts[0m[2m:[0m shortcuts custom config error: GetKey("custom", Os { code: 2, kind: NotFound, message: "No such file or directory" })
+[2m2026-10-02T18:35:11.924062Z[0m [31mERROR[0m [2mcosmic::theme[0m[2m:[0m error loading system dark theme [3merror[0m[2m=[0mGetKey("list_button", Os { code: 2, kind: NotFound, message: "No such file or directory" })
+[2m2026-10-02T18:35:11.929568Z[0m [31mERROR[0m [2mcosmic::theme[0m[2m:[0m error loading system dark theme [3merror[0m[2m=[0mGetKey("list_button", Os { code: 2, kind: NotFound, message: "No such file or directory" })
+[2m2026-10-02T18:35:11.930281Z[0m [33m WARN[0m [2mwinit_x11::xdisplay[0m[2m:[0m error setting XSETTINGS; Xft options won't reload automatically
+[2m2026-10-02T18:35:11.937769Z[0m [33m WARN[0m [2mwinit_x11::util::randr[0m[2m:[0m XRandR reported that the display's 0mm in size, which is certifiably insane
+[2m2026-10-02T18:35:12.043969Z[0m [33m WARN[0m [2msmithay::backend::egl::error[0m[2m:[0m Erroneous EGL call didn't set EGLError
+[2m2026-10-02T18:35:12.044003Z[0m [33m WARN[0m [2mcosmic_comp::backend::winit[0m[2m:[0m Failed to egl device for display. Unable to initialize bind display to EGL. [3merr[0m[2m=[0mEglExtensionNotSupported(["EGL_EXT_device_drm"])
+[2m2026-10-02T18:35:12.047372Z[0m [31mERROR[0m [2msmithay::backend::egl::ffi[0m[2m:[0m [EGL] 0x300d (BAD_SURFACE) eglQuerySurface: eglQuerySurface

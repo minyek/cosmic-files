@@ -1,5 +1,4 @@
 use cosmic::widget;
-use image::ImageReader;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -151,31 +150,6 @@ pub fn should_use_dedicated_worker(
         );
         // Use parallel worker pool with shared budget
         (false, total_budget_mb, parallel_workers)
-    }
-}
-
-/// Get the dimensions of an image without fully decoding it
-pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
-    match ImageReader::open(path) {
-        Ok(reader) => match reader.into_dimensions() {
-            Ok((width, height)) => {
-                log::debug!(
-                    "Image dimensions: {}x{} for {}",
-                    width,
-                    height,
-                    path.display()
-                );
-                Some((width, height))
-            }
-            Err(e) => {
-                log::warn!("Failed to get dimensions for {}: {}", path.display(), e);
-                None
-            }
-        },
-        Err(e) => {
-            log::warn!("Failed to open image reader for {}: {}", path.display(), e);
-            None
-        }
     }
 }
 
@@ -357,10 +331,8 @@ pub struct LargeImageManager {
     decoded_display_sizes: HashMap<PathBuf, (u32, u32)>,
     /// Errors encountered during decoding
     decode_errors: HashMap<PathBuf, String>,
-    /// Generation counter for each decode to support cancellation.
-    /// When a new decode is started for the same path, the generation is incremented.
-    /// Only decodes matching the current generation are accepted when they complete.
     decode_generations: HashMap<PathBuf, u64>,
+    next_generation: u64,
 }
 
 impl LargeImageManager {
@@ -389,15 +361,11 @@ impl LargeImageManager {
         display_size: Option<(u32, u32)>,
         generation: u64,
     ) -> bool {
-        // Check if this decode is still current (not superseded by a newer one)
-        if let Some(&current_gen) = self.decode_generations.get(&path)
-            && generation != current_gen
-        {
+        if self.decode_generations.get(&path) != Some(&generation) {
             log::info!(
-                "Discarding outdated decode for {} (generation {} != current {})",
+                "Discarding outdated decode for {} (generation {})",
                 path.display(),
-                generation,
-                current_gen
+                generation
             );
             return false;
         }
@@ -416,6 +384,27 @@ impl LargeImageManager {
         true
     }
 
+    pub fn store_error_with_generation(
+        &mut self,
+        path: PathBuf,
+        error: String,
+        generation: u64,
+    ) -> bool {
+        if self.decode_generations.get(&path) != Some(&generation) {
+            return false;
+        }
+        self.store_error(path, error);
+        true
+    }
+
+    pub fn invalidate(&mut self, path: &Path) {
+        self.decoding_images.remove(path);
+        self.decoded_images.remove(path);
+        self.decoded_display_sizes.remove(path);
+        self.decode_errors.remove(path);
+        self.decode_generations.remove(path);
+    }
+
     pub fn store_error(&mut self, path: PathBuf, error: String) {
         self.decode_errors.insert(path.clone(), error);
         self.decoding_images.remove(&path);
@@ -431,6 +420,10 @@ impl LargeImageManager {
             self.decoded_images.len()
         );
         self.decoded_images.clear();
+        self.decoded_display_sizes.clear();
+        self.decode_errors.clear();
+        self.decode_generations
+            .retain(|path, _| self.decoding_images.contains(path));
     }
 
     pub fn cache_size(&self) -> usize {
@@ -498,6 +491,7 @@ impl LargeImageManager {
         &mut self,
         path: &PathBuf,
         display_dimensions: Option<(u32, u32)>,
+        original_dimensions: (u32, u32),
     ) -> (bool, Option<(u32, u32)>, u64) {
         self.clear_error(path);
         let is_currently_decoding = self.is_decoding(path);
@@ -514,10 +508,7 @@ impl LargeImageManager {
             return (false, None, generation);
         }
 
-        let Some((width, height)) = get_image_dimensions(path) else {
-            self.store_error(path.clone(), "Failed to read image dimensions".to_string());
-            return (false, None, 0);
-        };
+        let (width, height) = original_dimensions;
 
         let target_dimensions = if let Some((display_w, display_h)) = display_dimensions {
             calculate_target_dimensions(width, height, display_w, display_h)
@@ -531,13 +522,12 @@ impl LargeImageManager {
             return (false, None, 0);
         }
 
-        // Increment generation counter (cancels any previous decode)
-        let generation = self
-            .decode_generations
-            .entry(path.clone())
-            .and_modify(|g| *g += 1)
-            .or_insert(1);
-        let generation = *generation;
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("decode generation exhausted");
+        let generation = self.next_generation;
+        self.decode_generations.insert(path.clone(), generation);
 
         if is_currently_decoding {
             log::info!(
@@ -593,5 +583,83 @@ impl LargeImageManager {
             );
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LargeImageManager;
+    use std::path::PathBuf;
+
+    #[test]
+    fn clear_cache_clears_orphan_maps_and_retains_in_flight_generations() {
+        let mut manager = LargeImageManager::default();
+        let viewed = PathBuf::from("/viewed.png");
+        let in_flight = PathBuf::from("/in_flight.png");
+
+        manager
+            .decoded_display_sizes
+            .insert(viewed.clone(), (100, 100));
+        manager
+            .decode_errors
+            .insert(viewed.clone(), "boom".to_string());
+        manager.decode_generations.insert(viewed.clone(), 3);
+        manager.decoding_images.insert(in_flight.clone());
+        manager.decode_generations.insert(in_flight.clone(), 1);
+
+        manager.clear_cache();
+
+        assert!(manager.decoded_display_sizes.is_empty());
+        assert!(manager.decode_errors.is_empty());
+        assert_eq!(manager.decode_generations.get(&in_flight), Some(&1));
+        assert!(!manager.decode_generations.contains_key(&viewed));
+    }
+
+    #[test]
+    fn a_late_result_cannot_repopulate_a_cleared_cache() {
+        let mut manager = LargeImageManager::default();
+        let path = PathBuf::from("/image.png");
+        let (started, _, generation) = manager.try_decode(&path, None, (1, 1));
+        assert!(started);
+        let handle = cosmic::widget::image::Handle::from_rgba(1, 1, vec![0; 4]);
+        assert!(manager.store_decoded_with_generation(
+            path.clone(),
+            handle.clone(),
+            None,
+            generation
+        ));
+        manager.clear_cache();
+        assert!(!manager.store_decoded_with_generation(
+            path.clone(),
+            handle.clone(),
+            None,
+            generation
+        ));
+        let (started, _, next) = manager.try_decode(&path, None, (1, 1));
+        assert!(started);
+        assert_ne!(next, generation);
+        assert!(!manager.store_decoded_with_generation(
+            path.clone(),
+            handle.clone(),
+            None,
+            generation
+        ));
+        assert!(manager.store_decoded_with_generation(path, handle, None, next));
+    }
+
+    #[test]
+    fn only_the_current_decode_failure_clears_in_flight_work() {
+        let mut manager = LargeImageManager::default();
+        let path = PathBuf::from("/image.png");
+        let (_, _, generation) = manager.try_decode(&path, None, (1, 1));
+        assert!(!manager.store_error_with_generation(path.clone(), "stale".into(), generation + 1));
+        assert!(manager.is_decoding(&path));
+        assert!(manager.store_error_with_generation(path.clone(), "current".into(), generation));
+        assert!(!manager.is_decoding(&path));
+        assert_eq!(
+            manager.get_error(&path).map(String::as_str),
+            Some("current")
+        );
+        assert!(manager.try_decode(&path, None, (1, 1)).0);
     }
 }

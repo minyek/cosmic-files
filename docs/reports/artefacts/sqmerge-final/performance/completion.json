@@ -1,0 +1,15 @@
+{
+  "label": "sqmerge-frame-measurement",
+  "unit": "arm-sqmerge-frame-measurement-3511613.service",
+  "thread_id": "01a0fcd7-5cb2-7133-8405-8dd00a81ee53",
+  "session": "cosmic-files",
+  "rc": 0,
+  "result": "clean",
+  "started": "2026-10-02T20:04:21+01:00",
+  "ended": "2026-10-02T20:04:28+01:00",
+  "runtime_s": 7,
+  "log_dir": "/mnt/logs/agent/sqmerge-frame-measurement-3511613",
+  "cmd": "bash /mnt/logs/temp/cosmic-sqmerge-performance.sh",
+  "hop": 0,
+  "delivered": null
+}

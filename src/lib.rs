@@ -4,7 +4,7 @@
 use cosmic::app::Settings;
 use cosmic::iced::Limits;
 use std::path::PathBuf;
-use std::{env, fs, process};
+use std::{env, process};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -14,6 +14,7 @@ use crate::tab::Location;
 
 pub mod app;
 mod archive;
+mod atomic_file;
 pub mod channel;
 pub mod clipboard;
 pub mod config;
@@ -28,12 +29,17 @@ mod mime_app;
 pub mod mime_icon;
 mod mounter;
 mod mouse_area;
+mod navigation;
 pub mod operation;
+mod persistence;
+mod recents;
+mod scan;
 mod spawn_detached;
 pub mod tab;
 mod thumbnail_cacher;
 mod thumbnailer;
 pub(crate) mod trash;
+mod watcher;
 mod zoom;
 
 pub(crate) type FxOrderMap<K, V> = ordermap::OrderMap<K, V, rustc_hash::FxBuildHasher>;
@@ -180,11 +186,17 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => PathBuf::from(arg),
             };
-            match fs::canonicalize(&path) {
-                Ok(absolute) => Location::Path(absolute),
-                Err(err) => {
-                    log::warn!("failed to canonicalize {}: {}", path.display(), err);
-                    continue;
+            // Daemonization changes cwd. Resolve relative arguments against the invoking cwd,
+            // leaving symlink and parent-component resolution to background filesystem work.
+            if path.is_absolute() {
+                Location::Path(path)
+            } else {
+                match env::current_dir() {
+                    Ok(dir) => Location::Path(dir.join(path)),
+                    Err(err) => {
+                        log::warn!("failed to resolve {}: {}", path.display(), err);
+                        continue;
+                    }
                 }
             }
         };

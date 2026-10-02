@@ -1,0 +1,25 @@
+{
+  "source_sha256": {
+    "Cargo.lock": "c9344a199c52d7b23868724125828f7a75ebae94588773ee45a474a3d660dcaa",
+    "src/app.rs": "a59638c2593d8c6461b5619a4a28008734b6ac96bf494a3fcbf37101b2fc94b2",
+    "src/dialog.rs": "764932caa73783d26b9d325944c2293060f1b74d5d0664e131e31c21d4d40a7c",
+    "src/lib.rs": "42e5ec3834b7cea065c146f361f079061c4ef8c65317d6ea5f31e90c6cef2312",
+    "src/menu.rs": "12d0a16ee74491cf224c9c058bbfd5ca938f001423504fe5f7e5a4261abe1bc6",
+    "src/recents.rs": "6ae06568e2b5a8c9a365507171e7e70d3043aa21044232881024d09aef75bfdb",
+    "src/scan.rs": "42aef83a65243a0003f10b7c703321bbf0776d78d281618dc41c5b7c2da424c4",
+    "src/tab.rs": "e6fe61d0269df6fdb7598af487998b7fa86818df873027c5b308012039e2f3f0",
+    "src/trash.rs": "73a8054e37e443ae17ca3d90416fc005c39dad74efcf63a3d1d678f3218a6e2d",
+    "examples/storage_acceptance.rs": "18664336c2bc2ffe30d962baa9811efa1ea86a553ce0106d36085c12fddede2f",
+    "examples/remote_scan_acceptance.rs": "e2ccec87482548b7c50649a8069ae306bc23d751bebc407d064589b1dc7c686b",
+    "examples/scroll_frame_probe.rs": "8b3ed37c556de21b9f4f01ac729ab9e4082c5657245808b132665057cdbdd097"
+  },
+  "gui_validation": {
+    "X11": "private Xvfb, rapid clicks, visual inspection",
+    "Wayland": "nested COSMIC on private Xvfb, Mesa software rendering, rapid clicks, visual inspection",
+    "image_dimensions": "320x180",
+    "list_and_grid_last_item": "entry-19999.txt",
+    "picker": "selected final modified-descending row entry-00000.txt"
+  },
+  "storage": "isolated profile, real XBEL and trash restore, write-failure recovery",
+  "remote": "loopback FTP with real GVFS URI and FUSE-path scans, four stages"
+}

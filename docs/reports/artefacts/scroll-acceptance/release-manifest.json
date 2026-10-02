@@ -1,0 +1,21 @@
+{
+  "source_commit": "2ab787e0e04b85e8ca3d2c6bc7f1f6ec204ea8fc",
+  "command": "just build-release --locked --offline -j12",
+  "binaries": [
+    {
+      "name": "cosmic-files",
+      "bytes": 66037744,
+      "sha256": "ec6b388ca34defa12ef9d75503f22292d1e44c2507f0c6be4e44d6e1b1af5977"
+    },
+    {
+      "name": "cosmic-files-applet",
+      "bytes": 51772728,
+      "sha256": "10b9d53f834d87be707eed32a3a8814c9e5152f3c8eeb5d3d9a6a4418b344c85"
+    },
+    {
+      "name": "cosmic-files-thumbnailer",
+      "bytes": 6376384,
+      "sha256": "16cbef254bf09a2fda091e5490bbc118c1d198ba2b70de18aae8e9eaddf065f0"
+    }
+  ]
+}

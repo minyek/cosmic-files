@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "worktree": "/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-archive",
+  "source_sha256": "5a132494878f919a3511aef1acb1dd2bd2b95b6c35613f2eda55e9d18959ef52",
+  "results": [
+    {
+      "label": "baseline-green",
+      "exit_code": 0,
+      "log": "/mnt/logs/agent/sqmerge-archive-closure-3376657/baseline-green.log"
+    },
+    {
+      "label": "archive-mutant-red",
+      "exit_code": 101,
+      "log": "/mnt/logs/agent/sqmerge-archive-closure-3376657/archive-mutant-red.log"
+    },
+    {
+      "label": "rename-mutant-red",
+      "exit_code": 101,
+      "log": "/mnt/logs/agent/sqmerge-archive-closure-3376657/rename-mutant-red.log"
+    },
+    {
+      "label": "restored-green",
+      "exit_code": 0,
+      "log": "/mnt/logs/agent/sqmerge-archive-closure-3376657/restored-green.log"
+    }
+  ],
+  "source_restored": true
+}

@@ -235,19 +235,35 @@ impl AsRef<str> for MimeApp {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct MimeAppCache {
     apps: Vec<Arc<MimeApp>>,
     cache: FxHashMap<Mime, Vec<Arc<MimeApp>>>,
     terminals: Vec<Arc<MimeApp>>,
+    // Resolved during `reload`, which runs off-thread: `terminal` is called from the GUI
+    // thread, which must not spawn `xdg-mime`.
+    default_terminal_id: Option<String>,
+}
+
+/// IDs can contain an internal `.desktop` segment, as in `org.gnome.desktop.Terminal`.
+fn desktop_id(raw: &str) -> &str {
+    raw.strip_suffix(".desktop").unwrap_or(raw)
 }
 
 impl MimeAppCache {
-    pub fn new() -> Self {
-        let mut mime_app_cache = Self {
+    /// An empty cache that has not scanned desktop entries yet. Cheap and non-blocking, so it
+    /// can be built on the GUI thread while [`MimeAppCache::new`] runs in a background task.
+    pub fn empty() -> Self {
+        Self {
             apps: Vec::new(),
             cache: FxHashMap::default(),
             terminals: Vec::new(),
-        };
+            default_terminal_id: None,
+        }
+    }
+
+    pub fn new() -> Self {
+        let mut mime_app_cache = Self::empty();
         mime_app_cache.reload();
         mime_app_cache
     }
@@ -336,8 +352,7 @@ impl MimeAppCache {
         list.load_from_paths(&paths);
         let locales = fde::get_languages_from_env();
         let desktop_entries = fde::Iter::new(fde::default_paths()).entries(Some(&locales));
-        let mime_icon_cache = mime_icon::MIME_ICON_CACHE.lock().unwrap();
-        let shared_mime_info = &mime_icon_cache.shared_mime_info;
+        let shared_mime_info = &mime_icon::SHARED_MIME_INFO;
         let mut aliased_mimes = FxHashMap::default();
 
         for desktop_entry in desktop_entries {
@@ -452,7 +467,7 @@ impl MimeAppCache {
                 .flatten()
                 .chain(aliased_defaults.into_iter().flatten())
             {
-                let default = default.strip_suffix(".desktop").unwrap_or(default.as_ref());
+                let default = desktop_id(default.as_ref());
                 let mut found_any = false;
                 apps.retain(|app| {
                     let found = app.id.as_str() == default;
@@ -497,6 +512,8 @@ impl MimeAppCache {
             );
         }
 
+        self.default_terminal_id = Self::query_default_terminal();
+
         let elapsed = start.elapsed();
         tracing::info!(target: "mime-apps", "loaded mime app cache in {elapsed:?}");
     }
@@ -515,7 +532,7 @@ impl MimeAppCache {
             .map_or_else(Vec::new, |apps| apps.iter().map(|app| app.icon()).collect())
     }
 
-    fn get_default_terminal(&self) -> Option<String> {
+    fn query_default_terminal() -> Option<String> {
         let output = process::Command::new("xdg-mime")
             .args(["query", "default", "x-scheme-handler/terminal"])
             .output()
@@ -527,25 +544,21 @@ impl MimeAppCache {
 
         String::from_utf8(output.stdout)
             .ok()
-            .map(|string| string.trim().replace(".desktop", ""))
+            .map(|stdout| desktop_id(stdout.trim()).to_string())
     }
 
     pub fn terminal(&self) -> Option<&Arc<MimeApp>> {
         //TODO: consider rules in https://github.com/Vladimir-csp/xdg-terminal-exec
         // The current approach works but might not adhere to the spec (yet)
 
-        // Look for and return preferred terminals
-        //TODO: fallback order beyond cosmic-term?
-
-        let mut preference_order = vec!["com.system76.CosmicTerm".to_string()];
-
-        if let Some(id) = self.get_default_terminal() {
-            preference_order.insert(0, id);
-        }
-
-        for id in &preference_order {
+        for id in self
+            .default_terminal_id
+            .as_deref()
+            .into_iter()
+            .chain(std::iter::once("com.system76.CosmicTerm"))
+        {
             for terminal in &self.terminals {
-                if &terminal.id == id {
+                if terminal.id == id {
                     return Some(terminal);
                 }
             }
@@ -554,51 +567,131 @@ impl MimeAppCache {
         // Return whatever was the first terminal found
         self.terminals.first()
     }
+}
 
-    #[cfg(not(feature = "desktop"))]
-    pub fn set_default(&mut self, mime: Mime, id: String) {
-        log::warn!(
-            "failed to set default handler for {mime:?} to {id:?}: desktop feature not enabled"
-        );
+#[cfg(feature = "desktop")]
+struct DefaultAppUpdate {
+    preference: Option<(Mime, String)>,
+    completion: tokio::sync::oneshot::Sender<io::Result<()>>,
+}
+
+#[cfg(feature = "desktop")]
+struct DefaultAppWriter {
+    sender: std::sync::mpsc::Sender<DefaultAppUpdate>,
+}
+
+#[cfg(feature = "desktop")]
+impl DefaultAppWriter {
+    fn new(resolve_path: impl Fn() -> Option<PathBuf> + Send + 'static) -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel::<DefaultAppUpdate>();
+        std::thread::spawn(move || {
+            for update in receiver {
+                let result = update.preference.map_or(Ok(()), |(mime, id)| {
+                    resolve_path()
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "failed to find mimeapps.list path",
+                            )
+                        })
+                        .and_then(|path| write_default_at(&path, mime, id))
+                        .inspect_err(|err| log::warn!("failed to set default handler: {err}"))
+                });
+                let _ = update.completion.send(result);
+            }
+        });
+        Self { sender }
     }
 
+    fn submit(&self, mime: Mime, id: String) -> tokio::sync::oneshot::Receiver<io::Result<()>> {
+        self.enqueue(Some((mime, id)))
+    }
+
+    fn barrier(&self) -> tokio::sync::oneshot::Receiver<io::Result<()>> {
+        self.enqueue(None)
+    }
+
+    fn enqueue(
+        &self,
+        preference: Option<(Mime, String)>,
+    ) -> tokio::sync::oneshot::Receiver<io::Result<()>> {
+        let (completion, receiver) = tokio::sync::oneshot::channel();
+        if let Err(err) = self.sender.send(DefaultAppUpdate {
+            preference,
+            completion,
+        }) {
+            let _ = err.0.completion.send(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "failed to queue default handler update",
+            )));
+        }
+        receiver
+    }
+}
+
+#[cfg(feature = "desktop")]
+static DEFAULT_APP_WRITER: std::sync::LazyLock<DefaultAppWriter> =
+    std::sync::LazyLock::new(|| DefaultAppWriter::new(cosmic_mime_apps::local_list_path));
+
+pub(crate) fn barrier() -> tokio::sync::oneshot::Receiver<io::Result<()>> {
     #[cfg(feature = "desktop")]
-    pub fn set_default(&mut self, mime: Mime, mut id: String) {
-        let Some(path) = cosmic_mime_apps::local_list_path() else {
-            log::warn!("failed to find mimeapps.list path");
-            return;
-        };
-
-        let mut list = cosmic_mime_apps::List::default();
-        match fs::read_to_string(&path) {
-            Ok(string) => {
-                list.load_from(&string);
-            }
-            Err(err) => {
-                if err.kind() != io::ErrorKind::NotFound {
-                    log::warn!("failed to read {}: {}", path.display(), err);
-                    return;
-                }
-            }
-        }
-
-        let suffix = ".desktop";
-        if !id.ends_with(suffix) {
-            id.push_str(suffix);
-        }
-        list.set_default_app(mime, id);
-
-        let mut string = list.to_string();
-        string.push('\n');
-        match fs::write(&path, string) {
-            Ok(()) => {
-                self.reload();
-            }
-            Err(err) => {
-                log::warn!("failed to write {}: {}", path.display(), err);
-            }
-        }
+    {
+        DEFAULT_APP_WRITER.barrier()
     }
+    #[cfg(not(feature = "desktop"))]
+    {
+        let (completion, receiver) = tokio::sync::oneshot::channel();
+        let _ = completion.send(Ok(()));
+        receiver
+    }
+}
+
+pub(crate) fn queue_default(
+    mime: Mime,
+    id: String,
+) -> tokio::sync::oneshot::Receiver<io::Result<()>> {
+    #[cfg(feature = "desktop")]
+    {
+        DEFAULT_APP_WRITER.submit(mime, id)
+    }
+    #[cfg(not(feature = "desktop"))]
+    {
+        let (completion, receiver) = tokio::sync::oneshot::channel();
+        let _ = completion.send(Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "failed to set default handler for {mime:?} to {id:?}: desktop feature not enabled"
+            ),
+        )));
+        receiver
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn write_default_at(path: &Path, mime: Mime, mut id: String) -> io::Result<()> {
+    use std::io::Write;
+
+    let path = crate::atomic_file::resolve_destination(path)?;
+    let mut list = cosmic_mime_apps::List::default();
+    match fs::read_to_string(&path) {
+        Ok(string) => list.load_from(&string),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    if !id.ends_with(".desktop") {
+        id.push_str(".desktop");
+    }
+    list.set_default_app(mime, id);
+    let mut string = list.to_string();
+    string.push('\n');
+    let mut staged = crate::atomic_file::stage(&path)?;
+    if let Ok(metadata) = fs::metadata(&path) {
+        staged.as_file().set_permissions(metadata.permissions())?;
+    }
+    staged.write_all(string.as_bytes())?;
+    staged.as_file().sync_all()?;
+    staged.persist(path).map_err(|err| err.error)?;
+    Ok(())
 }
 
 impl Default for MimeAppCache {
@@ -609,7 +702,51 @@ impl Default for MimeAppCache {
 
 #[cfg(test)]
 mod tests {
-    use super::exec_to_command;
+    use super::{desktop_id, exec_to_command};
+
+    fn terminal_cache(ids: &[&str], preferred: Option<&str>) -> super::MimeAppCache {
+        let mut cache = super::MimeAppCache::empty();
+        cache.default_terminal_id = preferred.map(str::to_owned);
+        cache.terminals = ids
+            .iter()
+            .map(|id| {
+                std::sync::Arc::new(super::MimeApp {
+                    id: (*id).to_owned(),
+                    path: None,
+                    name: (*id).to_owned(),
+                    exec: None,
+                    icon_name: "terminal".into(),
+                    icon: std::sync::OnceLock::new(),
+                    is_default: Default::default(),
+                    no_display: Default::default(),
+                })
+            })
+            .collect();
+        cache
+    }
+
+    #[test]
+    fn an_empty_cache_has_no_terminal() {
+        assert!(super::MimeAppCache::empty().terminal().is_none());
+    }
+
+    #[test]
+    fn the_cached_default_terminal_outranks_the_fallback() {
+        let cache = terminal_cache(&["com.system76.CosmicTerm", "preferred"], Some("preferred"));
+        assert_eq!(cache.terminal().unwrap().id, "preferred");
+    }
+
+    #[test]
+    fn an_uninstalled_default_uses_the_preferred_fallback() {
+        let cache = terminal_cache(&["other", "com.system76.CosmicTerm"], Some("missing"));
+        assert_eq!(cache.terminal().unwrap().id, "com.system76.CosmicTerm");
+    }
+
+    #[test]
+    fn any_installed_terminal_is_a_last_resort() {
+        let cache = terminal_cache(&["other"], None);
+        assert_eq!(cache.terminal().unwrap().id, "other");
+    }
 
     #[test]
     fn keys_within_words() {
@@ -894,5 +1031,233 @@ mod tests {
                 .zip(command.get_args())
                 .all(|(&expected, actual)| expected == actual.to_string_lossy())
         );
+    }
+
+    #[test]
+    fn a_trailing_desktop_suffix_is_dropped() {
+        assert_eq!(
+            desktop_id("org.gnome.Terminal.desktop"),
+            "org.gnome.Terminal"
+        );
+    }
+
+    #[test]
+    fn a_desktop_segment_inside_an_id_is_kept() {
+        assert_eq!(
+            desktop_id("org.gnome.desktop.Terminal"),
+            "org.gnome.desktop.Terminal"
+        );
+    }
+
+    #[test]
+    fn an_id_without_the_suffix_is_unchanged() {
+        assert_eq!(
+            desktop_id("com.system76.CosmicTerm"),
+            "com.system76.CosmicTerm"
+        );
+    }
+    #[cfg(all(feature = "desktop", unix))]
+    #[test]
+    fn failed_default_write_preserves_existing_preferences() -> std::io::Result<()> {
+        const CHILD_PATH: &str = "COSMIC_TEST_FAIL_DEFAULT_WRITE";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            unsafe {
+                assert_ne!(libc::signal(libc::SIGXFSZ, libc::SIG_IGN), libc::SIG_ERR);
+                assert_eq!(
+                    libc::setrlimit(
+                        libc::RLIMIT_FSIZE,
+                        &libc::rlimit {
+                            rlim_cur: 0,
+                            rlim_max: 0
+                        }
+                    ),
+                    0
+                );
+            }
+            assert!(
+                super::write_default_at(
+                    std::path::Path::new(&path),
+                    "text/plain".parse().unwrap(),
+                    "editor".into(),
+                )
+                .is_err()
+            );
+            return Ok(());
+        }
+
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("mimeapps.list");
+        let original = b"[Default Applications]\nimage/png=viewer.desktop;\n";
+        std::fs::write(&path, original)?;
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "mime_app::tests::failed_default_write_preserves_existing_preferences",
+                "--nocapture",
+            ])
+            .env(CHILD_PATH, &path)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read(path)?, original);
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[cfg(all(feature = "desktop", unix))]
+    #[test]
+    fn default_write_preserves_a_dangling_symlink() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("mimeapps.list");
+        let target = dir.path().join("preferences");
+        std::os::unix::fs::symlink("preferences", &path)?;
+        super::write_default_at(&path, "text/plain".parse().unwrap(), "editor".into())?;
+        assert!(std::fs::symlink_metadata(&path)?.file_type().is_symlink());
+        assert!(target.is_file());
+        Ok(())
+    }
+
+    #[cfg(all(feature = "desktop", unix))]
+    #[test]
+    fn default_write_preserves_symlink_and_permissions() -> std::io::Result<()> {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = tempfile::TempDir::new()?;
+        let target = dir.path().join("preferences");
+        std::fs::create_dir(&target)?;
+        let target = target.join("mimeapps.list");
+        std::fs::write(
+            &target,
+            b"[Default Applications]\nimage/png=viewer.desktop;\n",
+        )?;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640))?;
+        let path = dir.path().join("mimeapps.list");
+        symlink("preferences/mimeapps.list", &path)?;
+        super::write_default_at(&path, "text/plain".parse().unwrap(), "editor".into())?;
+        assert!(std::fs::symlink_metadata(&path)?.file_type().is_symlink());
+        assert_eq!(
+            std::fs::metadata(&target)?.permissions().mode() & 0o777,
+            0o640
+        );
+        let mut list = cosmic_mime_apps::List::default();
+        list.load_from(&std::fs::read_to_string(target)?);
+        assert_eq!(
+            list.default_app_for(&"text/plain".parse().unwrap())
+                .unwrap()[0]
+                .as_ref(),
+            "editor.desktop"
+        );
+        assert_eq!(
+            list.default_app_for(&"image/png".parse().unwrap()).unwrap()[0].as_ref(),
+            "viewer.desktop"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn queued_defaults_preserve_both_mime_preferences() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("mimeapps.list");
+        let writer_path = path.clone();
+        let writer = super::DefaultAppWriter::new(move || Some(writer_path.clone()));
+        let text: super::Mime = "text/plain".parse().unwrap();
+        let image: super::Mime = "image/png".parse().unwrap();
+        let first = writer.submit(text.clone(), "editor".into());
+        let second = writer.submit(image.clone(), "viewer".into());
+        first.await.unwrap()?;
+        second.await.unwrap()?;
+        let mut list = cosmic_mime_apps::List::default();
+        list.load_from(&std::fs::read_to_string(path)?);
+        assert_eq!(
+            list.default_app_for(&text).unwrap()[0].as_ref(),
+            "editor.desktop"
+        );
+        assert_eq!(
+            list.default_app_for(&image).unwrap()[0].as_ref(),
+            "viewer.desktop"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn a_default_barrier_waits_for_the_preference_write() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("mimeapps.list");
+        let target = path.clone();
+        let (started, running) = std::sync::mpsc::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let writer = super::DefaultAppWriter::new(move || {
+            started.send(()).unwrap();
+            blocked.recv().unwrap();
+            Some(target.clone())
+        });
+        drop(writer.submit("text/plain".parse().unwrap(), "editor".into()));
+        running.recv().unwrap();
+        let mut completion = writer.barrier();
+        assert!(matches!(
+            completion.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        release.send(()).unwrap();
+        completion.await.unwrap()?;
+        assert!(std::fs::read_to_string(path)?.contains("editor.desktop"));
+        assert!(matches!(
+            running.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        Ok(())
+    }
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn queued_defaults_keep_the_last_submitted_preference() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("mimeapps.list");
+        let writer_path = path.clone();
+        let writer = super::DefaultAppWriter::new(move || Some(writer_path.clone()));
+        let mime: super::Mime = "text/plain".parse().unwrap();
+        let first = writer.submit(mime.clone(), "first".into());
+        let second = writer.submit(mime.clone(), "second".into());
+        second.await.unwrap()?;
+        first.await.unwrap()?;
+        let mut list = cosmic_mime_apps::List::default();
+        list.load_from(&std::fs::read_to_string(path)?);
+        assert_eq!(
+            list.default_app_for(&mime).unwrap()[0].as_ref(),
+            "second.desktop"
+        );
+        Ok(())
+    }
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn a_failed_default_write_does_not_stop_the_queue() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let parent = dir.path().join("config");
+        let path = parent.join("mimeapps.list");
+        let writer_path = path.clone();
+        let writer = super::DefaultAppWriter::new(move || Some(writer_path.clone()));
+        let mime: super::Mime = "text/plain".parse().unwrap();
+        let failed = writer.submit(mime.clone(), "first".into());
+        assert_eq!(
+            failed.await.unwrap().unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        std::fs::create_dir(parent)?;
+        writer
+            .submit(mime.clone(), "second".into())
+            .await
+            .unwrap()?;
+        let mut list = cosmic_mime_apps::List::default();
+        list.load_from(&std::fs::read_to_string(path)?);
+        assert_eq!(
+            list.default_app_for(&mime).unwrap()[0].as_ref(),
+            "second.desktop"
+        );
+        Ok(())
     }
 }

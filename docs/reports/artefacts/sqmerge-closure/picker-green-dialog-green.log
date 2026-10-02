@@ -1,0 +1,54 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-lifecycle)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 14s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 29 tests
+test dialog::tests::save_checked_prompts_before_replacing_a_file ... ok
+test dialog::tests::save_checked_accepts_a_file_once_replacing_is_confirmed ... ok
+test dialog::tests::a_save_check_cannot_survive_an_edit_back_to_the_same_name ... ok
+test dialog::tests::a_save_check_for_another_directory_is_ignored ... ok
+test dialog::tests::a_created_folder_cannot_replace_newer_navigation ... ok
+test dialog::tests::an_edit_back_to_the_same_name_cannot_revive_a_confirmation ... ok
+test dialog::tests::confirming_a_replacement_cannot_switch_to_an_edited_name ... ok
+test dialog::tests::a_save_check_after_cancellation_cannot_accept_a_file ... ok
+test dialog::tests::a_picker_result_waits_for_persistence_before_closing ... ok
+test dialog::tests::a_picker_leaves_unmounted_parent_paths ... ok
+test dialog::tests::save_defers_the_decision_instead_of_reading_the_listing ... ok
+test dialog::tests::save_navigation_intent_invalidates_an_earlier_save_check ... ok
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test dialog::tests::a_failed_folder_creation_cannot_reopen_a_cancelled_picker ... ok
+test dialog::tests::save_checked_enters_a_directory_of_that_name ... ok
+test dialog::tests::a_failed_folder_creation_reports_in_the_dialog ... ok
+test dialog::tests::a_save_check_for_an_edited_filename_is_ignored ... ok
+test dialog::tests::save_checked_accepts_a_name_nothing_holds ... ok
+test dialog::tests::a_failed_picker_scan_releases_only_its_own_request ... ok
+test dialog::tests::an_older_picker_navigation_cannot_replace_a_newer_request ... ok
+test dialog::tests::submitting_a_picker_location_opens_the_requested_directory ... ok
+test dialog::tests::a_created_folder_opens_in_the_picker ... ok
+test dialog::tests::picker_watch_updates_reconcile_navigation_during_the_worker ... ok
+test dialog::tests::a_failed_watch_does_not_resubmit_without_a_new_request ... ok
+test dialog::tests::repeated_save_checks_create_only_one_confirmation ... ok
+test dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.01s
+
+test dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result ... ok
+test dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.02s
+
+test dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result ... ok
+test dialog::tests::review_an_old_picker_scan_cannot_replace_a_newer_listing ... ok
+test dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.02s
+
+test dialog::tests::a_picker_direct_scan_cannot_release_a_newer_watcher_scan ... ok
+test dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 217 filtered out; finished in 0.03s

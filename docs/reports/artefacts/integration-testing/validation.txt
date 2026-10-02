@@ -1,0 +1,55 @@
+Gate exit: 0
+Runtime: 738 seconds
+Source base: 2ab787e
+Merged badge branch: 5783c59
+
+686: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+688: ACCEPTANCE_EXIT=0
+1382: warning: unused import: `self`
+1390: warning: unused imports: `SurfaceIdWrapper` and `self as iced_winit`
+1396: warning: unused imports: `Instant` and `self`
+1402: warning: unused import: `fs`
+1408: warning: unused import: `std::time::Instant`
+1414: warning: unused import: `fs`
+1420: warning: unused import: `StreamExt`
+1426: warning: unused import: `FutureExt`
+1432: warning: variable does not need to be mutable
+1442: warning: unused variable: `mounter_items`
+1450: warning: variable does not need to be mutable
+1458: warning: variable does not need to be mutable
+1466: warning: unused variable: `mounter_items`
+1472: warning: unused variable: `symbolic`
+1478: warning: variable does not need to be mutable
+1486: warning: unused variable: `path`
+1492: warning: unused variable: `path`
+1498: warning: variable does not need to be mutable
+1506: warning: variable does not need to be mutable
+1514: warning: function `err_str` is never used
+1522: warning: function `desktop_id` is never used
+1528: warning: associated function `query_default_terminal` is never used
+1537: warning: variants `Items`, `MountResult`, `NetworkAuth`, and `NetworkResult` are never constructed
+1554: warning: `cosmic-files` (lib) generated 23 warnings (run `cargo fix --lib -p cosmic-files` to apply 17 suggestions)
+1561: warning: `cosmic-files` (lib test) generated 22 warnings (22 duplicates)
+1593: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 0.01s
+1800: test result: ok. 227 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+1806: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+1817: test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+1824: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+1826: NO_DEFAULT_EXIT=0
+2543: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 241 filtered out; finished in 0.01s
+2767: test result: ok. 242 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+2773: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2785: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+2792: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+2794: DEFAULT_EXIT=0
+3517: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 241 filtered out; finished in 0.01s
+3741: test result: ok. 242 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+3747: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+3759: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+3766: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+3768: ALL_FEATURES_EXIT=0
+4431:     Finished `release` profile [optimized] target(s) in 2m 36s
+4581:     Finished `release` profile [optimized] target(s) in 1m 23s
+4635:     Finished `release` profile [optimized] target(s) in 21.88s
+4636: RELEASE_EXIT=0
+4637: DIFF_CHECK_EXIT=0

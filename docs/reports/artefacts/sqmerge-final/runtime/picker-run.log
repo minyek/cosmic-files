@@ -1,0 +1,21 @@
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.Daemon' requested by ':1.2' (uid=1001 pid=8 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.Daemon'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.UDisks2VolumeMonitor' requested by ':1.2' (uid=1001 pid=8 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+fuse: device /dev/fuse not found. Kernel module not loaded?
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.UDisks2VolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.AfcVolumeMonitor' requested by ':1.2' (uid=1001 pid=8 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.AfcVolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.GoaVolumeMonitor' requested by ':1.2' (uid=1001 pid=8 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gnome.OnlineAccounts' requested by ':1.6' (uid=1001 pid=257 comm="/usr/libexec/gvfs-goa-volume-monitor" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+goa-daemon-Message: 19:34:57.799: goa-daemon version 3.58.1 starting
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gnome.Identity' requested by ':1.7' (uid=1001 pid=262 comm="/usr/libexec/goa-daemon" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gnome.OnlineAccounts'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.GoaVolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.GPhoto2VolumeMonitor' requested by ':1.2' (uid=1001 pid=8 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gnome.Identity'
+
+(process:269): libgoaidentity-WARNING **: 19:34:57.808: GoaKerberosIdentityManager: Using polling for change notification for credential cache type 'KCM'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.GPhoto2VolumeMonitor'
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Activating service name='org.gtk.vfs.MTPVolumeMonitor' requested by ':1.2' (uid=1001 pid=8 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[3]: [session uid=1001 pid=3 pidfd=5] Successfully activated service 'org.gtk.vfs.MTPVolumeMonitor'
+A connection to the bus can't be made

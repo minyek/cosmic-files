@@ -2,7 +2,7 @@ use cosmic::widget;
 use regex::Regex;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use crate::config::IconSizes;
 use crate::tab::{Item, SearchItem};
@@ -26,9 +26,62 @@ fn percent_decode(s: &str) -> Option<String> {
     Some(r)
 }
 
+struct TrashState {
+    request: crate::navigation::PendingRequest,
+    is_empty: bool,
+}
+
+impl Default for TrashState {
+    fn default() -> Self {
+        Self {
+            request: crate::navigation::PendingRequest::default(),
+            is_empty: true,
+        }
+    }
+}
+
+impl TrashState {
+    fn begin(&mut self) -> widget::Id {
+        self.request.begin()
+    }
+
+    fn publish(&mut self, request: &widget::Id, is_empty: bool) -> bool {
+        if !self.request.finish(request) {
+            return false;
+        }
+        self.is_empty = is_empty;
+        true
+    }
+}
+
+static TRASH_STATE: LazyLock<Mutex<TrashState>> =
+    LazyLock::new(|| Mutex::new(TrashState::default()));
+
 pub trait TrashExt {
+    /// Walks trash directories across mounts; call from a background thread.
     fn is_empty() -> bool {
         true
+    }
+
+    fn is_empty_cached() -> bool {
+        TRASH_STATE
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .is_empty
+    }
+
+    fn begin_refresh() -> widget::Id {
+        TRASH_STATE
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .begin()
+    }
+
+    fn finish_refresh(request: &widget::Id, is_empty: bool) -> bool {
+        TRASH_STATE
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .publish(request, is_empty)
     }
 
     fn entries() -> usize {
@@ -49,7 +102,7 @@ pub trait TrashExt {
     fn scan_search<F: Fn(SearchItem) -> bool + Sync>(_callback: F, _regex: &Regex) {}
 
     fn icon(icon_size: u16) -> widget::icon::Handle {
-        widget::icon::from_name(if Self::is_empty() {
+        widget::icon::from_name(if Self::is_empty_cached() {
             "user-trash"
         } else {
             "user-trash-full"
@@ -59,7 +112,7 @@ pub trait TrashExt {
     }
 
     fn icon_symbolic(icon_size: u16) -> widget::icon::Handle {
-        widget::icon::from_name(if Self::is_empty() {
+        widget::icon::from_name(if Self::is_empty_cached() {
             "user-trash-symbolic"
         } else {
             "user-trash-full-symbolic"
@@ -224,3 +277,61 @@ impl TrashExt for Trash {
     )
 )))]
 impl TrashExt for Trash {}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::TrashExt;
+
+    static WALKED: AtomicBool = AtomicBool::new(false);
+
+    struct FullTrash;
+
+    impl TrashExt for FullTrash {
+        fn is_empty() -> bool {
+            WALKED.store(true, Ordering::Relaxed);
+            false
+        }
+    }
+
+    #[test]
+    fn the_icon_reads_the_cache_the_refresh_publishes() {
+        let mut cache = super::TrashState::default();
+        assert!(cache.is_empty);
+        let request = cache.begin();
+        assert!(cache.publish(&request, FullTrash::is_empty()));
+        assert!(!cache.is_empty);
+
+        WALKED.store(false, Ordering::Relaxed);
+        let _ = FullTrash::icon(16);
+        let _ = FullTrash::icon_symbolic(16);
+        assert!(
+            !WALKED.load(Ordering::Relaxed),
+            "the sidebar icons are built on the GUI thread and must read the cache, not walk \
+             every mount"
+        );
+    }
+
+    #[test]
+    fn review_an_old_trash_result_cannot_overwrite_a_newer_result() {
+        let mut cache = super::TrashState::default();
+        let old = cache.begin();
+        let new = cache.begin();
+        assert!(cache.publish(&new, false));
+        assert!(!cache.publish(&old, true));
+        assert!(!cache.is_empty);
+    }
+
+    #[test]
+    fn a_superseded_trash_result_cannot_publish_while_the_latest_is_pending() {
+        let mut cache = super::TrashState::default();
+        let old = cache.begin();
+        let current = cache.begin();
+        assert!(!cache.publish(&old, false));
+        assert!(cache.is_empty);
+        assert!(cache.publish(&current, false));
+        assert!(!cache.publish(&current, true));
+        assert!(!cache.is_empty);
+    }
+}

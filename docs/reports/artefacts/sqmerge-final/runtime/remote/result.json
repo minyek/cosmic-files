@@ -1,0 +1,159 @@
+{
+  "after_create": [
+    {
+      "display_name": "created-after-mount.txt",
+      "hidden": false,
+      "name": "created-after-mount.txt",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/created-after-mount.txt",
+      "size": 16,
+      "type": "file",
+      "uri": "ftp://127.0.0.1:38285/created-after-mount.txt"
+    },
+    {
+      "display_name": "created-folder",
+      "hidden": false,
+      "name": "created-folder",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/created-folder",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/created-folder"
+    },
+    {
+      "display_name": "empty-folder",
+      "hidden": false,
+      "name": "empty-folder",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/empty-folder",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/empty-folder"
+    },
+    {
+      "display_name": "nested",
+      "hidden": false,
+      "name": "nested",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/nested"
+    },
+    {
+      "display_name": "root-file.txt",
+      "hidden": false,
+      "name": "root-file.txt",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/root-file.txt",
+      "size": 13,
+      "type": "file",
+      "uri": "ftp://127.0.0.1:38285/root-file.txt"
+    }
+  ],
+  "after_remove": [
+    {
+      "display_name": "empty-folder",
+      "hidden": false,
+      "name": "empty-folder",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/empty-folder",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/empty-folder"
+    },
+    {
+      "display_name": "nested",
+      "hidden": false,
+      "name": "nested",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/nested"
+    },
+    {
+      "display_name": "root-file.txt",
+      "hidden": false,
+      "name": "root-file.txt",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/root-file.txt",
+      "size": 13,
+      "type": "file",
+      "uri": "ftp://127.0.0.1:38285/root-file.txt"
+    }
+  ],
+  "assertions": "PASS",
+  "backend": {
+    "filesystem_remote": true,
+    "filesystem_type": "ftp",
+    "root_path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285",
+    "target_uri": null
+  },
+  "initial": [
+    {
+      "display_name": "empty-folder",
+      "hidden": false,
+      "name": "empty-folder",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/empty-folder",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/empty-folder"
+    },
+    {
+      "display_name": "nested",
+      "hidden": false,
+      "name": "nested",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested",
+      "size": 0,
+      "type": "directory",
+      "uri": "ftp://127.0.0.1:38285/nested"
+    },
+    {
+      "display_name": "root-file.txt",
+      "hidden": false,
+      "name": "root-file.txt",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/root-file.txt",
+      "size": 13,
+      "type": "file",
+      "uri": "ftp://127.0.0.1:38285/root-file.txt"
+    }
+  ],
+  "nested": [
+    {
+      "display_name": "nested-file.txt",
+      "hidden": false,
+      "name": "nested-file.txt",
+      "path": "/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested/nested-file.txt",
+      "size": 15,
+      "type": "file",
+      "uri": "ftp://127.0.0.1:38285/nested/nested-file.txt"
+    }
+  ],
+  "production_scan": {
+    "after-create": [
+      "after-create: FUSE path scan PASS",
+      "after-create: PASS",
+      "created-after-mount.txt\ttype=file\tsize=Some(16)\tmime=text/plain\tlocation=ftp://127.0.0.1:38285/created-after-mount.txt\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/created-after-mount.txt\")",
+      "created-folder\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/created-folder\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/created-folder\")",
+      "empty-folder\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/empty-folder\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/empty-folder\")",
+      "nested\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/nested\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested\")",
+      "root-file.txt\ttype=file\tsize=Some(13)\tmime=text/plain\tlocation=ftp://127.0.0.1:38285/root-file.txt\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/root-file.txt\")"
+    ],
+    "after-remove": [
+      "after-remove: FUSE path scan PASS",
+      "after-remove: PASS",
+      "empty-folder\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/empty-folder\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/empty-folder\")",
+      "nested\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/nested\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested\")",
+      "root-file.txt\ttype=file\tsize=Some(13)\tmime=text/plain\tlocation=ftp://127.0.0.1:38285/root-file.txt\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/root-file.txt\")"
+    ],
+    "initial": [
+      "initial: FUSE path scan PASS",
+      "initial: PASS",
+      "empty-folder\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/empty-folder\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/empty-folder\")",
+      "nested\ttype=directory\tsize=None\tmime=inode/directory\tlocation=ftp://127.0.0.1:38285/nested\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested\")",
+      "root-file.txt\ttype=file\tsize=Some(13)\tmime=text/plain\tlocation=ftp://127.0.0.1:38285/root-file.txt\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/root-file.txt\")"
+    ],
+    "nested": [
+      "nested: FUSE path scan PASS",
+      "nested: PASS",
+      "nested-file.txt\ttype=file\tsize=Some(15)\tmime=text/plain\tlocation=ftp://127.0.0.1:38285/nested/nested-file.txt\tpath=Some(\"/mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/gvfs/ftp:host=127.0.0.1,port=38285/nested/nested-file.txt\")"
+    ]
+  },
+  "rename_noreplace": {
+    "existing_destination_preserved": true,
+    "supported": true
+  }
+}

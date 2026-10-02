@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "results": [
+    {
+      "label": "missing-handlers-red",
+      "exit": 101
+    },
+    {
+      "label": "wrong-offset-red",
+      "exit": 101
+    },
+    {
+      "label": "restored-green",
+      "exit": 0
+    }
+  ],
+  "source_sha256": "266074ee2a2a2fc8d23111a3d81a16838c7d919778ffece10a668715f0293f52",
+  "source_restored": true
+}

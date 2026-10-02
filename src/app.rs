@@ -36,7 +36,10 @@ use cosmic::widget::menu::key_bind::KeyBind;
 use cosmic::widget::segmented_button::{self, Entity, ReorderEvent};
 use cosmic::widget::{self, icon, settings, space};
 use cosmic::{Application, ApplicationExt, Element, cosmic_theme, executor, surface, theme};
+#[cfg(feature = "desktop")]
+use i18n_embed::LanguageLoader;
 use mime_guess::Mime;
+use notify_debouncer_full::notify::event::{EventKind, ModifyKind};
 use notify_debouncer_full::notify::{self, RecommendedWatcher};
 use notify_debouncer_full::{DebouncedEvent, Debouncer, RecommendedCache, new_debouncer};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -47,7 +50,9 @@ use std::future::Future;
 use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, LazyLock, Mutex};
+#[cfg(feature = "notify")]
+use std::sync::Mutex;
+use std::sync::{Arc, LazyLock};
 use std::time::{self, Duration, Instant};
 use std::{env, fmt, fs, io, process};
 use tokio::sync::mpsc;
@@ -72,7 +77,6 @@ use crate::mounter::{
 };
 use crate::operation::{
     Controller, Operation, OperationError, OperationErrorType, OperationSelection, ReplaceResult,
-    copy_unique_path,
 };
 use crate::spawn_detached::spawn_detached;
 use crate::tab::{
@@ -110,6 +114,102 @@ static MOUNT_ERROR_TRY_AGAIN_BUTTON_ID: LazyLock<widget::Id> =
 pub(crate) static REPLACE_BUTTON_ID: LazyLock<widget::Id> =
     LazyLock::new(|| widget::Id::new("replace-button"));
 
+/// Most recent completed/failed operations to retain for the history view.
+const MAX_OPERATION_HISTORY: usize = 256;
+
+/// Drop the oldest entries once an operation-history map exceeds [`MAX_OPERATION_HISTORY`]. The
+/// maps are keyed by an ascending operation id, so the smallest keys are the oldest.
+fn cap_operation_history<V>(history: &mut BTreeMap<u64, V>) {
+    while history.len() > MAX_OPERATION_HISTORY {
+        history.pop_first();
+    }
+}
+
+/// The retry an ExtractPassword dialog resolves to, or `None` when the failed operation
+/// cannot be retried: evicted from the capped history, or not an extract.
+fn retry_extract_with_password<C, E>(
+    failed_operations: &BTreeMap<u64, (Operation, C, E)>,
+    id: u64,
+    password: String,
+) -> Option<Operation> {
+    let (Operation::Extract { to, paths, .. }, _, _) = failed_operations.get(&id)? else {
+        return None;
+    };
+    Some(Operation::Extract {
+        to: to.clone(),
+        paths: paths.clone(),
+        password: Some(password),
+    })
+}
+
+/// The text a failed operation shows and copies, or `None` when it has left the
+/// failed-operations history.
+fn failed_operation_text<C, E: fmt::Display>(
+    failed_operations: &BTreeMap<u64, (Operation, C, E)>,
+    id: u64,
+) -> Option<String> {
+    let (operation, _, err) = failed_operations.get(&id)?;
+    //TODO: nice description of error
+    Some(format!("{operation:#?}\n{err}"))
+}
+
+/// The same text for several failed operations, skipping any that have left the history.
+fn failed_operations_text<C, E: fmt::Display>(
+    failed_operations: &BTreeMap<u64, (Operation, C, E)>,
+    ids: &[u64],
+) -> String {
+    ids.iter()
+        .filter_map(|id| failed_operation_text(failed_operations, *id))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// What a batch of watcher events did to a tab's listing.
+enum ListingChange {
+    /// Entries were added, removed or renamed: the listing has to be read again.
+    Structural,
+    /// Listed entries were written to: only their own metadata is out of date.
+    Entries(Vec<PathBuf>),
+    /// Nothing the tab displays changed.
+    None,
+}
+
+/// Work out what a debounced batch of watcher events means for the tab listing `dir`.
+fn classify_events(events: &[DebouncedEvent], dir: &Path) -> ListingChange {
+    let mut written = Vec::new();
+    for event in events {
+        let touches_dir = event.paths.iter().any(|path| path.starts_with(dir));
+        if !touches_dir {
+            continue;
+        }
+        match event.kind {
+            // Opening or reading a file leaves the listing alone.
+            EventKind::Access(_) => {}
+            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {
+                if event.paths.iter().any(|path| {
+                    path.parent() == Some(dir)
+                        && path.file_name().is_some_and(|name| name == ".hidden")
+                }) {
+                    return ListingChange::Structural;
+                }
+                written.extend(
+                    event
+                        .paths
+                        .iter()
+                        .filter(|path| path.parent() == Some(dir))
+                        .cloned(),
+                );
+            }
+            _ => return ListingChange::Structural,
+        }
+    }
+    if written.is_empty() {
+        ListingChange::None
+    } else {
+        ListingChange::Entries(written)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Mode {
     App,
@@ -146,7 +246,7 @@ pub enum Action {
     Eject,
     EmptyTrash,
     #[cfg(feature = "desktop")]
-    ExecEntryAction(usize),
+    ExecEntryAction(u64, usize),
     ExtractHere,
     ExtractTo,
     Gallery,
@@ -221,9 +321,10 @@ impl Action {
             Self::ExtractHere => Message::ExtractHere(entity_opt),
             Self::ExtractTo => Message::ExtractTo(entity_opt),
             #[cfg(feature = "desktop")]
-            Self::ExecEntryAction(action) => {
-                Message::TabMessage(entity_opt, tab::Message::ExecEntryAction(None, *action))
-            }
+            Self::ExecEntryAction(snapshot, action) => Message::TabMessage(
+                entity_opt,
+                tab::Message::ExecEntryAction(*snapshot, *action),
+            ),
             Self::Gallery => Message::TabMessage(entity_opt, tab::Message::GalleryToggle),
             Self::HistoryNext => Message::TabMessage(entity_opt, tab::Message::GoNext),
             Self::HistoryPrevious => Message::TabMessage(entity_opt, tab::Message::GoPrevious),
@@ -330,6 +431,68 @@ impl MenuAction for NavMenuAction {
     }
 }
 
+/// How a set of paths is to be opened, decided by sniffing their MIME types.
+#[derive(Clone, Debug)]
+pub enum OpenTargets {
+    /// Every path is a supported archive, in the order they were given, for the extract dialog.
+    Archives(Vec<PathBuf>),
+    /// Paths grouped by MIME type, so one app can be passed a whole group at once.
+    ByMime(FxHashMap<Mime, Vec<PathBuf>>),
+}
+
+impl OpenTargets {
+    /// Sorts `paths` into what can open them, given the `mimes` sniffed for them in the same
+    /// order. Grouping loses the caller's order, so the all-archive case keeps `paths` whole:
+    /// the extract dialog presents them in the order they were selected.
+    fn classify(paths: Vec<PathBuf>, mimes: Vec<Mime>) -> Self {
+        let supported_archive_types = crate::archive::SUPPORTED_ARCHIVE_TYPES;
+        if mimes
+            .iter()
+            .all(|mime| supported_archive_types.iter().copied().any(|t| *mime == t))
+        {
+            return Self::Archives(paths);
+        }
+        let mut groups: FxHashMap<Mime, Vec<PathBuf>> = FxHashMap::default();
+        for (mime, path) in mimes.into_iter().zip(paths) {
+            groups.entry(mime).or_default().push(path);
+        }
+        Self::ByMime(groups)
+    }
+}
+
+fn write_unique_file(to: &Path, name: &str, data: &[u8]) -> io::Result<PathBuf> {
+    use std::io::Write;
+
+    let name_path = Path::new(name);
+    let stem = name_path.file_stem().unwrap_or_default().to_string_lossy();
+    let extension = name_path.extension().map(|value| value.to_string_lossy());
+    for index in 0u64.. {
+        let candidate = if index == 0 {
+            name.to_string()
+        } else {
+            let copied = format!("{stem} ({} {index})", fl!("copy_noun"));
+            extension.as_ref().map_or_else(
+                || copied.clone(),
+                |extension| format!("{copied}.{extension}"),
+            )
+        };
+        let path = to.join(candidate);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(data)?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::other("failed to allocate a pasted file name"))
+}
+
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -340,11 +503,16 @@ pub enum Message {
     Config(Config),
     Copy(Option<Entity>),
     CopyPath(Option<Entity>),
+    CopyText(String),
     CopyTo(Option<Entity>),
     CopyToResult(DialogResult),
     CosmicSettings(&'static str),
     Cut(Option<Entity>),
     Delete(Option<Entity>),
+    DeleteClassified {
+        trash_paths: Vec<PathBuf>,
+        dialog_paths: Vec<PathBuf>,
+    },
     DesktopConfig(DesktopConfig),
     DesktopViewOptions,
     DesktopDialogs(bool),
@@ -363,6 +531,8 @@ pub enum Message {
     Key(window::Id, Modifiers, Key, Physical, Option<SmolStr>),
     LaunchUrl(String),
     MaybeExit,
+    PersistenceFlushed,
+    MimeAppCacheLoaded(widget::Id, MimeAppCache),
     ModifiersChanged(window::Id, Modifiers),
     MounterItems(MounterKey, MounterItems),
     MountResult(MounterKey, MounterItem, Result<bool, String>),
@@ -371,11 +541,30 @@ pub enum Message {
     MoveToResult(DialogResult),
     NavBarClose(Entity),
     NavBarContext(Entity),
+    NavContextInfoLoaded(Entity, widget::Id, NavContextInfo),
     NavMenuAction(NavMenuAction),
+    NavMenuOpenWith(PathBuf, Box<tab::Item>),
+    NavSelectChecked {
+        entity: Entity,
+        tab_entity: Entity,
+        request: widget::Id,
+        exists: bool,
+        is_dir: bool,
+    },
+    NavigationResolved {
+        entity: Entity,
+        request: widget::Id,
+        target: Option<(Location, Option<PathBuf>)>,
+    },
     NetworkAuth(MounterKey, String, MounterAuth, mpsc::Sender<MounterAuth>),
     NetworkDriveInput(String),
     NetworkDriveOpenEntityAfterMount {
         entity: Entity,
+    },
+    NavigationMounted {
+        entity: Entity,
+        tab_entity: Entity,
+        request: widget::Id,
     },
     NetworkDriveOpenTabAfterMount {
         location: Location,
@@ -388,6 +577,8 @@ pub enum Message {
     NotifyEvents(Vec<DebouncedEvent>),
     NotifyWatcher(WatcherWrapper),
     OpenTerminal(Option<Entity>),
+    OpenFileClassified(OpenTargets),
+    OpenLaunchLocations(Vec<(Location, Option<Vec<PathBuf>>)>),
     OpenInNewTab(Option<Entity>),
     OpenInNewWindow(Option<Entity>),
     OpenItemLocation(Option<Entity>),
@@ -421,6 +612,7 @@ pub enum Message {
     PendingPauseAll(bool),
     PermanentlyDelete(Option<Entity>),
     Preview(Option<Entity>),
+    PreviewReady(widget::Id, Option<Entity>, Box<tab::Item>),
     ReloadMimeAppCache,
     ReorderTab(ReorderEvent),
     RescanRecents,
@@ -446,21 +638,26 @@ pub enum Message {
     TabConfig(TabConfig),
     TabMessage(Option<Entity>, tab::Message),
     TabNew,
+    TabRefreshEntries(Entity, Location, Vec<tab::EntryRefresh>),
     TabRescan(
         Entity,
+        u64,
         Location,
         Option<Box<tab::Item>>,
         Vec<tab::Item>,
         Option<Vec<PathBuf>>,
     ),
+    TabRescanFailed(Entity, u64),
     TabView(Option<Entity>, tab::View),
     TimeConfigChange(TimeConfig),
     ToggleContextPage(ContextPage),
     ToggleFoldersFirst,
     ToggleShowHidden,
+    TrashStateRefreshed(widget::Id, bool),
     Undo(usize),
     UndoTrash(widget::ToastId, Arc<[PathBuf]>),
     UndoTrashStart(Vec<TrashItem>),
+    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>, FxHashSet<PathBuf>),
     WindowClose,
     WindowCloseRequested(window::Id),
     WindowMaximize(window::Id, bool),
@@ -704,6 +901,16 @@ struct Window {
     modifiers: Modifiers,
 }
 
+/// Filesystem facts about the sidebar entry whose context menu is open, computed off-thread
+/// when the menu opens: `nav_context_menu` is rebuilt every frame and must never stat the
+/// entry's path on the GUI thread.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NavContextInfo {
+    is_file: bool,
+    is_dir: bool,
+    has_recents: bool,
+}
+
 impl Window {
     fn new(kind: WindowKind) -> Self {
         Self {
@@ -718,6 +925,11 @@ pub struct App {
     core: Core,
     about: About,
     nav_bar_context_id: segmented_button::Entity,
+    nav_context_info: Option<(segmented_button::Entity, NavContextInfo)>,
+    nav_context_request: crate::navigation::PendingRequest,
+    navigation: crate::navigation::PendingRequest,
+    preview_request: crate::navigation::PendingRequest,
+    mime_cache_request: crate::navigation::PendingRequest,
     nav_model: segmented_button::SingleSelectModel,
     tab_model: segmented_button::Model<segmented_button::SingleSelect>,
     config_handler: Option<cosmic_config::Config>,
@@ -761,6 +973,9 @@ pub struct App {
         Debouncer<RecommendedWatcher, RecommendedCache>,
         FxHashSet<PathBuf>,
     )>,
+    // Set when update_watcher is called while a watch update is already running off-thread, so
+    // the watched-path set is reconciled once the in-flight update finishes.
+    watcher_update_pending: bool,
     windows: FxHashMap<window::Id, Window>,
     nav_dnd_hover: Option<(Location, Instant)>,
     tab_dnd_hover: Option<(Entity, Instant)>,
@@ -774,6 +989,111 @@ pub struct App {
 }
 
 impl App {
+    fn nav_context_items(&self, entity: Entity) -> Vec<widget::menu::Item<NavMenuAction, String>> {
+        let favorite_index_opt = self.nav_model.data::<FavoriteIndex>(entity);
+        let location_opt = self.nav_model.data::<Location>(entity);
+
+        let info = self
+            .nav_context_info
+            .filter(|(cached_entity, _)| *cached_entity == entity)
+            .map(|(_, info)| info);
+
+        let mut items = Vec::with_capacity(7);
+
+        if info.is_some_and(|info| info.is_file) {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("open"),
+                None,
+                NavMenuAction::Open(entity),
+            ));
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("menu-open-with"),
+                None,
+                NavMenuAction::OpenWith(entity),
+            ));
+        } else if info.is_some_and(|info| info.is_dir)
+            || location_opt.is_some_and(|location| location.path_opt().is_none())
+        {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("open-in-new-tab"),
+                None,
+                NavMenuAction::OpenInNewTab(entity),
+            ));
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("open-in-new-window"),
+                None,
+                NavMenuAction::OpenInNewWindow(entity),
+            ));
+        }
+        if location_opt.and_then(Location::path_opt).is_some() {
+            let action_items: Vec<_> = self
+                .config
+                .context_actions
+                .iter()
+                .enumerate()
+                .filter(|(_, action)| {
+                    action.selection == crate::context_action::ContextActionSelection::Any
+                        || info.is_some_and(|info| {
+                            (info.is_file || info.is_dir)
+                                && action.matches_selection(1, usize::from(info.is_dir))
+                        })
+                })
+                .map(|(i, action)| {
+                    cosmic::widget::menu::Item::Button(
+                        action.name.clone(),
+                        None,
+                        NavMenuAction::RunContextAction(entity, i),
+                    )
+                })
+                .collect();
+
+            if !action_items.is_empty() {
+                items.push(cosmic::widget::menu::Item::Divider);
+                items.extend(action_items);
+            }
+        }
+        items.push(cosmic::widget::menu::Item::Divider);
+        if matches!(location_opt, Some(Location::Path(..))) {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("show-details"),
+                None,
+                NavMenuAction::Preview(entity),
+            ));
+        }
+        items.push(cosmic::widget::menu::Item::Divider);
+        if favorite_index_opt.is_some() {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("change-sidebar-label"),
+                None,
+                NavMenuAction::ChangeSidebarLabel(entity),
+            ));
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("remove-from-sidebar"),
+                None,
+                NavMenuAction::RemoveFromSidebar(entity),
+            ));
+        }
+
+        if matches!(location_opt, Some(Location::Recents))
+            && info.is_some_and(|info| info.has_recents)
+        {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("clear-recents-history"),
+                None,
+                NavMenuAction::ClearRecents,
+            ));
+        }
+
+        if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("empty-trash"),
+                None,
+                NavMenuAction::EmptyTrash,
+            ));
+        }
+        items
+    }
+
     /// Returns true if the clipboard cache contains pasteable content
     fn clipboard_has_content(&self) -> bool {
         !matches!(self.clipboard_cache, ClipboardCache::Empty)
@@ -788,31 +1108,37 @@ impl App {
         }
     }
 
-    fn open_file(&mut self, paths: &[impl AsRef<Path>]) -> Task<Message> {
-        let mut tasks = Vec::new();
+    fn open_file(paths: &[impl AsRef<Path>]) -> Task<Message> {
+        // Associate all paths to its MIME type. This allows handling paths as groups if
+        // possible, such as launching a single video player that is passed every path.
+        //
+        // mime_for_path stats and reads each file's header to sniff its type, which blocks on
+        // slow/network mounts; classify off-thread and launch in Message::OpenFileClassified.
+        let paths: Vec<PathBuf> = paths.iter().map(|path| path.as_ref().to_owned()).collect();
+        Task::future(async move {
+            let targets = tokio::task::spawn_blocking(move || {
+                let mimes: Vec<Mime> = paths
+                    .iter()
+                    .map(|path| mime_icon::mime_for_path(path, None, false))
+                    .collect();
+                OpenTargets::classify(paths, mimes)
+            })
+            .await
+            .unwrap_or_else(|err| {
+                log::warn!("failed to classify paths for opening: {err}");
+                OpenTargets::ByMime(FxHashMap::default())
+            });
+            cosmic::action::app(Message::OpenFileClassified(targets))
+        })
+    }
 
-        // Associate all paths to its MIME type
-        // This allows handling paths as groups if possible, such as launching a single video
-        // player that is passed every path.
-        let mut groups: FxHashMap<Mime, Vec<PathBuf>> = FxHashMap::default();
-        let mut all_archives = true;
-        let supported_archive_types = crate::archive::SUPPORTED_ARCHIVE_TYPES;
-        for (mime, path) in paths.iter().map(|path| {
-            (
-                mime_icon::mime_for_path(path, None, false),
-                path.as_ref().to_owned(),
-            )
-        }) {
-            if all_archives && !supported_archive_types.iter().copied().any(|t| mime == t) {
-                all_archives = false;
-            }
-            groups.entry(mime).or_default().push(path);
-        }
-
-        if all_archives {
+    fn open_classified(&mut self, targets: OpenTargets) -> Task<Message> {
+        let groups = match targets {
             // Use extract to dialog if all selected paths are supported archives
-            return self.extract_to(paths);
-        }
+            OpenTargets::Archives(paths) => return self.extract_to(&paths),
+            OpenTargets::ByMime(groups) => groups,
+        };
+        let mut tasks = Vec::new();
 
         'outer: for (mime, paths) in groups {
             log::debug!("Attempting to launch app\n\tfor: {mime}\n\twith: {paths:?}");
@@ -821,8 +1147,15 @@ impl App {
             if mime == "application/x-desktop" {
                 #[cfg(feature = "desktop")]
                 {
-                    // Try opening desktop application
-                    Self::launch_desktop_entries(&paths);
+                    // DesktopEntry::from_path reads the .desktop file, which blocks on a slow/removable
+                    // mount; parse off-thread (the spawn_detached launch is already non-blocking).
+                    tasks.push(Task::future(async move {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            Self::launch_desktop_entries(&paths);
+                        })
+                        .await;
+                        cosmic::action::none()
+                    }));
                     continue;
                 }
             } else if mime == "application/x-executable" || mime == "application/vnd.appimage" {
@@ -863,23 +1196,16 @@ impl App {
             }
 
             // Fall back to using open crate
+            let mut opened = Vec::with_capacity(paths.len());
             for path in paths {
                 match open::that_detached(&path) {
-                    Ok(()) => {
-                        if self.config.show_recents {
-                            let _ = recently_used_xbel::update_recently_used(
-                                &path,
-                                Self::APP_ID.to_string(),
-                                "cosmic-files".to_string(),
-                                None,
-                            );
-                        }
-                    }
+                    Ok(()) => opened.push(path),
                     Err(err) => {
                         log::warn!("failed to open {}: {}", path.display(), err);
                     }
                 }
             }
+            self.record_recently_used(opened);
         }
 
         Task::batch(tasks)
@@ -935,6 +1261,16 @@ impl App {
         }
     }
 
+    fn record_recently_used(&self, paths: Vec<PathBuf>) {
+        if self.config.show_recents {
+            crate::recents::record_recently_used(paths, Self::APP_ID);
+        }
+    }
+
+    fn clear_recently_used() {
+        crate::recents::clear_recently_used();
+    }
+
     fn launch_from_mime_cache<P>(&self, mime: &Mime, paths: &[P]) -> bool
     where
         P: std::fmt::Debug + AsRef<Path> + AsRef<std::ffi::OsStr>,
@@ -948,16 +1284,12 @@ impl App {
             for (i, mut command) in commands.into_iter().enumerate() {
                 match spawn_detached(&mut command) {
                     Ok(()) => {
-                        if self.config.show_recents {
-                            for path in paths {
-                                let _ = recently_used_xbel::update_recently_used(
-                                    &path.into(),
-                                    Self::APP_ID.to_string(),
-                                    "cosmic-files".to_string(),
-                                    None,
-                                );
-                            }
-                        }
+                        self.record_recently_used(
+                            paths
+                                .iter()
+                                .map(|path| <P as AsRef<Path>>::as_ref(path).to_path_buf())
+                                .collect(),
+                        );
 
                         return true;
                     }
@@ -982,23 +1314,12 @@ impl App {
     }
 
     #[cfg(feature = "desktop")]
-    fn exec_entry_action(entry: &cosmic::desktop::DesktopEntryData, action: usize) {
-        if let Some(action) = entry.desktop_actions.get(action) {
-            // Largely copied from COSMIC app library
-            let mut exec = shlex::Shlex::new(&action.exec);
-            match exec.next() {
-                Some(cmd) if !cmd.contains('=') => {
-                    let mut proc = tokio::process::Command::new(cmd);
-                    proc.args(exec.filter(|arg| !arg.starts_with('%')));
-                    let _ = proc.spawn();
-                }
-                _ => (),
-            }
-        } else {
-            log::warn!(
-                "Invalid actions index `{action}` for desktop entry {}",
-                entry.name
-            );
+    fn exec_entry_action(command: &str) {
+        let mut exec = shlex::Shlex::new(command);
+        if let Some(cmd) = exec.next().filter(|cmd| !cmd.contains('=')) {
+            let mut proc = tokio::process::Command::new(cmd);
+            proc.args(exec.filter(|arg| !arg.starts_with('%')));
+            let _ = proc.spawn();
         }
     }
 
@@ -1083,7 +1404,7 @@ impl App {
             .sort_by(|a, b| (b.1.width * b.1.height).total_cmp(&(a.1.width * b.1.height)));
 
         for (w_id, overlap) in sorted_overlaps {
-            let Some((bl, br, tl, tr, mut size)) = self.layer_sizes.get(w_id).map(|s| {
+            let Some((bl, br, tl, tr, size)) = self.layer_sizes.get(w_id).map(|s| {
                 (
                     Rectangle::new(
                         Point::new(0., s.height / 2.),
@@ -1129,34 +1450,21 @@ impl App {
                 } else {
                     (overlap.width, 0.)
                 };
-            // just one quadrant with overlap
             if tl && !(tr || bl) {
                 *top += min_dim.1;
                 *left += min_dim.0;
-
-                size.height -= min_dim.1;
-                size.width -= min_dim.0;
             }
             if tr && !(tl || br) {
                 *top += min_dim.1;
                 *right += min_dim.0;
-
-                size.height -= min_dim.1;
-                size.width -= min_dim.0;
             }
             if bl && !(br || tl) {
                 *bottom += min_dim.1;
                 *left += min_dim.0;
-
-                size.height -= min_dim.1;
-                size.width -= min_dim.0;
             }
             if br && !(bl || tr) {
                 *bottom += min_dim.1;
                 *right += min_dim.0;
-
-                size.height -= min_dim.1;
-                size.width -= min_dim.0;
             }
         }
         self.margin = overlaps;
@@ -1170,6 +1478,10 @@ impl App {
         scrollable_id: widget::Id,
         window_id: Option<window::Id>,
     ) -> (Entity, Task<Message>) {
+        if activate {
+            self.navigation.invalidate();
+            self.preview_request.invalidate();
+        }
         let mut tab = Tab::new(
             location.clone(),
             self.config.tab,
@@ -1209,6 +1521,12 @@ impl App {
         (entity, Task::batch(tasks))
     }
 
+    /// Open the tab shown when no location was asked for: the working directory, or home.
+    fn open_default_tab(&mut self) -> Task<Message> {
+        let path = env::current_dir().unwrap_or_else(|_| home_dir());
+        self.open_tab(Location::Path(path), true, None)
+    }
+
     fn open_tab(
         &mut self,
         location: Location,
@@ -1226,26 +1544,48 @@ impl App {
     }
 
     // This wrapper ensures that local folders use trash and remote folders permanently delete with a dialog
-    fn delete(&mut self, paths: impl IntoIterator<Item = PathBuf>) -> Task<Message> {
-        let mut dialog_paths = Vec::new();
-        let mut trash_paths = Vec::new();
-
-        for path in paths {
-            //TODO: is there a smarter way to check this? (like checking for trash folders)
-            let can_trash = match path.metadata() {
-                Ok(metadata) => matches!(tab::fs_kind(&metadata), tab::FsKind::Local),
-                Err(err) => {
-                    log::warn!("failed to get metadata for {}: {}", path.display(), err);
-                    false
+    fn delete(paths: impl IntoIterator<Item = PathBuf>) -> Task<Message> {
+        let paths: Vec<PathBuf> = paths.into_iter().collect();
+        // Classifying trash vs permanent-delete stats each path, which blocks on slow mounts;
+        // do it off-thread and finish in Message::DeleteClassified.
+        Task::future(async move {
+            let (trash_paths, dialog_paths) = tokio::task::spawn_blocking(move || {
+                let mut trash_paths = Vec::new();
+                let mut dialog_paths = Vec::new();
+                for path in paths {
+                    //TODO: is there a smarter way to check this? (like checking for trash folders)
+                    let can_trash = match path.metadata() {
+                        Ok(metadata) => matches!(tab::fs_kind(&metadata), tab::FsKind::Local),
+                        Err(err) => {
+                            log::warn!("failed to get metadata for {}: {}", path.display(), err);
+                            false
+                        }
+                    };
+                    if can_trash {
+                        trash_paths.push(path);
+                    } else {
+                        dialog_paths.push(path);
+                    }
                 }
-            };
-            if can_trash {
-                trash_paths.push(path);
-            } else {
-                dialog_paths.push(path);
-            }
-        }
+                (trash_paths, dialog_paths)
+            })
+            .await
+            .unwrap_or_else(|err| {
+                log::warn!("failed to classify paths for deletion: {err}");
+                (Vec::new(), Vec::new())
+            });
+            cosmic::action::app(Message::DeleteClassified {
+                trash_paths,
+                dialog_paths,
+            })
+        })
+    }
 
+    fn delete_classified(
+        &mut self,
+        trash_paths: Vec<PathBuf>,
+        dialog_paths: Vec<PathBuf>,
+    ) -> Task<Message> {
         let mut tasks = Vec::new();
         if !dialog_paths.is_empty() {
             tasks.push(self.update(Message::DialogPush(
@@ -1386,6 +1726,7 @@ impl App {
                 }
 
                 self.complete_operations.insert(id, op);
+                cap_operation_history(&mut self.complete_operations);
             }
         }
         // Close progress notification if all relevant operations are finished
@@ -1402,6 +1743,8 @@ impl App {
         commands.push(self.rescan_operation_selection(op_sel));
         // Manually rescan any trash tabs after any operation is completed
         commands.push(self.rescan_trash());
+        // An operation may have changed the trash; refresh its cached state off-thread.
+        commands.push(Self::refresh_trash_state());
 
         Task::batch(commands)
     }
@@ -1428,6 +1771,7 @@ impl App {
                 self.progress_operations.remove(&id);
                 self.failed_operations
                     .insert(id, (op, controller, err.to_string()));
+                cap_operation_history(&mut self.failed_operations);
             }
         }
         if !failed.is_empty() {
@@ -1508,6 +1852,10 @@ impl App {
         selection_paths: Option<Vec<PathBuf>>,
     ) -> Task<Message> {
         log::info!("rescan_tab {entity:?} {location:?} {selection_paths:?}");
+        let Some(tab) = self.tab_model.data_mut::<Tab>(entity) else {
+            return Task::none();
+        };
+        let request = tab.scans.begin();
         let icon_sizes = self.config.tab.icon_sizes;
         let mounter_items = self.mounter_items.clone();
 
@@ -1532,6 +1880,7 @@ impl App {
 
                     cosmic::action::app(Message::TabRescan(
                         entity,
+                        request,
                         location,
                         parent_item_opt,
                         items,
@@ -1540,10 +1889,55 @@ impl App {
                 }
                 Err(err) => {
                     log::warn!("failed to rescan: {err}");
-                    cosmic::action::none()
+                    cosmic::action::app(Message::TabRescanFailed(entity, request))
                 }
             }
         })
+    }
+
+    fn rescan_tab_if_idle(&mut self, entity: Entity, location: Location) -> Option<Task<Message>> {
+        if self
+            .tab_model
+            .data_mut::<Tab>(entity)?
+            .scans
+            .defer_if_running()
+        {
+            return None;
+        }
+        Some(self.update_tab(entity, location, None))
+    }
+
+    fn refresh_tab_entries(
+        &mut self,
+        entity: Entity,
+        paths: Vec<PathBuf>,
+    ) -> Option<Task<Message>> {
+        let tab = self.tab_model.data_mut::<Tab>(entity)?;
+        let location = tab.location.clone();
+        let sizes = tab.config.icon_sizes;
+        let requests = tab.refresh_requests(paths);
+        Some(Task::future(async move {
+            let refreshed = tokio::task::spawn_blocking(move || {
+                requests
+                    .into_iter()
+                    .map(|(path, work_id)| {
+                        let item_opt = fs::metadata(&path).ok().and_then(|metadata| {
+                            let name = path.file_name()?.to_str()?.to_owned();
+                            Some(tab::item_from_entry(path.clone(), name, metadata, sizes))
+                        });
+                        tab::EntryRefresh {
+                            path,
+                            work_id,
+                            item_opt,
+                        }
+                    })
+                    .collect()
+            })
+            .await
+            .inspect_err(|err| log::warn!("failed to refresh watched entries: {err}"))
+            .unwrap_or_default();
+            cosmic::action::app(Message::TabRefreshEntries(entity, location, refreshed))
+        }))
     }
 
     fn rescan_trash(&mut self) -> Task<Message> {
@@ -1560,9 +1954,87 @@ impl App {
 
         let commands = needs_reload
             .into_iter()
-            .map(|(entity, location)| self.update_tab(entity, location, None));
+            .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
 
         Task::batch(commands)
+    }
+
+    fn refresh_trash_state() -> Task<Message> {
+        let request = Trash::begin_refresh();
+        Task::future(async move {
+            match tokio::task::spawn_blocking(Trash::is_empty).await {
+                Ok(is_empty) => {
+                    cosmic::action::app(Message::TrashStateRefreshed(request, is_empty))
+                }
+                Err(err) => {
+                    log::warn!("failed to read trash state: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
+    /// Rebuild the mime-app cache off-thread. Scanning every desktop entry (and resolving the
+    /// default terminal) blocks, so it must never run inline in `update`/`view`/`init`;
+    /// [`Message::MimeAppCacheLoaded`] swaps in the freshly built cache.
+    fn refresh_mime_app_cache(&mut self) -> Task<Message> {
+        let request = self.mime_cache_request.begin();
+        Task::future(async move {
+            match tokio::task::spawn_blocking(MimeAppCache::new).await {
+                Ok(cache) => cosmic::action::app(Message::MimeAppCacheLoaded(request, cache)),
+                Err(err) => {
+                    log::warn!("failed to reload mime app cache: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
+    /// Build the [`tab::Item`] for `path` off the GUI thread and hand it to `to_message`.
+    /// `item_from_path` does an `fs::metadata` plus a `read_dir`/gvfs stat, which blocks on a
+    /// dead or slow mount.
+    fn item_from_path_task(
+        path: PathBuf,
+        to_message: impl FnOnce(PathBuf, Box<tab::Item>) -> Message + Send + 'static,
+    ) -> Task<Message> {
+        Task::future(async move {
+            match tokio::task::spawn_blocking(move || {
+                let item = tab::item_from_path(&path, IconSizes::default());
+                (path, item)
+            })
+            .await
+            {
+                Ok((path, Ok(item))) => cosmic::action::app(to_message(path, Box::new(item))),
+                Ok((path, Err(err))) => {
+                    log::warn!("failed to get item from path {}: {}", path.display(), err);
+                    cosmic::action::none()
+                }
+                Err(err) => {
+                    log::warn!("failed to get item from path: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
+    fn write_pasted_file(
+        to: PathBuf,
+        base_name: String,
+        data: impl AsRef<[u8]> + Send + 'static,
+        label: &'static str,
+    ) -> Task<Message> {
+        Task::future(async move {
+            match tokio::task::spawn_blocking(move || {
+                write_unique_file(&to, &base_name, data.as_ref())
+            })
+            .await
+            {
+                Ok(Ok(path)) => log::info!("pasted {label} saved to {}", path.display()),
+                Ok(Err(err)) => log::error!("failed to save pasted {label}: {err}"),
+                Err(err) => log::error!("failed to save pasted {label}: {err}"),
+            }
+            cosmic::action::none()
+        })
     }
 
     fn rescan_recents(&mut self) -> Task<Message> {
@@ -1579,7 +2051,7 @@ impl App {
 
         let commands = needs_reload
             .into_iter()
-            .map(|(entity, location)| self.update_tab(entity, location, None));
+            .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
 
         Task::batch(commands)
     }
@@ -1604,6 +2076,8 @@ impl App {
         term_opt: Option<String>,
         selection_paths: Option<Vec<PathBuf>>,
     ) -> Task<Message> {
+        self.navigation.invalidate();
+        self.preview_request.invalidate();
         let mut title_location_opt = None;
         if let Some(tab) = self.tab_model.data_mut::<Tab>(tab) {
             let location_opt = match term_opt {
@@ -1673,6 +2147,30 @@ impl App {
                     .into_iter()
                     .filter_map(Location::into_path_opt)
             })
+    }
+
+    // Selected paths paired with their cached directory flag, read from already-scanned
+    // metadata so deciding dir-vs-file never stats the filesystem on the GUI thread.
+    fn selected_paths_with_dir(&self, entity_opt: Option<Entity>) -> Vec<(PathBuf, bool)> {
+        let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
+        self.tab_model
+            .data::<Tab>(entity)
+            .map(Tab::selected_paths_with_dir)
+            .unwrap_or_default()
+    }
+
+    /// Whether `name` already exists in `dir`, with its directory flag, read from the
+    /// already-scanned listing of a tab showing `dir`: the dialog builders run in `view` every
+    /// frame and must not block on a slow/network mount. `None` means absent, or that no open
+    /// tab is showing `dir`; the create/rename operation remains the authoritative collision
+    /// guard.
+    fn existing_entry_in_dir(&self, dir: &Path, name: &str) -> Option<bool> {
+        self.tab_model.iter().find_map(|entity| {
+            let tab = self.tab_model.data::<Tab>(entity)?;
+            tab.lists_directory(dir)
+                .then(|| tab.find_entry_is_dir(name))
+                .flatten()
+        })
     }
 
     fn set_cut(&mut self, entity_opt: Option<Entity>) {
@@ -1752,15 +2250,10 @@ impl App {
             if let Some(path) = favorite.path_opt() {
                 let name = favorite.display_name().unwrap_or_else(|| fl!("filesystem"));
                 nav_model = nav_model.insert(move |b| {
+                    // Favorites are directories; use the folder icon without stat-ing the
+                    // path, which would block the GUI thread on slow/network mounts.
                     b.text(name.clone())
-                        .icon(
-                            icon::icon(if path.is_dir() {
-                                tab::folder_icon_symbolic(&path, 16)
-                            } else {
-                                icon::from_name("text-x-generic-symbolic").size(16).handle()
-                            })
-                            .size(16),
-                        )
+                        .icon(icon::icon(tab::folder_icon_symbolic(&path, 16)).size(16))
                         .data(match favorite {
                             Favorite::Network { uri, name, path } => {
                                 Location::Network(uri.clone(), name.clone(), Some(path.to_owned()))
@@ -1872,50 +2365,83 @@ impl App {
         }
     }
 
-    fn update_watcher(&mut self) -> Task<Message> {
-        if let Some((mut watcher, old_paths)) = self.watcher_opt.take() {
-            let new_paths: FxHashSet<_> = self
-                .tab_model
-                .iter()
-                .filter_map(|entity| {
-                    let tab = self.tab_model.data::<Tab>(entity)?;
-                    tab.location.path_opt().cloned()
-                })
-                .collect();
+    /// The directories the open tabs show — the set the watcher should be watching.
+    fn open_directory_paths(&self) -> FxHashSet<PathBuf> {
+        self.tab_model
+            .iter()
+            .filter_map(|entity| {
+                let tab = self.tab_model.data::<Tab>(entity)?;
+                tab.location.path_opt().cloned()
+            })
+            .collect()
+    }
 
-            // Unwatch paths no longer used
-            for path in &old_paths {
-                if !new_paths.contains(path) {
-                    match watcher.unwatch(path) {
-                        Ok(()) => {
-                            log::debug!("unwatching {}", path.display());
-                        }
-                        Err(err) => {
-                            log::debug!("failed to unwatch {}: {}", path.display(), err);
-                        }
-                    }
+    fn leave_unmounted_paths(&mut self, unmounted: &[PathBuf]) -> Task<Message> {
+        let mut commands = Vec::new();
+        {
+            let home_location = Location::Path(home_dir());
+            let entities: Box<[_]> = self.tab_model.iter().collect();
+            for entity in entities {
+                let title_opt = self.tab_model.data_mut::<Tab>(entity).and_then(|tab| {
+                    unmounted
+                        .iter()
+                        .any(|unmounted| {
+                            tab.location
+                                .path_opt()
+                                .is_some_and(|location| location.starts_with(unmounted))
+                        })
+                        .then(|| {
+                            tab.change_location(&home_location, None);
+                            tab.title()
+                        })
+                });
+                if let Some(title) = title_opt {
+                    self.navigation.invalidate();
+                    self.tab_model.text_set(entity, title);
+                    commands.push(self.update_tab(entity, home_location.clone(), None));
                 }
             }
-
-            // Watch new paths
-            for path in &new_paths {
-                if !old_paths.contains(path) {
-                    match watcher.watch(path, notify::RecursiveMode::NonRecursive) {
-                        Ok(()) => {
-                            log::debug!("watching {}", path.display());
-                        }
-                        Err(err) => {
-                            log::debug!("failed to watch {}: {}", path.display(), err);
-                        }
-                    }
-                }
+            if !commands.is_empty() {
+                commands.push(self.update_title());
+                commands.push(self.update_watcher());
             }
-
-            self.watcher_opt = Some((watcher, new_paths));
         }
 
-        //TODO: should any of this run in a command?
-        Task::none()
+        Task::batch(commands)
+    }
+
+    fn update_watcher(&mut self) -> Task<Message> {
+        let Some((watcher, old_paths)) = self.watcher_opt.take() else {
+            // A watch update is already running off-thread; reconcile once it finishes.
+            self.watcher_update_pending = true;
+            return Task::none();
+        };
+
+        let new_paths = self.open_directory_paths();
+
+        // watch()/unwatch() call inotify_add_watch, which resolves the path and blocks on a
+        // cold/slow mount; run them off-thread and restore the watcher in WatcherUpdated.
+        Task::future(async move {
+            let requested = new_paths.clone();
+            let watcher = tokio::task::spawn_blocking(move || {
+                crate::watcher::reconcile(watcher, old_paths, new_paths)
+            })
+            .await;
+
+            match watcher {
+                Ok((watcher, new_paths)) => cosmic::action::app(Message::WatcherUpdated(
+                    WatcherWrapper {
+                        watcher_opt: Some(watcher),
+                    },
+                    new_paths,
+                    requested,
+                )),
+                Err(err) => {
+                    log::warn!("failed to update watcher: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
     }
 
     fn network_drive(&self) -> Element<'_, Message> {
@@ -2406,6 +2932,11 @@ impl Application for App {
             core,
             about,
             nav_bar_context_id: segmented_button::Entity::null(),
+            nav_context_info: None,
+            nav_context_request: crate::navigation::PendingRequest::default(),
+            navigation: crate::navigation::PendingRequest::default(),
+            preview_request: crate::navigation::PendingRequest::default(),
+            mime_cache_request: crate::navigation::PendingRequest::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
             tab_model: segmented_button::ModelBuilder::default().build(),
             config_handler: flags.config_handler,
@@ -2420,7 +2951,8 @@ impl Application for App {
             dialog_text_input: widget::Id::new("Dialog Text Input"),
             key_binds,
             margin: FxHashMap::default(),
-            mime_app_cache: MimeAppCache::new(),
+            // Populated off-thread so scanning every desktop entry never blocks startup.
+            mime_app_cache: MimeAppCache::empty(),
             modifiers: Modifiers::empty(),
             mounter_items: FxHashMap::default(),
             must_save_sort_names: false,
@@ -2444,6 +2976,7 @@ impl Application for App {
             surface_names: FxHashMap::default(),
             toasts: widget::toaster::Toasts::new(Message::CloseToast),
             watcher_opt: None,
+            watcher_update_pending: false,
             windows: FxHashMap::default(),
             nav_dnd_hover: None,
             tab_dnd_hover: None,
@@ -2458,21 +2991,41 @@ impl Application for App {
             layer_sizes: FxHashMap::default(),
         };
 
-        let mut commands = vec![app.update_config(), app.update(Message::CheckClipboard)];
+        let mut commands = vec![
+            app.update_config(),
+            app.update(Message::CheckClipboard),
+            // Compute the trash empty/full state off-thread so the nav icon never blocks init.
+            App::refresh_trash_state(),
+            // Scan desktop entries off-thread so the mime-app cache never blocks init.
+            app.refresh_mime_app_cache(),
+        ];
 
-        for location in flags.locations {
-            if let Some(path) = location.path_opt()
-                && path.is_file()
-                && let Some(parent) = path.parent()
-            {
-                commands.push(app.open_tab(
-                    Location::Path(parent.to_path_buf()),
-                    true,
-                    Some(vec![path.clone()]),
-                ));
-                continue;
-            }
-            commands.push(app.open_tab(location, true, None));
+        // Resolving each launch location stats it (a file argument opens its parent with the
+        // file selected), which blocks init on a slow mount; do it off-thread and open the
+        // tabs in Message::OpenLaunchLocations.
+        let launch_locations = flags.locations;
+        let has_launch_locations = !launch_locations.is_empty();
+        if has_launch_locations {
+            commands.push(Task::future(async move {
+                let resolved = tokio::task::spawn_blocking(move || {
+                    launch_locations
+                        .into_iter()
+                        .map(|location| {
+                            let redirect =
+                                location.path_opt().filter(|path| path.is_file()).and_then(
+                                    |path| Some((path.parent()?.to_path_buf(), path.clone())),
+                                );
+                            match redirect {
+                                Some((parent, file)) => (Location::Path(parent), Some(vec![file])),
+                                None => (location, None),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .unwrap_or_default();
+                cosmic::action::app(Message::OpenLaunchLocations(resolved))
+            }));
         }
         for location in flags.uris {
             if let Some(e) = app.nav_model.iter().find(|e| {
@@ -2486,12 +3039,10 @@ impl Application for App {
             }
         }
 
-        if app.tab_model.entity_at(0).is_none() {
-            if let Ok(current_dir) = env::current_dir() {
-                commands.push(app.open_tab(Location::Path(current_dir), true, None));
-            } else {
-                commands.push(app.open_tab(Location::Path(home_dir()), true, None));
-            }
+        // Launch locations open off-thread, so tab_model is still empty here even when
+        // locations were given; gate the default tab on whether any were passed.
+        if !has_launch_locations && app.tab_model.entity_at(0).is_none() {
+            commands.push(app.open_default_tab());
         }
 
         (app, Task::batch(commands))
@@ -2540,99 +3091,10 @@ impl Application for App {
     }
 
     fn nav_context_menu(&self) -> Option<Vec<widget::menu::Tree<cosmic::Action<Self::Message>>>> {
-        let items = self.nav_model.iter().map(|entity| {
-            let favorite_index_opt = self.nav_model.data::<FavoriteIndex>(entity);
-            let location_opt = self.nav_model.data::<Location>(entity);
-
-            let mut items: Vec<widget::menu::Item<NavMenuAction, String>> = Vec::with_capacity(7);
-
-            if location_opt
-                .and_then(Location::path_opt)
-                .is_some_and(|x| x.is_file())
-            {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("open"),
-                    None,
-                    NavMenuAction::Open(entity),
-                ));
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("menu-open-with"),
-                    None,
-                    NavMenuAction::OpenWith(entity),
-                ));
-            } else {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("open-in-new-tab"),
-                    None,
-                    NavMenuAction::OpenInNewTab(entity),
-                ));
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("open-in-new-window"),
-                    None,
-                    NavMenuAction::OpenInNewWindow(entity),
-                ));
-            }
-            if let Some(path) = location_opt.and_then(Location::path_opt) {
-                let selected_dir = usize::from(path.is_dir());
-                let action_items: Vec<_> = self
-                    .config
-                    .context_actions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, action)| action.matches_selection(1, selected_dir))
-                    .map(|(i, action)| {
-                        cosmic::widget::menu::Item::Button(
-                            action.name.clone(),
-                            None,
-                            NavMenuAction::RunContextAction(entity, i),
-                        )
-                    })
-                    .collect();
-
-                if !action_items.is_empty() {
-                    items.push(cosmic::widget::menu::Item::Divider);
-                    items.extend(action_items);
-                }
-            }
-            items.push(cosmic::widget::menu::Item::Divider);
-            if matches!(location_opt, Some(Location::Path(..))) {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("show-details"),
-                    None,
-                    NavMenuAction::Preview(entity),
-                ));
-            }
-            items.push(cosmic::widget::menu::Item::Divider);
-            if favorite_index_opt.is_some() {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("change-sidebar-label"),
-                    None,
-                    NavMenuAction::ChangeSidebarLabel(entity),
-                ));
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("remove-from-sidebar"),
-                    None,
-                    NavMenuAction::RemoveFromSidebar(entity),
-                ));
-            }
-
-            if matches!(location_opt, Some(Location::Recents)) && tab::has_recents() {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("clear-recents-history"),
-                    None,
-                    NavMenuAction::ClearRecents,
-                ));
-            }
-
-            if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty() {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("empty-trash"),
-                    None,
-                    NavMenuAction::EmptyTrash,
-                ));
-            }
-            items
-        });
+        let items = self
+            .nav_model
+            .iter()
+            .map(|entity| self.nav_context_items(entity));
 
         Some(cosmic::widget::menu::nav_context(
             &HashMap::new(),
@@ -2648,97 +3110,32 @@ impl Application for App {
     }
 
     fn on_nav_select(&mut self, entity: Entity) -> Task<Self::Message> {
+        let request = self.navigation.begin();
+        let tab_entity = self.tab_model.active();
         self.nav_model.activate(entity);
         if let Some(location) = self.nav_model.data::<Location>(entity) {
-            let should_open = match location {
-                #[cfg(feature = "gvfs")]
-                Location::Network(uri, name, Some(path))
-                    if !path.try_exists().unwrap_or_default() =>
-                {
-                    let mut found = false;
-
-                    if let Some(key) = self
-                        .mounter_items
-                        .iter()
-                        .find_map(|(k, items)| {
-                            items.iter().find_map(|item| {
-                                found |= item.path().is_some_and(|p| path.starts_with(&p))
-                                    || item.name() == *name
-                                    || item.uri() == *uri;
-                                (!item.is_mounted() && found).then_some(*k)
-                            })
-                        })
-                        .or(if found {
-                            None
-                        } else {
-                            // TODO do we need to choose the correct mounter?
-                            self.mounter_items.keys().copied().next()
-                        })
-                        && let Some(mounter) = MOUNTERS.get(&key)
-                    {
-                        return mounter.network_drive(uri.clone()).map(move |mounted| {
-                            if mounted {
-                                cosmic::Action::App(Message::NetworkDriveOpenEntityAfterMount {
-                                    entity,
-                                })
-                            } else {
-                                cosmic::action::none()
-                            }
-                        });
-                    }
-
-                    log::warn!(
-                        "failed to open favorite, path does not exist: {}",
-                        path.display()
-                    );
-                    return self.push_dialog(
-                        DialogPage::FavoritePathError {
-                            path: path.clone(),
-                            entity,
-                        },
-                        Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
-                    );
-                }
-                Location::Path(path) | Location::Network(_, _, Some(path)) => {
-                    match path.try_exists() {
-                        Ok(true) => true,
-                        Ok(false) => {
-                            log::warn!(
-                                "failed to open favorite, path does not exist: {}",
-                                path.display()
-                            );
-                            return self.push_dialog(
-                                DialogPage::FavoritePathError {
-                                    path: path.clone(),
-                                    entity,
-                                },
-                                Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
-                            );
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "failed to open favorite for path: {}, {}",
-                                path.display(),
-                                err
-                            );
-                            return self.push_dialog(
-                                DialogPage::FavoritePathError {
-                                    path: path.clone(),
-                                    entity,
-                                },
-                                Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
-                            );
-                        }
-                    }
-                }
-
-                _ => true,
-            };
-
-            if should_open {
-                let message = Message::TabMessage(None, tab::Message::Location(location.clone()));
-                return self.update(message);
+            // Path-bearing favorites/mounts need an existence check (and dir-vs-file decision)
+            // that stats the path; on a dead or slow network favorite that blocks the GUI
+            // thread, so compute it off-thread and branch in Message::NavSelectChecked.
+            if let Some(path) = location.path_opt().cloned() {
+                return Task::future(async move {
+                    let (exists, is_dir) = tokio::task::spawn_blocking(move || {
+                        (path.try_exists().unwrap_or(false), path.is_dir())
+                    })
+                    .await
+                    .unwrap_or((false, false));
+                    cosmic::action::app(Message::NavSelectChecked {
+                        entity,
+                        tab_entity,
+                        request,
+                        exists,
+                        is_dir,
+                    })
+                });
             }
+            // Locations without a path (Trash, Recents, Desktop, ...) open with no I/O.
+            let message = Message::TabMessage(None, tab::Message::Location(location.clone()));
+            return self.update(message);
         }
         if let Some(data) = self.nav_model.data::<MounterData>(entity)
             && let Some(mounter) = MOUNTERS.get(&data.0)
@@ -2789,6 +3186,7 @@ impl Application for App {
         // Usually, the Escape key (for example) closes menus and panes one by one instead
         // of closing everything on one press
         if self.core.window.show_context {
+            self.preview_request.invalidate();
             self.set_show_context(false);
             return cosmic::task::message(cosmic::action::app(Message::SetShowDetails(false)));
         }
@@ -2954,6 +3352,9 @@ impl Application for App {
                 let text = path_strings.join("\n");
                 return clipboard::write(text);
             }
+            Message::CopyText(text) => {
+                return clipboard::write(text);
+            }
             Message::CopyTo(entity_opt) => {
                 let selected_paths: Box<[_]> = self.selected_paths(entity_opt).collect();
                 return self.copy_to(&selected_paths);
@@ -3035,10 +3436,16 @@ impl Application for App {
                     } else {
                         let paths: Box<[_]> = self.selected_paths(entity_opt).collect();
                         if !paths.is_empty() {
-                            return self.delete(paths);
+                            return Self::delete(paths);
                         }
                     }
                 }
+            }
+            Message::DeleteClassified {
+                trash_paths,
+                dialog_paths,
+            } => {
+                return self.delete_classified(trash_paths, dialog_paths);
             }
             Message::DesktopConfig(config) => {
                 if config != self.config.desktop {
@@ -3141,16 +3548,12 @@ impl Application for App {
                             log::warn!("TODO: retry operations");
                         }
                         DialogPage::ExtractPassword { id, password } => {
-                            let (operation, _, _err) = self.failed_operations.get(&id).unwrap();
-                            let new_op = match &operation {
-                                Operation::Extract { to, paths, .. } => Operation::Extract {
-                                    to: to.clone(),
-                                    paths: paths.clone(),
-                                    password: Some(password),
-                                },
-                                _ => unreachable!(),
-                            };
-                            tasks.push(self.operation(new_op));
+                            // The failed operation may have been evicted from the capped history.
+                            match retry_extract_with_password(&self.failed_operations, id, password)
+                            {
+                                Some(new_op) => tasks.push(self.operation(new_op)),
+                                None => log::warn!("failed operation {id} not available to retry"),
+                            }
                         }
                         DialogPage::MountError {
                             mounter_key,
@@ -3214,14 +3617,7 @@ impl Application for App {
                                 {
                                     match spawn_detached(&mut command) {
                                         Ok(()) => {
-                                            if self.config.show_recents {
-                                                let _ = recently_used_xbel::update_recently_used(
-                                                    &path,
-                                                    Self::APP_ID.to_string(),
-                                                    "cosmic-files".to_string(),
-                                                    None,
-                                                );
-                                            }
+                                            self.record_recently_used(vec![path.clone()]);
                                         }
                                         Err(err) => {
                                             log::warn!(
@@ -3423,7 +3819,14 @@ impl Application for App {
             }
             Message::MaybeExit => {
                 if self.core.main_window_id().is_none() && self.pending_operations.is_empty() {
-                    // Exit if window is closed and there are no pending operations
+                    return Task::future(async {
+                        crate::persistence::flush().await;
+                        cosmic::action::app(Message::PersistenceFlushed)
+                    });
+                }
+            }
+            Message::PersistenceFlushed => {
+                if self.core.main_window_id().is_none() && self.pending_operations.is_empty() {
                     process::exit(0);
                 }
             }
@@ -3470,35 +3873,7 @@ impl Application for App {
                     }
                 }
 
-                // Go back to home in any tabs that were unmounted
-                let mut commands = Vec::new();
-                {
-                    let home_location = Location::Path(home_dir());
-                    let entities: Box<[_]> = self.tab_model.iter().collect();
-                    for entity in entities {
-                        let title_opt = self.tab_model.data_mut::<Tab>(entity).and_then(|tab| {
-                            unmounted
-                                .iter()
-                                .any(|unmounted| {
-                                    tab.location
-                                        .path_opt()
-                                        .is_some_and(|location| location.starts_with(unmounted))
-                                })
-                                .then(|| {
-                                    tab.change_location(&home_location, None);
-                                    tab.title()
-                                })
-                        });
-                        if let Some(title) = title_opt {
-                            self.tab_model.text_set(entity, title);
-                            commands.push(self.update_tab(entity, home_location.clone(), None));
-                        }
-                    }
-                    if !commands.is_empty() {
-                        commands.push(self.update_title());
-                        commands.push(self.update_watcher());
-                    }
-                }
+                let mut commands = vec![self.leave_unmounted_paths(&unmounted)];
 
                 // Insert new items
                 self.mounter_items.insert(mounter_key, mounter_items);
@@ -3654,68 +4029,41 @@ impl Application for App {
             Message::NotifyEvents(events) => {
                 log::debug!("{events:?}");
 
-                let mut needs_reload = Vec::new();
+                let mut work = Vec::new();
                 let entities: Box<[_]> = self.tab_model.iter().collect();
                 for entity in entities {
-                    if let Some(tab) = self.tab_model.data_mut::<Tab>(entity)
+                    if let Some(tab) = self.tab_model.data::<Tab>(entity)
                         && let Some(path) = tab.location.path_opt()
                     {
-                        let mut contains_change = false;
-                        for event in &events {
-                            for event_path in &event.paths {
-                                if event_path.starts_with(path) {
-                                    if let notify::EventKind::Modify(
-                                        notify::event::ModifyKind::Metadata(_)
-                                        | notify::event::ModifyKind::Data(_),
-                                    ) = event.kind
-                                    {
-                                        // If metadata or data changed, find the matching item and reload it
-                                        //TODO: this could be further optimized by looking at what exactly changed
-                                        if let Some(items) = &mut tab.items_opt {
-                                            for item in items.iter_mut() {
-                                                if item.path_opt() == Some(event_path) {
-                                                    //TODO: reload more, like mime types?
-                                                    match fs::metadata(event_path) {
-                                                        Ok(new_metadata) => {
-                                                            if let ItemMetadata::Path {
-                                                                metadata,
-                                                                ..
-                                                            } = &mut item.metadata
-                                                            {
-                                                                *metadata = new_metadata;
-                                                            }
-                                                        }
-
-                                                        Err(err) => {
-                                                            log::warn!(
-                                                                "failed to reload metadata for {}: {}",
-                                                                path.display(),
-                                                                err
-                                                            );
-                                                        }
-                                                    }
-                                                    //TODO item.thumbnail_opt =
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        // Any other events reload the whole tab
-                                        contains_change = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if contains_change {
-                            needs_reload.push((entity, tab.location.clone()));
-                        }
+                        work.push((entity, tab.location.clone(), classify_events(&events, path)));
                     }
                 }
 
-                let commands = needs_reload
-                    .into_iter()
-                    .map(|(entity, location)| self.update_tab(entity, location, None));
+                let commands =
+                    work.into_iter()
+                        .filter_map(|(entity, location, change)| match change {
+                            ListingChange::Structural => self.rescan_tab_if_idle(entity, location),
+                            ListingChange::Entries(paths) => {
+                                self.refresh_tab_entries(entity, paths)
+                            }
+                            ListingChange::None => None,
+                        });
                 return Task::batch(commands);
+            }
+            Message::TabRefreshEntries(entity, location, refreshed) => {
+                let Some(tab) = self.tab_model.data_mut::<Tab>(entity) else {
+                    return Task::none();
+                };
+                if tab.location != location {
+                    return Task::none();
+                }
+                if tab.refresh_entries(refreshed) {
+                    return Task::none();
+                }
+                let location = tab.location.clone();
+                return self
+                    .rescan_tab_if_idle(entity, location)
+                    .unwrap_or_else(Task::none);
             }
             Message::NotifyWatcher(mut watcher_wrapper) => match watcher_wrapper.watcher_opt.take()
             {
@@ -3727,6 +4075,16 @@ impl Application for App {
                     log::warn!("message did not contain notify watcher");
                 }
             },
+            Message::WatcherUpdated(mut watcher_wrapper, paths, requested) => {
+                if let Some(watcher) = watcher_wrapper.watcher_opt.take() {
+                    let stale = requested != self.open_directory_paths();
+                    self.watcher_opt = Some((watcher, paths));
+                    if self.watcher_update_pending || stale {
+                        self.watcher_update_pending = false;
+                        return self.update_watcher();
+                    }
+                }
+            }
             Message::OpenTerminal(entity_opt) => {
                 if let Some(terminal) = self.mime_app_cache.terminal() {
                     let mut paths = Box::from([]);
@@ -3768,10 +4126,25 @@ impl Application for App {
                     }
                 }
             }
+            Message::OpenFileClassified(targets) => {
+                return self.open_classified(targets);
+            }
+            Message::OpenLaunchLocations(locations) => {
+                if locations.is_empty() && self.tab_model.entity_at(0).is_none() {
+                    // Resolving them failed; init left the default tab to this handler.
+                    return self.open_default_tab();
+                }
+                return Task::batch(
+                    locations
+                        .into_iter()
+                        .map(|(location, selection)| self.open_tab(location, true, selection)),
+                );
+            }
             Message::OpenInNewTab(entity_opt) => {
                 let selected_paths: Box<[_]> = self
-                    .selected_paths(entity_opt)
-                    .filter(|p| p.is_dir())
+                    .selected_paths_with_dir(entity_opt)
+                    .into_iter()
+                    .filter_map(|(path, is_dir)| is_dir.then_some(path))
                     .collect();
                 return Task::batch(
                     selected_paths
@@ -3781,8 +4154,9 @@ impl Application for App {
             }
             Message::OpenInNewWindow(entity_opt) => match env::current_exe() {
                 Ok(exe) => self
-                    .selected_paths(entity_opt)
-                    .filter(|p| p.is_dir())
+                    .selected_paths_with_dir(entity_opt)
+                    .into_iter()
+                    .filter_map(|(path, is_dir)| is_dir.then_some(path))
                     .for_each(|path| match process::Command::new(&exe).arg(path).spawn() {
                         Ok(_child) => {}
                         Err(err) => {
@@ -3976,18 +4350,7 @@ impl Application for App {
 
                 // Generate unique filename for the pasted image
                 let base_name = format!("{}.{}", fl!("pasted-image"), extension);
-                let base_path = to.join(&base_name);
-                let final_path = copy_unique_path(&base_path, &to);
-
-                // Write image data to file
-                match fs::write(&final_path, &contents.data) {
-                    Ok(_) => {
-                        log::info!("Pasted image saved to {:?}", final_path);
-                    }
-                    Err(err) => {
-                        log::error!("Failed to save pasted image: {}", err);
-                    }
-                }
+                return Self::write_pasted_file(to, base_name, contents.data, "image");
             }
             Message::PasteVideo(to) => {
                 return clipboard::read_data::<ClipboardPasteVideo>().map(move |contents_opt| {
@@ -4011,18 +4374,7 @@ impl Application for App {
 
                 // Generate unique filename for the pasted video
                 let base_name = format!("{}.{}", fl!("pasted-video"), extension);
-                let base_path = to.join(&base_name);
-                let final_path = copy_unique_path(&base_path, &to);
-
-                // Write video data to file
-                match fs::write(&final_path, &contents.data) {
-                    Ok(_) => {
-                        log::info!("Pasted video saved to {:?}", final_path);
-                    }
-                    Err(err) => {
-                        log::error!("Failed to save pasted video: {}", err);
-                    }
-                }
+                return Self::write_pasted_file(to, base_name, contents.data, "video");
             }
             Message::PasteText(to) => {
                 return clipboard::read_data::<ClipboardPasteText>().map(move |contents_opt| {
@@ -4037,18 +4389,7 @@ impl Application for App {
             Message::PasteTextContents(to, contents) => {
                 // Generate unique filename for the pasted text
                 let base_name = format!("{}.txt", fl!("pasted-text"));
-                let base_path = to.join(&base_name);
-                let final_path = copy_unique_path(&base_path, &to);
-
-                // Write text data to file
-                match fs::write(&final_path, &contents.data) {
-                    Ok(_) => {
-                        log::info!("Pasted text saved to {:?}", final_path);
-                    }
-                    Err(err) => {
-                        log::error!("Failed to save pasted text: {}", err);
-                    }
-                }
+                return Self::write_pasted_file(to, base_name, contents.data, "text");
             }
             Message::CheckClipboard => {
                 // Check if clipboard has any paste-able content and cache it
@@ -4172,6 +4513,7 @@ impl Application for App {
                 }
             }
             Message::Preview(entity_opt) => {
+                self.preview_request.invalidate();
                 match self.mode {
                     Mode::App => {
                         let show_details = !self.config.show_details;
@@ -4226,13 +4568,30 @@ impl Application for App {
                 return self.operation(Operation::RemoveFromRecents { paths });
             }
             Message::ReloadMimeAppCache => {
-                self.mime_app_cache.reload();
+                return self.refresh_mime_app_cache();
+            }
+            Message::MimeAppCacheLoaded(request, cache) => {
+                if !self.mime_cache_request.finish(&request) {
+                    return Task::none();
+                }
+                self.mime_app_cache = cache;
             }
             Message::RescanRecents => {
                 return self.rescan_recents();
             }
             Message::RescanTrash => {
-                // Update trash icon if empty/full
+                // Refresh the cached state off-thread (Message::TrashStateRefreshed repaints the icon)
+                // and rescan tabs.
+                return Task::batch([
+                    Self::refresh_trash_state(),
+                    self.rescan_trash(),
+                    self.update_desktop(),
+                ]);
+            }
+            Message::TrashStateRefreshed(request, is_empty) => {
+                if !Trash::finish_refresh(&request, is_empty) {
+                    return Task::none();
+                }
                 let maybe_entity = self.nav_model.iter().find(|&entity| {
                     self.nav_model
                         .data::<Location>(entity)
@@ -4242,19 +4601,19 @@ impl Application for App {
                     self.nav_model
                         .icon_set(entity, icon::icon(Trash::icon_symbolic(16)));
                 }
-
-                return Task::batch([self.rescan_trash(), self.update_desktop()]);
             }
             Message::Rename(entity_opt) => {
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(entity)
                     && let Some(items) = tab.items_opt()
                 {
+                    // Pair each selected path with its cached is_dir; re-stating here would
+                    // block the GUI thread on a slow mount.
                     let selected: Box<[_]> = items
                         .iter()
                         .filter_map(|item| {
                             if item.selected {
-                                item.path_opt().cloned()
+                                Some((item.path_opt()?.to_path_buf(), item.metadata.is_dir()))
                             } else {
                                 None
                             }
@@ -4265,10 +4624,9 @@ impl Application for App {
                         let mut last_name = String::new();
                         let tasks: Vec<_> = selected
                             .into_iter()
-                            .filter_map(|path| {
+                            .filter_map(|(path, dir)| {
                                 let parent = path.parent()?.to_path_buf();
                                 let name = path.file_name()?.to_str()?.to_string();
-                                let dir = path.is_dir();
                                 last_name = name.clone();
                                 Some(self.dialog_pages.push_back(DialogPage::RenameItem {
                                     from: path,
@@ -4351,6 +4709,7 @@ impl Application for App {
                 return self.search_set_active(Some(input));
             }
             Message::SetShowDetails(show_details) => {
+                self.preview_request.invalidate();
                 config_set!(show_details, show_details);
                 return self.update_config();
             }
@@ -4366,6 +4725,8 @@ impl Application for App {
                 return self.update_config();
             }
             Message::TabActivate(entity) => {
+                self.preview_request.invalidate();
+                self.navigation.invalidate();
                 let mut tasks = vec![];
 
                 // Activate new tab
@@ -4418,6 +4779,8 @@ impl Application for App {
                 }
             }
             Message::TabClose(entity_opt) => {
+                self.preview_request.invalidate();
+                self.navigation.invalidate();
                 let mut tasks = Vec::with_capacity(2);
 
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
@@ -4466,6 +4829,12 @@ impl Application for App {
                 return self.update(Message::TabConfig(config));
             }
             Message::TabMessage(entity_opt, tab_message) => {
+                if matches!(
+                    &tab_message,
+                    tab::Message::EditLocation(_) | tab::Message::EditLocationEnable
+                ) {
+                    self.navigation.invalidate();
+                }
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
                 // The context menu opens on right-button release, so refresh paste availability now
                 let right_click = matches!(tab_message, tab::Message::RightClick(..));
@@ -4508,6 +4877,8 @@ impl Application for App {
                             }
                         }
                         tab::Command::ChangeLocation(tab_title, tab_path, selection_paths) => {
+                            self.preview_request.invalidate();
+                            self.navigation.invalidate();
                             self.activate_nav_model_location(&tab_path);
 
                             self.tab_model.text_set(entity, tab_title);
@@ -4519,23 +4890,71 @@ impl Application for App {
                                 self.update_tab(entity, tab_path, selection_paths),
                             ]));
                         }
+                        tab::Command::EditLocationSubmit(edit_location, typed_uri) => {
+                            let request = self.navigation.begin();
+                            commands.push(Task::future(async move {
+                                let target = tokio::task::spawn_blocking(move || {
+                                    crate::navigation::resolve_edit_location(
+                                        edit_location,
+                                        typed_uri,
+                                    )
+                                })
+                                .await
+                                .ok()
+                                .flatten();
+                                cosmic::action::app(Message::NavigationResolved {
+                                    entity,
+                                    request,
+                                    target,
+                                })
+                            }));
+                        }
+                        tab::Command::ParseDesktopEntry(path, work_id) => {
+                            #[cfg(feature = "desktop")]
+                            {
+                                let lang_id = crate::localize::LANGUAGE_LOADER.current_language();
+                                let language = lang_id.language.as_str().to_string();
+                                commands.push(Task::future(async move {
+                                    let parsed = tokio::task::spawn_blocking(move || {
+                                        let actions = cosmic::desktop::load_desktop_file(
+                                            &[language],
+                                            path.clone(),
+                                        )
+                                        .map(menu::DesktopEntryActions::from_entry);
+                                        (path, actions)
+                                    })
+                                    .await
+                                    .ok();
+                                    match parsed {
+                                        Some((path, actions)) => {
+                                            cosmic::action::app(Message::TabMessage(
+                                                Some(entity),
+                                                tab::Message::DesktopEntryParsed(
+                                                    path, work_id, actions,
+                                                ),
+                                            ))
+                                        }
+                                        None => cosmic::action::none(),
+                                    }
+                                }));
+                            }
+                            #[cfg(not(feature = "desktop"))]
+                            {
+                                let _ = (path, work_id);
+                            }
+                        }
                         tab::Command::Surface(action) => {
                             // re-type the tab's surface action the way its messages are re-typed
                             let action = action
                                 .map(move |message| Message::TabMessage(Some(entity), message));
                             commands.push(self.update(Message::Surface(action)));
                         }
-                        tab::Command::Delete(paths) => commands.push(self.delete(paths)),
+                        tab::Command::Delete(paths) => commands.push(Self::delete(paths)),
                         tab::Command::DropFiles(to, from) => {
                             commands.push(self.update(Message::PasteContents(to, from)));
                         }
                         tab::Command::ClearRecents => {
-                            match recently_used_xbel::clear_recently_used() {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    log::warn!("failed to clear recents history: {}", err);
-                                }
-                            }
+                            Self::clear_recently_used();
                         }
                         tab::Command::EmptyTrash => {
                             return self.push_dialog(
@@ -4544,8 +4963,8 @@ impl Application for App {
                             );
                         }
                         #[cfg(feature = "desktop")]
-                        tab::Command::ExecEntryAction(entry, action) => {
-                            Self::exec_entry_action(&entry, action);
+                        tab::Command::ExecEntryAction(command) => {
+                            Self::exec_entry_action(&command);
                         }
                         tab::Command::RunContextAction(action) => {
                             let paths: Box<[_]> = self.selected_paths(Some(entity)).collect();
@@ -4571,7 +4990,7 @@ impl Application for App {
                                 cosmic::action::app(Message::TabMessage(Some(entity), x))
                             }));
                         }
-                        tab::Command::OpenFile(paths) => commands.push(self.open_file(&paths)),
+                        tab::Command::OpenFile(paths) => commands.push(Self::open_file(&paths)),
                         tab::Command::OpenInNewTab(path) => {
                             commands.push(self.open_tab(Location::Path(path), false, None));
                         }
@@ -4598,13 +5017,33 @@ impl Application for App {
                             }
                         }
                         tab::Command::Preview(kind) => {
+                            self.preview_request.invalidate();
                             self.context_page = ContextPage::Preview(Some(entity), kind);
                             self.set_show_context(true);
                         }
-                        tab::Command::SetOpenWith(mime, id) => {
-                            //TODO: this will block for a few ms, run in background?
-                            self.mime_app_cache.set_default(mime, id);
+                        tab::Command::PreviewPath(path) => {
+                            let request = self.preview_request.begin();
+                            // A breadcrumb ancestor can live on a slow mount, so build its item
+                            // off-thread and show it in Message::PreviewReady.
+                            commands.push(Self::item_from_path_task(path, move |_, item| {
+                                Message::PreviewReady(request, Some(entity), item)
+                            }));
                         }
+                        tab::Command::SetOpenWith(mime, id) => {
+                            self.mime_cache_request.invalidate();
+                            let completion = crate::mime_app::queue_default(mime, id);
+                            commands.push(Task::future(async move {
+                                match completion.await {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(err)) => {
+                                        log::warn!("failed to set default handler: {err}")
+                                    }
+                                    Err(err) => log::warn!("failed to set default handler: {err}"),
+                                }
+                                cosmic::action::app(Message::ReloadMimeAppCache)
+                            }));
+                        }
+
                         tab::Command::SetPermissions(path, mode) => {
                             commands.push(self.operation(Operation::SetPermissions { path, mode }));
                         }
@@ -4680,11 +5119,42 @@ impl Application for App {
                 };
                 return self.open_tab(location, true, None);
             }
-            Message::TabRescan(entity, mut location, parent_item_opt, items, selection_paths) => {
+            Message::TabRescanFailed(entity, request) => {
+                let Some(tab) = self.tab_model.data_mut::<Tab>(entity) else {
+                    return Task::none();
+                };
+                if tab.scans.finish(request) == Some(true) {
+                    let location = tab.location.clone();
+                    return self
+                        .rescan_tab_if_idle(entity, location)
+                        .unwrap_or_else(Task::none);
+                }
+            }
+            Message::TabRescan(
+                entity,
+                request,
+                mut location,
+                parent_item_opt,
+                items,
+                selection_paths,
+            ) => {
                 location = location.normalize();
+                let selection_paths_present = selection_paths.is_some();
+
+                let mut matched = false;
+                let mut rescan_pending = false;
+                let mut current_location = None;
+
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(entity) {
+                    let Some(pending) = tab.scans.finish(request) else {
+                        return Task::none();
+                    };
+                    rescan_pending = pending;
                     tab.location = tab.location.normalize();
-                    if location == tab.location {
+                    matched = location == tab.location;
+                    current_location = Some(tab.location.clone());
+
+                    if matched {
                         tab.parent_item_opt = parent_item_opt;
                         tab.set_items(items);
                         let location_str = location.to_string();
@@ -4698,31 +5168,48 @@ impl Application for App {
                         tab.sort_name = sort.0;
                         tab.sort_direction = sort.1;
 
-                        let mut tasks = Vec::with_capacity(2);
-
                         if let Some(selection_paths) = selection_paths {
                             tab.select_paths(selection_paths);
-
-                            // Ensure selected path is scrolled to after redraw
-                            tasks.push(Task::done(cosmic::action::app(Message::TabMessage(
-                                Some(entity),
-                                tab::Message::ScrollToFocused,
-                            ))));
                         }
-
-                        tasks.push(clipboard::read_data::<ClipboardPaste>().map(|p| {
-                            cosmic::action::app(Message::CutPaths(match p {
-                                Some(s) => match s.kind {
-                                    ClipboardKind::Copy => Vec::new(),
-                                    ClipboardKind::Cut { .. } => s.paths,
-                                },
-                                None => Vec::new(),
-                            }))
-                        }));
-
-                        return Task::batch(tasks);
                     }
                 }
+
+                if !matched {
+                    // Stale rescan superseded by a location change in the meantime; if a
+                    // watcher event still wants a rescan, run it for wherever the tab is now.
+                    return match current_location {
+                        Some(location) if rescan_pending => self
+                            .rescan_tab_if_idle(entity, location)
+                            .unwrap_or_else(Task::none),
+                        _ => Task::none(),
+                    };
+                }
+
+                let mut tasks = Vec::with_capacity(3);
+
+                if selection_paths_present {
+                    // Ensure selected path is scrolled to after redraw
+                    tasks.push(Task::done(cosmic::action::app(Message::TabMessage(
+                        Some(entity),
+                        tab::Message::ScrollToFocused,
+                    ))));
+                }
+
+                tasks.push(clipboard::read_data::<ClipboardPaste>().map(|p| {
+                    cosmic::action::app(Message::CutPaths(match p {
+                        Some(s) => match s.kind {
+                            ClipboardKind::Copy => Vec::new(),
+                            ClipboardKind::Cut { .. } => s.paths,
+                        },
+                        None => Vec::new(),
+                    }))
+                }));
+
+                if rescan_pending && let Some(location) = current_location {
+                    tasks.extend(self.rescan_tab_if_idle(entity, location));
+                }
+
+                return Task::batch(tasks);
             }
             Message::TabView(entity_opt, view) => {
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
@@ -4747,6 +5234,7 @@ impl Application for App {
                 return self.update_config();
             }
             Message::ToggleContextPage(context_page) => {
+                self.preview_request.invalidate();
                 //TODO: ensure context menus are closed
                 if self.context_page == context_page
                     || matches!(self.context_page, ContextPage::Preview(_, _))
@@ -4908,7 +5396,7 @@ impl Application for App {
                             },
                         )),
                         Location::Trash if matches!(action, DndAction::Move) => {
-                            self.delete(data.paths)
+                            Self::delete(data.paths)
                         }
                         _ => {
                             log::warn!("Copy to trash is not supported.");
@@ -4925,6 +5413,7 @@ impl Application for App {
                     .is_some_and(|(loc, i)| *loc == location && i.elapsed() >= HOVER_DURATION)
                 {
                     self.nav_dnd_hover = None;
+                    self.navigation.invalidate();
                     let entity = self.tab_model.active();
                     let title_opt = match self.tab_model.data_mut::<Tab>(entity) {
                         Some(tab) => {
@@ -4963,7 +5452,7 @@ impl Application for App {
                     };
                     let ret = match &tab.location {
                         Location::Trash if matches!(action, DndAction::Move) => {
-                            self.delete(data.paths)
+                            Self::delete(data.paths)
                         }
                         _ => {
                             if let Some(path) = tab.location.path_opt() {
@@ -5005,19 +5494,174 @@ impl Application for App {
             Message::NavBarContext(entity) => {
                 self.nav_bar_context_id = entity;
 
+                self.nav_context_info = None;
+                let request = self.nav_context_request.begin();
+                let location_opt = self.nav_model.data::<Location>(entity).cloned();
+                let path_opt = location_opt
+                    .as_ref()
+                    .and_then(|location| location.path_opt().cloned());
+                let is_recents = matches!(location_opt, Some(Location::Recents));
+                let info_task = Task::future(async move {
+                    let info = tokio::task::spawn_blocking(move || {
+                        let (is_file, is_dir) = path_opt
+                            .as_ref()
+                            .map_or((false, false), |path| (path.is_file(), path.is_dir()));
+                        NavContextInfo {
+                            is_file,
+                            is_dir,
+                            has_recents: is_recents && tab::has_recents(),
+                        }
+                    })
+                    .await
+                    .unwrap_or_default();
+                    cosmic::action::app(Message::NavContextInfoLoaded(entity, request, info))
+                });
+
                 let tab_entity = self.tab_model.active();
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(tab_entity) {
                     // Close location editing if enabled
                     tab.edit_location = None;
                 }
+                return info_task;
+            }
+            Message::NavContextInfoLoaded(entity, request, info) => {
+                if self.nav_context_request.finish(&request) && entity == self.nav_bar_context_id {
+                    self.nav_context_info = Some((entity, info));
+                }
+            }
+            Message::NavigationResolved {
+                entity,
+                request,
+                target,
+            } => {
+                if !self.navigation.finish(&request) {
+                    return Task::none();
+                }
+                if let Some((location, selected)) = target {
+                    let message = match selected {
+                        Some(path) => tab::Message::LocationSelect(location, vec![path]),
+                        None => tab::Message::Location(location),
+                    };
+                    return self.update(Message::TabMessage(Some(entity), message));
+                }
+            }
+            Message::NavSelectChecked {
+                entity,
+                tab_entity,
+                request,
+                exists,
+                is_dir,
+            } => {
+                if !self.navigation.is_current(&request)
+                    || self.tab_model.data::<Tab>(tab_entity).is_none()
+                {
+                    return Task::none();
+                }
+                let Some(location) = self.nav_model.data::<Location>(entity).cloned() else {
+                    return Task::none();
+                };
+
+                // A gvfs network favorite that isn't present: try to mount it, else report it.
+                #[cfg(feature = "gvfs")]
+                if let Location::Network(uri, name, Some(path)) = &location
+                    && !exists
+                {
+                    let mut found = false;
+                    if let Some(key) = self
+                        .mounter_items
+                        .iter()
+                        .find_map(|(k, items)| {
+                            items.iter().find_map(|item| {
+                                found |= item.path().is_some_and(|p| path.starts_with(&p))
+                                    || item.name() == *name
+                                    || item.uri() == *uri;
+                                (!item.is_mounted() && found).then_some(*k)
+                            })
+                        })
+                        .or(if found {
+                            None
+                        } else {
+                            // TODO do we need to choose the correct mounter?
+                            self.mounter_items.keys().copied().next()
+                        })
+                        && let Some(mounter) = MOUNTERS.get(&key)
+                    {
+                        return mounter.network_drive(uri.clone()).map(move |mounted| {
+                            if mounted {
+                                cosmic::Action::App(Message::NavigationMounted {
+                                    entity,
+                                    tab_entity,
+                                    request: request.clone(),
+                                })
+                            } else {
+                                cosmic::action::none()
+                            }
+                        });
+                    }
+
+                    log::warn!(
+                        "failed to open favorite, path does not exist: {}",
+                        path.display()
+                    );
+                    return self.push_dialog(
+                        DialogPage::FavoritePathError {
+                            path: path.clone(),
+                            entity,
+                        },
+                        Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
+                    );
+                }
+
+                self.navigation.finish(&request);
+
+                // Other path-bearing favorites: report if missing, otherwise open — a file
+                // (local or on a mounted share) launches, a directory is navigated to.
+                if let Some(path) = location.path_opt().cloned() {
+                    if !exists {
+                        log::warn!(
+                            "failed to open favorite, path does not exist: {}",
+                            path.display()
+                        );
+                        return self.push_dialog(
+                            DialogPage::FavoritePathError { path, entity },
+                            Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
+                        );
+                    }
+                    if !is_dir {
+                        return Self::open_file(&[path]);
+                    }
+                }
+
+                return self.update(Message::TabMessage(
+                    Some(tab_entity),
+                    tab::Message::Location(location),
+                ));
+            }
+            Message::NavMenuOpenWith(path, item) => {
+                return self.push_dialog(
+                    DialogPage::OpenWith {
+                        path,
+                        mime: item.mime,
+                        selected: 0,
+                        store_opt: "x-scheme-handler/mime"
+                            .parse::<mime_guess::Mime>()
+                            .ok()
+                            .and_then(|mime| self.mime_app_cache.get(&mime).first().cloned()),
+                        search_app_name: String::new(),
+                    },
+                    None,
+                );
+            }
+            Message::PreviewReady(request, entity_opt, item) => {
+                if !self.preview_request.finish(&request) {
+                    return Task::none();
+                }
+                self.context_page =
+                    ContextPage::Preview(entity_opt, PreviewKind::Custom(PreviewItem(item)));
+                self.set_show_context(true);
             }
             Message::NavMenuAction(action) => match action {
-                NavMenuAction::ClearRecents => match recently_used_xbel::clear_recently_used() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        log::warn!("failed to clear recents history: {}", err);
-                    }
-                },
+                NavMenuAction::ClearRecents => Self::clear_recently_used(),
                 NavMenuAction::EmptyTrash => {
                     return self
                         .push_dialog(DialogPage::EmptyTrash, Some(EMPTY_TRASH_BUTTON_ID.clone()));
@@ -5029,7 +5673,7 @@ impl Application for App {
                         .and_then(Location::path_opt)
                         .cloned()
                     {
-                        return self.open_file(&[path]);
+                        return Self::open_file(&[path]);
                     }
                 }
                 NavMenuAction::OpenWith(entity) => {
@@ -5039,32 +5683,7 @@ impl Application for App {
                         .and_then(Location::path_opt)
                         .cloned()
                     {
-                        match tab::item_from_path(&path, IconSizes::default()) {
-                            Ok(item) => {
-                                return self.push_dialog(
-                                    DialogPage::OpenWith {
-                                        path,
-                                        mime: item.mime,
-                                        selected: 0,
-                                        store_opt: "x-scheme-handler/mime"
-                                            .parse::<mime_guess::Mime>()
-                                            .ok()
-                                            .and_then(|mime| {
-                                                self.mime_app_cache.get(&mime).first().cloned()
-                                            }),
-                                        search_app_name: String::new(),
-                                    },
-                                    None,
-                                );
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "failed to get item for path {}: {}",
-                                    path.display(),
-                                    err
-                                );
-                            }
-                        }
+                        return Self::item_from_path_task(path, Message::NavMenuOpenWith);
                     }
                 }
                 NavMenuAction::RunContextAction(entity, action) => {
@@ -5157,23 +5776,14 @@ impl Application for App {
                         .nav_model
                         .data::<Location>(entity)
                         .and_then(Location::path_opt)
+                        .cloned()
                     {
-                        match tab::item_from_path(path, IconSizes::default()) {
-                            Ok(item) => {
-                                self.context_page = ContextPage::Preview(
-                                    None,
-                                    PreviewKind::Custom(PreviewItem(Box::new(item))),
-                                );
-                                self.set_show_context(true);
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "failed to get item from path {}: {}",
-                                    path.display(),
-                                    err
-                                );
-                            }
-                        }
+                        // A dead or slow network favorite would freeze the GUI, so build its
+                        // item off-thread and show it in Message::PreviewReady.
+                        let request = self.preview_request.begin();
+                        return Self::item_from_path_task(path, move |_, item| {
+                            Message::PreviewReady(request, None, item)
+                        });
                     }
                 }
 
@@ -5385,6 +5995,19 @@ impl Application for App {
                     log::warn!("Failed to save sort names: {err:?}");
                 }
             }
+            Message::NavigationMounted {
+                entity,
+                tab_entity,
+                request,
+            } => {
+                if !self.navigation.finish(&request)
+                    || self.tab_model.active() != tab_entity
+                    || self.tab_model.data::<Tab>(tab_entity).is_none()
+                {
+                    return Task::none();
+                }
+                return self.on_nav_select(entity);
+            }
             Message::NetworkDriveOpenEntityAfterMount { entity } => {
                 return self.on_nav_select(entity);
             }
@@ -5516,8 +6139,7 @@ impl Application for App {
                 } else {
                     let extension = archive_type.extension();
                     let name = format!("{name}{extension}");
-                    let path = to.join(&name);
-                    if path.exists() {
+                    if self.existing_entry_in_dir(to, &name).is_some() {
                         dialog =
                             dialog.tertiary_action(widget::text::body(fl!("file-already-exists")));
                         None
@@ -5615,35 +6237,33 @@ impl Application for App {
                 ),
             DialogPage::FailedOperation(id) => {
                 //TODO: try next dialog page (making sure index is used by Dialog messages)?
-                let (operation, _, err) = self.failed_operations.get(id)?;
-
-                //TODO: nice description of error
+                let error_text = failed_operation_text(&self.failed_operations, *id)?;
                 widget::dialog()
                     .title("Failed operation")
-                    .body(format!("{operation:#?}\n{err}"))
+                    .body(error_text.clone())
                     .icon(icon::from_name("dialog-error").size(64))
                     //TODO: retry action
                     .primary_action(
                         widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
                     )
+                    .secondary_action(
+                        widget::button::standard(fl!("copy-to-clipboard"))
+                            .on_press(Message::CopyText(error_text)),
+                    )
             }
             DialogPage::FailedOperations(ids) => {
-                let errors: Vec<String> = ids
-                    .iter()
-                    .filter_map(|id| match self.failed_operations.get(id) {
-                        Some((operation, _, err)) => Some(format!("{operation:#?}\n{err}")),
-                        _ => None,
-                    })
-                    .collect();
-
-                //TODO: nice description of error
+                let error_text = failed_operations_text(&self.failed_operations, ids);
                 widget::dialog()
                     .title("Failed operations")
-                    .body(errors.join("\n\n"))
+                    .body(error_text.clone())
                     .icon(icon::from_name("dialog-error").size(64))
                     //TODO: retry action
                     .primary_action(
                         widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    )
+                    .secondary_action(
+                        widget::button::standard(fl!("copy-to-clipboard"))
+                            .on_press(Message::CopyText(error_text)),
                     )
             }
             DialogPage::ExtractPassword { id, password } => widget::dialog()
@@ -5843,21 +6463,24 @@ impl Application for App {
                     dialog = dialog.tertiary_action(widget::text::body(fl!("name-no-slashes")));
                     None
                 } else {
-                    let path = parent.join(name);
-                    if path.exists() {
-                        if path.is_dir() {
+                    match self.existing_entry_in_dir(parent, name) {
+                        Some(true) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("folder-already-exists")));
-                        } else {
+                            None
+                        }
+                        Some(false) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("file-already-exists")));
+                            None
                         }
-                        None
-                    } else {
-                        if name.starts_with('.') {
-                            dialog = dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                        None => {
+                            if name.starts_with('.') {
+                                dialog =
+                                    dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                            }
+                            Some(Message::DialogComplete)
                         }
-                        Some(Message::DialogComplete)
                     }
                 };
 
@@ -6148,20 +6771,28 @@ impl Application for App {
                     None
                 } else {
                     let path = parent.join(name);
-                    if *from != path && path.exists() {
-                        if path.is_dir() {
+                    // Skip the collision check when renaming to the same path (a no-op rename).
+                    let existing = (*from != path)
+                        .then(|| self.existing_entry_in_dir(parent, name))
+                        .flatten();
+                    match existing {
+                        Some(true) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("folder-already-exists")));
-                        } else {
+                            None
+                        }
+                        Some(false) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("file-already-exists")));
+                            None
                         }
-                        None
-                    } else {
-                        if name.starts_with('.') {
-                            dialog = dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                        None => {
+                            if name.starts_with('.') {
+                                dialog =
+                                    dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                            }
+                            Some(Message::DialogComplete)
                         }
-                        Some(Message::DialogComplete)
                     }
                 };
 
@@ -6829,7 +7460,15 @@ impl Application for App {
                             },
                         );
 
-                        match (watcher_res, Trash::folders()) {
+                        // Enumerating the trash bins reads the filesystem; run it on the blocking
+                        // pool so this one-shot subscription setup never stalls the executor.
+                        let trash_folders = tokio::task::spawn_blocking(Trash::folders)
+                            .await
+                            .unwrap_or_else(|err| {
+                                log::warn!("failed to enumerate trash folders: {err}");
+                                Ok(std::collections::HashSet::new())
+                            });
+                        match (watcher_res, trash_folders) {
                             (Ok(mut watcher), Ok(trash_bins)) => {
                                 // Watch the "bins" themselves as well as the files folder where
                                 // trashed items are placed. This allows us to avoid recursively
@@ -7008,7 +7647,9 @@ impl Application for App {
                                         }
                                     })
                                     .await
-                                    .unwrap();
+                                    .unwrap_or_else(|err| {
+                                        log::warn!("failed to run the notification task: {err}");
+                                    });
 
                                     std::future::pending().await
                                 },
@@ -7326,5 +7967,895 @@ pub(crate) mod test_utils {
             path.display(),
             tab_path.display()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::time::Instant;
+
+    use notify_debouncer_full::DebouncedEvent;
+    use notify_debouncer_full::notify::EventKind;
+    use notify_debouncer_full::notify::event::{
+        AccessKind, CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode,
+    };
+
+    use super::{
+        ListingChange, MAX_OPERATION_HISTORY, Mime, OpenTargets, Operation, cap_operation_history,
+        classify_events, failed_operation_text, failed_operations_text,
+        retry_extract_with_password,
+    };
+
+    fn event(kind: EventKind, path: &str) -> DebouncedEvent {
+        DebouncedEvent::new(
+            notify_debouncer_full::notify::Event::new(kind).add_path(PathBuf::from(path)),
+            Instant::now(),
+        )
+    }
+
+    fn classify(kind: EventKind, path: &str) -> ListingChange {
+        classify_events(&[event(kind, path)], Path::new("/dir"))
+    }
+
+    #[test]
+    fn reading_a_listed_file_does_not_touch_the_listing() {
+        assert!(matches!(
+            classify(EventKind::Access(AccessKind::Read), "/dir/file.log"),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn writing_a_listed_file_refreshes_only_that_entry() {
+        let ListingChange::Entries(paths) = classify(
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            "/dir/file.log",
+        ) else {
+            panic!("a write to a listed file should refresh that entry");
+        };
+        assert_eq!(vec![PathBuf::from("/dir/file.log")], paths);
+
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
+                "/dir/file.log"
+            ),
+            ListingChange::Entries(_)
+        ));
+    }
+
+    #[test]
+    fn changing_hidden_names_requires_a_listing_rescan() {
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/dir/.hidden"
+            ),
+            ListingChange::Structural
+        ));
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
+                "/dir/.hidden"
+            ),
+            ListingChange::Structural
+        ));
+        assert!(matches!(
+            classify(EventKind::Access(AccessKind::Read), "/dir/.hidden"),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn writing_below_a_listed_directory_changes_nothing_on_screen() {
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/dir/sub/file.log"
+            ),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn adding_removing_or_renaming_an_entry_needs_a_rescan() {
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            EventKind::Any,
+        ] {
+            assert!(
+                matches!(classify(kind, "/dir/file.log"), ListingChange::Structural),
+                "{kind:?} should rescan"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tab_path_keeps_its_trailing_separator() {
+        // Location::normalize() appends one unconditionally, so the comparison against an
+        // event path's parent has to tolerate it.
+        let dir = PathBuf::from("/dir/");
+        let change = classify_events(
+            &[event(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/dir/file.log",
+            )],
+            &dir,
+        );
+        assert!(
+            matches!(change, ListingChange::Entries(_)),
+            "a write to a listed file was not recognised against a normalized tab path"
+        );
+    }
+
+    #[test]
+    fn events_outside_the_listed_directory_are_ignored() {
+        assert!(matches!(
+            classify(EventKind::Create(CreateKind::File), "/elsewhere/file.log"),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn cap_operation_history_keeps_the_newest_and_bounds_growth() {
+        let extra = 50;
+        let mut history: BTreeMap<u64, ()> = (0..(MAX_OPERATION_HISTORY as u64 + extra))
+            .map(|id| (id, ()))
+            .collect();
+
+        cap_operation_history(&mut history);
+
+        assert_eq!(history.len(), MAX_OPERATION_HISTORY);
+        assert!(!history.contains_key(&0));
+        assert!(history.contains_key(&(MAX_OPERATION_HISTORY as u64 + extra - 1)));
+    }
+
+    #[test]
+    fn retrying_an_evicted_operation_skips_instead_of_panicking() {
+        let failed: BTreeMap<u64, (Operation, (), ())> = BTreeMap::new();
+
+        assert!(retry_extract_with_password(&failed, 7, "pw".to_string()).is_none());
+    }
+
+    #[test]
+    fn retrying_a_non_extract_operation_is_refused() {
+        let mut failed = BTreeMap::new();
+        failed.insert(
+            7,
+            (
+                Operation::PermanentlyDelete {
+                    paths: Box::from([]),
+                },
+                (),
+                (),
+            ),
+        );
+
+        assert!(retry_extract_with_password(&failed, 7, "pw".to_string()).is_none());
+    }
+
+    #[test]
+    fn retrying_an_extract_carries_the_password() {
+        let mut failed = BTreeMap::new();
+        failed.insert(
+            7,
+            (
+                Operation::Extract {
+                    paths: Box::from([PathBuf::from("archive.zip")]),
+                    to: PathBuf::from("out"),
+                    password: None,
+                },
+                (),
+                (),
+            ),
+        );
+
+        let retry = retry_extract_with_password(&failed, 7, "pw".to_string());
+
+        assert!(matches!(
+            retry,
+            Some(Operation::Extract { password: Some(password), .. }) if password == "pw"
+        ));
+    }
+
+    fn archive_paths(names: &[&str]) -> (Vec<PathBuf>, Vec<Mime>) {
+        let zip: Mime = "application/zip".parse().expect("a valid mime");
+        (
+            names.iter().map(PathBuf::from).collect(),
+            vec![zip; names.len()],
+        )
+    }
+
+    #[test]
+    fn archives_open_in_the_order_they_were_given() {
+        let (paths, mimes) = archive_paths(&["/b.zip", "/a.zip", "/c.zip"]);
+
+        match OpenTargets::classify(paths.clone(), mimes) {
+            OpenTargets::Archives(ordered) => assert_eq!(ordered, paths),
+            OpenTargets::ByMime(_) => panic!("archives should not be grouped by mime"),
+        }
+    }
+
+    #[test]
+    fn one_non_archive_groups_every_path_by_mime() {
+        let (mut paths, mut mimes) = archive_paths(&["/a.zip"]);
+        paths.push(PathBuf::from("/notes.txt"));
+        mimes.push("text/plain".parse().expect("a valid mime"));
+
+        match OpenTargets::classify(paths, mimes) {
+            OpenTargets::ByMime(groups) => assert_eq!(groups.len(), 2),
+            OpenTargets::Archives(_) => panic!("a text file is not an archive"),
+        }
+    }
+
+    fn delete_failure(id: u64, err: &str) -> BTreeMap<u64, (Operation, (), String)> {
+        let mut failed = BTreeMap::new();
+        failed.insert(
+            id,
+            (
+                Operation::Delete {
+                    paths: vec![PathBuf::from("doc.txt")],
+                },
+                (),
+                err.to_string(),
+            ),
+        );
+        failed
+    }
+
+    #[test]
+    fn a_failed_operation_carries_both_the_operation_and_its_error() {
+        let failed = delete_failure(7, "Permission denied");
+
+        let text = failed_operation_text(&failed, 7).expect("text for a failure still in history");
+
+        assert!(text.contains("Delete"));
+        assert!(text.contains("doc.txt"));
+        assert!(text.ends_with("Permission denied"));
+    }
+
+    #[test]
+    fn a_failure_no_longer_in_the_history_has_no_text() {
+        let failed: BTreeMap<u64, (Operation, (), String)> = BTreeMap::new();
+
+        assert!(failed_operation_text(&failed, 7).is_none());
+    }
+
+    #[test]
+    fn several_failures_read_as_one_blank_line_separated_block() {
+        let mut failed = delete_failure(7, "Permission denied");
+        failed.extend(delete_failure(8, "Read-only file system"));
+
+        let text = failed_operations_text(&failed, &[7, 8]);
+
+        assert_eq!(
+            text,
+            [
+                failed_operation_text(&failed, 7).expect("the first failure"),
+                failed_operation_text(&failed, 8).expect("the second failure"),
+            ]
+            .join("\n\n")
+        );
+    }
+
+    #[test]
+    fn failures_no_longer_in_the_history_are_skipped_rather_than_left_blank() {
+        let failed = delete_failure(7, "Permission denied");
+
+        let text = failed_operations_text(&failed, &[6, 7, 8]);
+
+        assert_eq!(
+            text,
+            failed_operation_text(&failed, 7).expect("the only failure still in history")
+        );
+    }
+    #[test]
+    fn pasted_files_preserve_existing_content() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let first = super::write_unique_file(dir.path(), "pasted.txt", b"first")?;
+        let second = super::write_unique_file(dir.path(), "pasted.txt", b"second")?;
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first)?, b"first");
+        assert_eq!(std::fs::read(second)?, b"second");
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_pastes_keep_both_payloads() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let barrier = std::sync::Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                super::write_unique_file(dir.path(), "pasted.txt", b"first")
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                super::write_unique_file(dir.path(), "pasted.txt", b"second")
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        let (first, second) = (first?, second?);
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first)?, b"first");
+        assert_eq!(std::fs::read(second)?, b"second");
+        Ok(())
+    }
+
+    fn test_app(dir: &tempfile::TempDir) -> super::App {
+        use cosmic::Application;
+        let mut core = cosmic::app::Core::default();
+        core.set_main_window_id(Some(cosmic::iced::window::Id::unique()));
+        let location = crate::tab::Location::Path(dir.path().to_path_buf());
+        let (mut app, _) = super::App::init(
+            core,
+            super::Flags {
+                config_handler: None,
+                config: crate::config::Config::default(),
+                state_handler: None,
+                state: crate::config::State::default(),
+                mode: super::Mode::App,
+                locations: vec![location.clone()],
+                uris: Vec::new(),
+            },
+        );
+        let _ = app.open_tab(location, true, None);
+        app
+    }
+
+    async fn task_result(task: super::Task<super::Message>) -> super::Message {
+        use cosmic::iced::futures::StreamExt;
+        let mut stream = cosmic::iced::runtime::task::into_stream(task).unwrap();
+        match stream.next().await.unwrap() {
+            cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) => message,
+            _ => panic!("the task must return an application message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_launch_resolution_opens_a_usable_tab_in_a_tabless_app() -> std::io::Result<()> {
+        use cosmic::Application;
+        use cosmic::iced::futures::StreamExt;
+
+        let dir = tempfile::TempDir::new()?;
+        let mut core = cosmic::app::Core::default();
+        core.set_main_window_id(Some(cosmic::iced::window::Id::unique()));
+        let (mut app, _) = super::App::init(
+            core,
+            super::Flags {
+                config_handler: None,
+                config: crate::config::Config::default(),
+                state_handler: None,
+                state: crate::config::State::default(),
+                mode: super::Mode::App,
+                locations: vec![crate::tab::Location::Path(dir.path().to_path_buf())],
+                uris: Vec::new(),
+            },
+        );
+        assert!(app.tab_model.entity_at(0).is_none());
+
+        let fallback = app.update(super::Message::OpenLaunchLocations(Vec::new()));
+        let entity = app
+            .tab_model
+            .entity_at(0)
+            .expect("a fallback tab must open");
+        assert_eq!(app.tab_model.active(), entity);
+        let tab = app.tab_model.data::<crate::tab::Tab>(entity).unwrap();
+        assert_eq!(tab.location.path_opt(), Some(&std::env::current_dir()?));
+        let mut fallback = cosmic::iced::runtime::task::into_stream(fallback).unwrap();
+        let mut listed = false;
+        while let Some(action) = fallback.next().await {
+            if let cosmic::iced::runtime::Action::Output(cosmic::Action::App(
+                message @ super::Message::TabRescan(..),
+            )) = action
+            {
+                let _ = app.update(message);
+                listed = true;
+            }
+        }
+        assert!(listed, "the fallback tab must complete its initial listing");
+        assert!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .items_opt()
+                .is_some()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn clean_exit_waits_for_queued_persistence() -> std::io::Result<()> {
+        use cosmic::Application;
+        const CHILD_PROFILE: &str = "COSMIC_TEST_EXIT_PROFILE";
+        if let Some(profile) = std::env::var_os(CHILD_PROFILE) {
+            let profile = std::path::PathBuf::from(profile);
+            return tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let dir = tempfile::TempDir::new_in(&profile)?;
+                let path = dir.path().join("saved-before-exit.txt");
+                std::fs::write(&path, b"content")?;
+                let mut app = test_app(&dir);
+                crate::recents::record_recently_used(vec![path], "test");
+                app.core.set_main_window_id(None);
+                let _ = task_result(app.update(super::Message::MaybeExit)).await;
+                let history =
+                    std::fs::read_to_string(profile.join(".local/share/recently-used.xbel"))?;
+                assert!(history.contains("saved-before-exit.txt"));
+                std::fs::write(profile.join("drained"), b"complete")
+            });
+        }
+        let profile = tempfile::TempDir::new()?;
+        let status = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "app::tests::clean_exit_waits_for_queued_persistence",
+                "--nocapture",
+            ])
+            .env(CHILD_PROFILE, profile.path())
+            .env("HOME", profile.path())
+            .env("XDG_DATA_HOME", profile.path().join(".local/share"))
+            .env("XDG_CONFIG_HOME", profile.path().join(".config"))
+            .status()?;
+        assert!(status.success());
+        assert!(profile.path().join("drained").is_file());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_watch_does_not_resubmit_without_a_new_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("missing");
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        app.tab_model
+            .data_mut::<crate::tab::Tab>(entity)
+            .unwrap()
+            .location = crate::tab::Location::Path(path);
+        let watcher = notify_debouncer_full::new_debouncer(
+            std::time::Duration::from_millis(100),
+            None,
+            |_events| {},
+        )
+        .unwrap();
+        app.watcher_opt = Some((watcher, Default::default()));
+        app.watcher_update_pending = false;
+        let result = task_result(app.update_watcher()).await;
+        let followup = app.update(result);
+        assert_eq!(followup.units(), 0);
+        assert!(app.watcher_opt.as_ref().unwrap().1.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidebar_metadata_from_an_older_menu_cannot_replace_current_facts()
+    -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("favorite");
+        std::fs::write(&path, b"file")?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Favorite")
+            .data(crate::tab::Location::Path(path.clone()))
+            .id();
+        let old = task_result(app.update(super::Message::NavBarContext(entity))).await;
+        std::fs::remove_file(&path)?;
+        std::fs::create_dir(&path)?;
+        let current = task_result(app.update(super::Message::NavBarContext(entity))).await;
+        let _ = app.update(current);
+        let _ = app.update(old);
+        assert!(app.nav_context_info.as_ref().unwrap().1.is_dir);
+        assert!(!app.nav_context_info.as_ref().unwrap().1.is_file);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unmounted_path_invalidates_pending_navigation() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        let _ = app.leave_unmounted_paths(&[dir.path().to_path_buf()]);
+        let _ = app.update(super::Message::NavigationResolved {
+            entity,
+            request,
+            target: Some((crate::tab::Location::Path(dir.path().to_path_buf()), None)),
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .location
+                .path_opt(),
+            Some(&crate::home_dir())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidebar_drop_navigation_invalidates_pending_location_resolution() -> std::io::Result<()>
+    {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let target = crate::tab::Location::Path(dir.path().join("target"));
+        std::fs::create_dir(target.path_opt().unwrap())?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        app.nav_dnd_hover = Some((
+            target.clone(),
+            std::time::Instant::now() - super::HOVER_DURATION,
+        ));
+        let _ = app.update(super::Message::DndHoverLocTimeout(target.clone()));
+        let _ = app.update(super::Message::NavigationResolved {
+            entity,
+            request,
+            target: Some((crate::tab::Location::Path(dir.path().to_path_buf()), None)),
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .location,
+            target
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn review_an_old_scan_cannot_replace_a_newer_listing() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let location = crate::tab::Location::Path(dir.path().to_path_buf());
+        let old_result = task_result(app.rescan_tab(entity, location.clone(), None)).await;
+        std::fs::write(dir.path().join("new.txt"), b"new")?;
+        let new_result = task_result(app.rescan_tab(entity, location, None)).await;
+        let _ = app.update(new_result);
+        let _ = app.update(old_result);
+        let tab = app.tab_model.data::<crate::tab::Tab>(entity).unwrap();
+        assert_eq!(tab.items_opt().unwrap().len(), 1);
+        assert_eq!(tab.items_opt().unwrap()[0].name, "new.txt");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_direct_scan_and_watcher_scan_keep_their_own_completions() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let location = crate::tab::Location::Path(dir.path().to_path_buf());
+        let initial = task_result(app.rescan_tab(entity, location.clone(), None)).await;
+        let _ = app.update(initial);
+        let old = task_result(app.rescan_tab_if_idle(entity, location.clone()).unwrap()).await;
+        std::fs::write(dir.path().join("new.txt"), b"new")?;
+        let current = task_result(app.rescan_tab(entity, location.clone(), None)).await;
+        assert!(app.rescan_tab_if_idle(entity, location.clone()).is_none());
+        let _ = app.update(current);
+        let _ = app.update(old);
+        assert!(app.rescan_tab_if_idle(entity, location).is_none());
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .items_opt()
+                .unwrap()[0]
+                .name,
+            "new.txt"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_scan_releases_only_its_own_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let scans = &mut app
+            .tab_model
+            .data_mut::<crate::tab::Tab>(entity)
+            .unwrap()
+            .scans;
+        let old = scans.begin();
+        let current = scans.begin();
+        let _ = app.update(super::Message::TabRescanFailed(entity, old));
+        assert!(
+            app.tab_model
+                .data_mut::<crate::tab::Tab>(entity)
+                .unwrap()
+                .scans
+                .defer_if_running()
+        );
+        let _ = app.update(super::Message::TabRescanFailed(entity, current));
+        assert_eq!(
+            app.tab_model
+                .data_mut::<crate::tab::Tab>(entity)
+                .unwrap()
+                .scans
+                .finish(current),
+            None
+        );
+        assert!(
+            app.tab_model
+                .data_mut::<crate::tab::Tab>(entity)
+                .unwrap()
+                .scans
+                .defer_if_running()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn review_a_pending_sidebar_stat_does_not_offer_directory_actions() -> std::io::Result<()>
+    {
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, b"notes")?;
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Notes")
+            .data(crate::tab::Location::Path(path))
+            .id();
+        app.config.context_actions = [
+            crate::context_action::ContextActionSelection::Files,
+            crate::context_action::ContextActionSelection::Folders,
+            crate::context_action::ContextActionSelection::Any,
+        ]
+        .into_iter()
+        .map(|selection| crate::context_action::ContextActionPreset {
+            name: "Action".into(),
+            selection,
+            ..Default::default()
+        })
+        .collect();
+        app.nav_context_info = None;
+        let items = app.nav_context_items(entity);
+        assert!(!items.iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(
+                _,
+                _,
+                super::NavMenuAction::OpenInNewTab(_)
+                    | super::NavMenuAction::OpenInNewWindow(_)
+                    | super::NavMenuAction::RunContextAction(_, 0 | 1)
+            )
+        )));
+        assert!(items.iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::Preview(_))
+        )));
+        assert!(items.iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::RunContextAction(_, 2))
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidebar_actions_follow_loaded_file_and_folder_metadata() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Favorite")
+            .data(crate::tab::Location::Path(dir.path().to_path_buf()))
+            .id();
+        app.nav_context_info = Some((
+            entity,
+            super::NavContextInfo {
+                is_file: true,
+                ..Default::default()
+            },
+        ));
+        assert!(app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenWith(_))
+        )));
+        assert!(!app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenInNewTab(_))
+        )));
+        app.nav_context_info = Some((
+            entity,
+            super::NavContextInfo {
+                is_dir: true,
+                ..Default::default()
+            },
+        ));
+        assert!(app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenInNewTab(_))
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn virtual_sidebar_locations_do_not_wait_for_path_metadata() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Recent")
+            .data(crate::tab::Location::Recents)
+            .id();
+        app.nav_context_info = None;
+        assert!(app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenInNewTab(_))
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_current_preview_result_opens_its_item() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let item =
+            crate::tab::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(matches!(
+            app.context_page,
+            super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
+        ));
+        assert!(app.core.window.show_context);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_preview_result_cannot_reopen_dismissed_details() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let _ = app.update(super::Message::SetShowDetails(false));
+        let item =
+            crate::tab::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(!app.core.window.show_context);
+        assert!(!matches!(
+            app.context_page,
+            super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_preview_result_cannot_replace_newer_context() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let _ = app.update(super::Message::ToggleContextPage(
+            super::ContextPage::Settings,
+        ));
+        let item =
+            crate::tab::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(matches!(app.context_page, super::ContextPage::Settings));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn opening_a_new_tab_invalidates_pending_navigation() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.navigation.begin();
+        let previous_tab = app.tab_model.active();
+        let _ = app.update(super::Message::TabNew);
+        assert_ne!(app.tab_model.active(), previous_tab);
+        assert!(!app.navigation.is_current(&request));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_obsolete_mount_cannot_redirect_the_active_tab() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Trash")
+            .data(crate::tab::Location::Trash)
+            .id();
+        let tab_entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        let _ = app.navigation.begin();
+        let _ = app.update(super::Message::NavigationMounted {
+            entity,
+            tab_entity,
+            request,
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(tab_entity)
+                .unwrap()
+                .location
+                .path_opt(),
+            Some(&dir.path().to_path_buf())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_current_mount_continues_the_requested_navigation() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Trash")
+            .data(crate::tab::Location::Trash)
+            .id();
+        let tab_entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        let _ = app.update(super::Message::NavigationMounted {
+            entity,
+            tab_entity,
+            request,
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(tab_entity)
+                .unwrap()
+                .location,
+            crate::tab::Location::Trash
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_older_mime_reload_cannot_consume_the_current_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let stale = app.mime_cache_request.begin();
+        let current = app.mime_cache_request.begin();
+        let _ = app.update(super::Message::MimeAppCacheLoaded(
+            stale,
+            crate::mime_app::MimeAppCache::empty(),
+        ));
+        assert!(app.mime_cache_request.is_current(&current));
+        let _ = app.update(super::Message::MimeAppCacheLoaded(
+            current.clone(),
+            crate::mime_app::MimeAppCache::empty(),
+        ));
+        assert!(!app.mime_cache_request.is_current(&current));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn searching_invalidates_a_pending_preview() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let _ = app.update(super::Message::SearchInput("report".into()));
+        let item =
+            crate::tab::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(!matches!(
+            app.context_page,
+            super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
+        ));
+        Ok(())
     }
 }

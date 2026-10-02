@@ -1,0 +1,53 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-archive)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 21s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 26 tests
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpY8QI5p/foo.txt"] to /mnt/logs/temp/.tmpY8QI5p
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpRiuZxx/chf4M/0"] to /mnt/logs/temp/.tmpRiuZxx/chf4M
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpE41tal/ferris"] to /mnt/logs/temp/.tmpE41tal/cosmic
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpqbjm4C/jbosO"] to /mnt/logs/temp/.tmpqbjm4C
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpE41tal/cosmic/ferris to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }) })
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpY8QI5p/foo (Copy 1).txt to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }) })
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpjTRsB2/Nm9FA/0"] to /mnt/logs/temp/.tmpjTRsB2/GyJy1
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpRiuZxx/chf4M/0 (Copy 1) to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }) })
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpqbjm4C/jbosO (Copy 1)/0 to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }) })
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpqbjm4C/jbosO (Copy 1)/1 to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 926135942 }) })
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpqbjm4C/jbosO (Copy 1)/itNly/0 to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 927135976 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 927135976 }) })
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpqbjm4C/jbosO (Copy 1)/itNly/1 to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 927135976 }), modified: Some(SystemTime { tv_sec: 1790963914, tv_nsec: 927135976 }) })
+test operation::tests::rename_onto_itself_succeeds_and_changes_nothing ... ok
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpIlRVY2/cosmic"] to /mnt/logs/temp/.tmpIlRVY2
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpIlRVY2/cosmic (Copy 1) to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }), modified: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }) })
+test operation::tests::cancelled_tgz_leaves_no_destination ... ok
+test operation::tests::cancelled_zip_leaves_no_destination ... ok
+test operation::tests::compress_preserves_an_existing_tgz ... ok
+test operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file ... ok
+test operation::tests::failed_tgz_leaves_no_destination ... ok
+test operation::tests::copy_to_diff_dir_doesnt_dupe_files ... ok
+test operation::tests::failed_zip_leaves_no_destination ... ok
+test operation::tests::rename_preserves_a_dangling_destination_symlink ... ok
+test operation::tests::rename_refuses_to_replace_an_existing_folder ... ok
+test operation::tests::rename_refuses_to_replace_an_existing_file ... ok
+test operation::tests::rename_moves_when_the_target_is_free ... ok
+test operation::tests::rename_preserves_an_empty_destination_directory ... ok
+test operation::tests::zip_rejects_non_utf8_source_names_without_publishing ... ok
+test operation::tests::delete_surfaces_error_when_trash_fails ... ok
+test operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file ... ok
+test operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported ... ok
+test operation::tests::compress_preserves_an_existing_zip ... ok
+test operation::tests::copy_file_with_extension_to_same_loc ... ok
+test operation::tests::copy_file_to_same_location ... ok
+test operation::tests::copy_file_with_diff_name_to_diff_dir ... ok
+test operation::tests::published_tgz_is_readable ... ok
+test operation::tests::published_zip_is_readable ... ok
+test operation::tests::tgz_preserves_non_utf8_source_names ... ok
+test operation::tests::copy_dir_to_same_location ... ok
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpIlRVY2/cosmic"] to /mnt/logs/temp/.tmpIlRVY2
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpIlRVY2/cosmic (Copy 2) to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }), modified: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }) })
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpIlRVY2/cosmic"] to /mnt/logs/temp/.tmpIlRVY2
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpIlRVY2/cosmic (Copy 3) to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }), modified: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }) })
+[INFO  cosmic_files::operation] Copy ["/mnt/logs/temp/.tmpIlRVY2/cosmic"] to /mnt/logs/temp/.tmpIlRVY2
+[INFO  cosmic_files::operation::recursive] set times for /mnt/logs/temp/.tmpIlRVY2/cosmic (Copy 4) to FileTimes(FileTimes { accessed: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }), modified: Some(SystemTime { tv_sec: 1790963915, tv_nsec: 120142599 }) })
+test operation::tests::copying_file_multiple_times_to_same_location ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 219 filtered out; finished in 1.04s

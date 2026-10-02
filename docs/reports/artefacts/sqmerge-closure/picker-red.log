@@ -1,0 +1,78 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-lifecycle)
+    Finished `test` profile [optimized + debuginfo] target(s) in 46.97s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 3 tests
+
+running 1 test
+
+running 1 test
+
+running 1 test
+
+thread 'dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result' (3103751) panicked at src/dialog.rs:2456:13:
+the picker closed or published its result before the recents write finished
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result' (3103728) panicked at src/dialog.rs:2460:13:
+assertion `left == right` failed
+  left: 2
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result' (3103729) panicked at src/dialog.rs:2460:13:
+assertion `left == right` failed
+  left: 2
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result ... FAILED
+test dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result ...
+failures:
+FAILED
+failures:
+
+    dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result
+
+
+failures:
+test result:
+failures:
+FAILED    dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result
+. 0 passed; 1 failed; 0 ignored; 0 measured; 245 filtered out
+test result: ; finished in 0.00sFAILED
+
+. 0 passed; 1 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.00s
+
+test dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result ... FAILED
+
+failures:
+
+failures:
+    dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.00s
+
+
+thread 'dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result' (3103716) panicked at src/dialog.rs:2405:13:
+the isolated picker completion failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result' (3103717) panicked at src/dialog.rs:2405:13:
+the isolated picker completion failed
+
+thread 'dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result' (3103715) panicked at src/dialog.rs:2405:13:
+the isolated picker completion failed
+test dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result ... FAILED
+test dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result ... FAILED
+test dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result ... FAILED
+
+failures:
+
+failures:
+    dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result
+    dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result
+    dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 243 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

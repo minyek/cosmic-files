@@ -17,6 +17,9 @@ use zip::AesMode::Aes256;
 pub use self::controller::{Controller, ControllerState};
 pub mod controller;
 
+#[cfg(all(test, unix))]
+mod test_faults;
+
 pub use notifiers::*;
 mod notifiers;
 
@@ -26,6 +29,79 @@ pub mod reader;
 use self::recursive::{Context, Method};
 pub mod recursive;
 
+/// Builds the item shown for one side of a replace prompt, on compio's blocking pool because
+/// `item_from_path` stats the path and would otherwise stall the executor on a slow mount.
+async fn build_replace_item(path: PathBuf) -> Option<Box<tab::Item>> {
+    match compio::runtime::spawn_blocking(move || tab::item_from_path(path, IconSizes::default()))
+        .await
+    {
+        Ok(Ok(item)) => Some(Box::new(item)),
+        Ok(Err(err)) => {
+            log::warn!("{err}");
+            None
+        }
+        Err(_) => {
+            log::error!("compio runtime spawn failed while building replace item");
+            None
+        }
+    }
+}
+
+fn already_exists_error(to: &Path) -> io::Error {
+    let message = if to.is_dir() {
+        fl!("folder-already-exists")
+    } else {
+        fl!("file-already-exists")
+    };
+    io::Error::new(io::ErrorKind::AlreadyExists, message)
+}
+
+async fn rename_noreplace(from: PathBuf, to: PathBuf) -> io::Result<()> {
+    if from == to {
+        // Confirming the dialog with the name unchanged renames a path onto itself.
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let from_c = CString::new(from.as_os_str().as_bytes())?;
+        let to_c = CString::new(to.as_os_str().as_bytes())?;
+        let result = compio::runtime::spawn_blocking(move || {
+            let rc = unsafe {
+                libc::renameat2(
+                    libc::AT_FDCWD,
+                    from_c.as_ptr(),
+                    libc::AT_FDCWD,
+                    to_c.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            if rc == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        })
+        .await
+        .map_err(|_| io::Error::other("compio runtime spawn failed while renaming"))?;
+
+        result.map_err(|err| match err.raw_os_error() {
+            Some(libc::EEXIST | libc::ENOTEMPTY) => already_exists_error(&to),
+            _ => err,
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "renaming without replacing an existing file is not supported on this platform",
+        ))
+    }
+}
+
 async fn handle_replace(
     msg_tx: Arc<TokioMutex<Sender<Message>>>,
     file_from: PathBuf,
@@ -33,20 +109,11 @@ async fn handle_replace(
     multiple: bool,
     conflict_count: usize,
 ) -> ReplaceResult {
-    let item_from = match tab::item_from_path(file_from, IconSizes::default()) {
-        Ok(ok) => Box::new(ok),
-        Err(err) => {
-            log::warn!("{err}");
-            return ReplaceResult::Cancel;
-        }
+    let Some(item_from) = build_replace_item(file_from).await else {
+        return ReplaceResult::Cancel;
     };
-
-    let item_to = match tab::item_from_path(file_to, IconSizes::default()) {
-        Ok(ok) => Box::new(ok),
-        Err(err) => {
-            log::warn!("{err}");
-            return ReplaceResult::Cancel;
-        }
+    let Some(item_to) = build_replace_item(file_to).await else {
+        return ReplaceResult::Cancel;
     };
 
     let (tx, mut rx) = mpsc::channel(1);
@@ -692,18 +759,15 @@ impl Operation {
                             }
                         }
 
+                        let mut staged = crate::atomic_file::stage(&to)
+                            .map_err(|e| OperationError::from_err(e, &controller))?;
                         match archive_type {
                             ArchiveType::Tgz => {
-                                let mut archive = fs::File::create(&to)
-                                    .map(io::BufWriter::new)
-                                    .map(|w| {
-                                        flate2::write::GzEncoder::new(
-                                            w,
-                                            flate2::Compression::default(),
-                                        )
-                                    })
-                                    .map(tar::Builder::new)
-                                    .map_err(|e| OperationError::from_err(e, &controller))?;
+                                let writer = io::BufWriter::new(staged.as_file_mut());
+                                let encoder = flate2::write::GzEncoder::new(
+                                    writer, flate2::Compression::default(),
+                                );
+                                let mut archive = tar::Builder::new(encoder);
 
                                 let total_paths = paths.len();
                                 for (i, path) in paths.iter().enumerate() {
@@ -716,28 +780,23 @@ impl Operation {
 
                                     controller.set_progress((i as f32) / total_paths as f32);
 
-                                    if let Some(relative_path) = path
+                                    let relative_path = path
                                         .strip_prefix(relative_root)
-                                        .map_err(|e| OperationError::from_err(e, &controller))?
-                                        .to_str()
-                                    {
-                                        archive
-                                            .append_path_with_name(path, relative_path)
-                                            .map_err(|e| {
-                                                OperationError::from_err(e, &controller)
-                                            })?;
-                                    }
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
+                                    archive
+                                        .append_path_with_name(path, relative_path)
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
                                 }
 
                                 archive
-                                    .finish()
+                                    .into_inner()
+                                    .and_then(flate2::write::GzEncoder::finish)
+                                    .and_then(|mut writer| writer.flush())
                                     .map_err(|e| OperationError::from_err(e, &controller))?;
                             }
                             ArchiveType::Zip => {
-                                let mut archive = fs::File::create(&to)
-                                    .map(io::BufWriter::new)
-                                    .map(zip::ZipWriter::new)
-                                    .map_err(|e| OperationError::from_err(e, &controller))?;
+                                let writer = io::BufWriter::new(staged.as_file_mut());
+                                let mut archive = zip::ZipWriter::new(writer);
 
                                 let total_paths = paths.len();
                                 let mut buffer = vec![0; 4 * 1024 * 1024];
@@ -758,11 +817,14 @@ impl Operation {
                                             password.as_deref().unwrap(),
                                         );
                                     }
-                                    if let Some(relative_path) = path
+                                    let relative_path = path
                                         .strip_prefix(relative_root)
                                         .map_err(|e| OperationError::from_err(e, &controller))?
                                         .to_str()
-                                    {
+                                        .ok_or_else(|| OperationError::from_err(
+                                            format!("path {} cannot be represented in a ZIP archive", path.display()),
+                                            &controller,
+                                        ))?;
                                         let mut file = fs::File::open(path).map_err(|e| {
                                             OperationError::from_err(e, &controller)
                                         })?;
@@ -828,14 +890,22 @@ impl Operation {
                                                     OperationError::from_err(e, &controller)
                                                 })?;
                                         }
-                                    }
                                 }
 
                                 archive
                                     .finish()
+                                    .map_err(|e| OperationError::from_err(e, &controller))?
+                                    .flush()
                                     .map_err(|e| OperationError::from_err(e, &controller))?;
                             }
                         }
+
+                        staged.as_file().sync_all()
+                            .map_err(|e| OperationError::from_err(e, &controller))?;
+                        futures::executor::block_on(controller.check())
+                            .map_err(|e| OperationError::from_state(e, &controller))?;
+                        staged.persist_noclobber(&to)
+                            .map_err(|e| OperationError::from_err(e.error, &controller))?;
 
                         Ok(op_sel)
                     },
@@ -858,9 +928,10 @@ impl Operation {
 
                     controller.set_progress((i as f32) / (total as f32));
 
-                    let _items_opt = compio::runtime::spawn_blocking(|| trash::delete(path))
+                    compio::runtime::spawn_blocking(|| trash::delete(path))
                         .await
-                        .map_err(wrap_compio_spawn_error)?;
+                        .map_err(wrap_compio_spawn_error)?
+                        .map_err(|e| OperationError::from_err(e, &controller))?;
                     //TODO: items_opt allows for easy restore
                 }
                 Ok(OperationSelection::default())
@@ -1107,7 +1178,7 @@ impl Operation {
             Self::RemoveFromRecents { paths } => {
                 tokio::task::spawn_blocking(move || {
                     let path_refs = paths.iter().map(PathBuf::as_path).collect::<Box<[_]>>();
-                    recently_used_xbel::remove_recently_used(&path_refs)
+                    crate::recents::remove_recently_used(&path_refs)
                 })
                 .await
                 .map_err(|e| OperationError::from_err(e, &controller))?
@@ -1124,7 +1195,7 @@ impl Operation {
                         .check()
                         .await
                         .map_err(|s| OperationError::from_state(s, &controller))?;
-                    compio::fs::rename(&from, &to)
+                    rename_noreplace(from.clone(), to.clone())
                         .await
                         .map_err(|e| OperationError::from_err(e, &controller))?;
                     Result::<_, OperationError>::Ok(OperationSelection {
@@ -1328,6 +1399,496 @@ mod tests {
         };
 
         future::join(handle_messages, handle_copy).await.1
+    }
+
+    async fn compress_existing_target(archive_type: crate::app::ArchiveType) -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        fs::write(&source, b"source")?;
+        fs::write(&target, b"existing archive")?;
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source.clone()],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        let result = future::join(run, drain).await.0;
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target)?, b"existing archive");
+        assert_eq!(fs::read(&source)?, b"source");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn compress_preserves_an_existing_zip() -> io::Result<()> {
+        compress_existing_target(crate::app::ArchiveType::Zip).await
+    }
+
+    #[test(compio::test)]
+    async fn compress_preserves_an_existing_tgz() -> io::Result<()> {
+        compress_existing_target(crate::app::ArchiveType::Tgz).await
+    }
+
+    async fn compress_missing_source(archive_type: crate::app::ArchiveType) -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        fs::write(&source, b"source")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source, dir.path().join("missing.txt")],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        assert!(future::join(run, drain).await.0.is_err());
+        assert!(
+            !target.exists(),
+            "failed compression published a partial archive"
+        );
+        assert_eq!(fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn failed_zip_leaves_no_destination() -> io::Result<()> {
+        compress_missing_source(crate::app::ArchiveType::Zip).await
+    }
+
+    #[test(compio::test)]
+    async fn failed_tgz_leaves_no_destination() -> io::Result<()> {
+        compress_missing_source(crate::app::ArchiveType::Tgz).await
+    }
+
+    #[cfg(unix)]
+    async fn compress_finalization_failure(
+        archive_type: crate::app::ArchiveType,
+        test_name: &str,
+    ) -> io::Result<()> {
+        if let Some(dir) = super::test_faults::child_directory() {
+            let (tx, mut rx) = mpsc::channel(1);
+            let operation = Operation::Compress {
+                paths: Vec::new(),
+                to: dir.join(format!("archive{}", archive_type.extension())),
+                archive_type,
+                password: None,
+            };
+            let run = async move {
+                operation
+                    .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                    .await
+            };
+            let drain = async move { while rx.next().await.is_some() {} };
+            let err = future::join(run, drain)
+                .await
+                .0
+                .expect_err("archive finalization should report the write failure");
+            assert!(
+                err.to_string()
+                    .contains(&io::Error::from_raw_os_error(libc::EFBIG).to_string()),
+                "unexpected compression error: {err}"
+            );
+            return Ok(());
+        }
+
+        let dir = empty_fs()?;
+        super::test_faults::run_child(
+            test_name,
+            dir.path(),
+            super::test_faults::Fault::FileSizeLimit,
+        )?;
+        assert_eq!(
+            fs::read_dir(dir.path())?.count(),
+            0,
+            "failed finalization left a destination or staging file"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn zip_finalization_failure_leaves_no_destination_or_staging_file() -> io::Result<()> {
+        compress_finalization_failure(
+            crate::app::ArchiveType::Zip,
+            "zip_finalization_failure_leaves_no_destination_or_staging_file",
+        )
+        .await
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn tgz_finalization_failure_leaves_no_destination_or_staging_file() -> io::Result<()> {
+        compress_finalization_failure(
+            crate::app::ArchiveType::Tgz,
+            "tgz_finalization_failure_leaves_no_destination_or_staging_file",
+        )
+        .await
+    }
+
+    async fn compress_cancelled(archive_type: crate::app::ArchiveType) -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        fs::write(&source, b"source")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let controller = Controller::default();
+        controller.cancel();
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), controller)
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        assert!(future::join(run, drain).await.0.is_err());
+        assert!(
+            !target.exists(),
+            "cancelled compression published an archive"
+        );
+        assert_eq!(fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn cancelled_zip_leaves_no_destination() -> io::Result<()> {
+        compress_cancelled(crate::app::ArchiveType::Zip).await
+    }
+
+    #[test(compio::test)]
+    async fn cancelled_tgz_leaves_no_destination() -> io::Result<()> {
+        compress_cancelled(crate::app::ArchiveType::Tgz).await
+    }
+
+    async fn compressed_fixture(
+        archive_type: crate::app::ArchiveType,
+    ) -> io::Result<(tempfile::TempDir, PathBuf)> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        fs::write(&source, b"source payload")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        assert!(future::join(run, drain).await.0.is_ok());
+        Ok((dir, target))
+    }
+
+    #[test(compio::test)]
+    async fn published_zip_is_readable() -> io::Result<()> {
+        use std::io::Read;
+
+        let (_dir, target) = compressed_fixture(crate::app::ArchiveType::Zip).await?;
+        let mut archive = zip::ZipArchive::new(File::open(target)?)?;
+        assert_eq!(archive.len(), 1);
+        let mut payload = Vec::new();
+        archive.by_name("source.txt")?.read_to_end(&mut payload)?;
+        assert_eq!(payload, b"source payload");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn published_tgz_is_readable() -> io::Result<()> {
+        use std::io::Read;
+
+        let (_dir, target) = compressed_fixture(crate::app::ArchiveType::Tgz).await?;
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(File::open(target)?).read_to_end(&mut decoded)?;
+        let mut archive = tar::Archive::new(io::Cursor::new(decoded));
+        let mut entries = archive.entries()?;
+        let mut entry = entries.next().unwrap()?;
+        assert_eq!(entry.path()?.as_ref(), std::path::Path::new("source.txt"));
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload)?;
+        assert_eq!(payload, b"source payload");
+        assert!(entries.next().is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn compress_non_utf8_source(
+        archive_type: crate::app::ArchiveType,
+    ) -> io::Result<(
+        tempfile::TempDir,
+        PathBuf,
+        Result<OperationSelection, OperationError>,
+    )> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = empty_fs()?;
+        let source = dir.path().join(std::ffi::OsStr::from_bytes(b"source-\xff"));
+        fs::write(&source, b"source payload")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        let result = future::join(run, drain).await.0;
+        Ok((dir, target, result))
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn tgz_preserves_non_utf8_source_names() -> io::Result<()> {
+        use std::io::Read;
+        use std::os::unix::ffi::OsStrExt;
+
+        let (_dir, target, result) = compress_non_utf8_source(crate::app::ArchiveType::Tgz).await?;
+        assert!(result.is_ok());
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(File::open(target)?));
+        let mut entries = archive.entries()?;
+        let mut entry = entries.next().expect("source missing from archive")?;
+        assert_eq!(entry.path()?.as_os_str().as_bytes(), b"source-\xff");
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload)?;
+        assert_eq!(payload, b"source payload");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn zip_rejects_non_utf8_source_names_without_publishing() -> io::Result<()> {
+        let (_dir, target, result) = compress_non_utf8_source(crate::app::ArchiveType::Zip).await?;
+        assert!(
+            result.is_err(),
+            "ZIP silently omitted an unrepresentable name"
+        );
+        assert!(!target.exists());
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_preserves_an_empty_destination_directory() -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        fs::create_dir(&source)?;
+        fs::create_dir(&target)?;
+        assert!(
+            operation_rename(source.clone(), target.clone())
+                .await
+                .is_err()
+        );
+        assert!(source.is_dir());
+        assert!(target.is_dir());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn rename_preserves_a_dangling_destination_symlink() -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        let missing = dir.path().join("missing");
+        fs::write(&source, b"source")?;
+        std::os::unix::fs::symlink(&missing, &target)?;
+        assert!(
+            operation_rename(source.clone(), target.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(fs::read(&source)?, b"source");
+        assert_eq!(fs::read_link(&target)?, missing);
+        Ok(())
+    }
+
+    async fn operation_rename(
+        from: PathBuf,
+        to: PathBuf,
+    ) -> Result<OperationSelection, OperationError> {
+        let (tx, mut rx) = mpsc::channel(4);
+        let handle_rename = async move {
+            Operation::Rename { from, to }
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let handle_messages = async move { while rx.next().await.is_some() {} };
+        future::join(handle_messages, handle_rename).await.1
+    }
+
+    #[test(compio::test)]
+    async fn rename_refuses_to_replace_an_existing_file() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let from = fs.path().join("draft.txt");
+        let to = fs.path().join("report.txt");
+        fs::write(&from, b"draft")?;
+        fs::write(&to, b"report")?;
+
+        operation_rename(from.clone(), to.clone())
+            .await
+            .expect_err("Renaming onto an existing file should fail");
+
+        assert_eq!(fs::read(&from)?, b"draft", "Source should be untouched");
+        assert_eq!(fs::read(&to)?, b"report", "Target should be untouched");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_refuses_to_replace_an_existing_folder() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let from = fs.path().join("drafts");
+        let to = fs.path().join("reports");
+        fs::create_dir(&from)?;
+        fs::create_dir(&to)?;
+        fs::write(to.join("kept.txt"), b"kept")?;
+
+        operation_rename(from.clone(), to.clone())
+            .await
+            .expect_err("Renaming onto an existing folder should fail");
+
+        assert!(from.exists(), "Source should be untouched");
+        assert_eq!(fs::read(to.join("kept.txt"))?, b"kept");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_onto_itself_succeeds_and_changes_nothing() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let path = fs.path().join("draft.txt");
+        fs::write(&path, b"draft")?;
+
+        operation_rename(path.clone(), path.clone())
+            .await
+            .expect("Confirming an unchanged name should be a no-op");
+
+        assert_eq!(fs::read(&path)?, b"draft");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_moves_when_the_target_is_free() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let from = fs.path().join("draft.txt");
+        let to = fs.path().join("report.txt");
+        fs::write(&from, b"draft")?;
+
+        operation_rename(from.clone(), to.clone())
+            .await
+            .expect("Renaming to a free name should succeed");
+
+        assert!(!from.exists(), "Source should be gone");
+        assert_eq!(fs::read(&to)?, b"draft");
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test(compio::test)]
+    async fn rename_fails_closed_when_atomic_rename_is_unsupported() -> io::Result<()> {
+        if let Some(dir) = super::test_faults::child_directory() {
+            super::test_faults::assert_rename_fault();
+            operation_rename(dir.join("source"), dir.join("target"))
+                .await
+                .expect_err("unsupported atomic rename should fail closed");
+            return Ok(());
+        }
+
+        for errno in [libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP] {
+            for target_exists in [false, true] {
+                let dir = empty_fs()?;
+                let source = dir.path().join("source");
+                let target = dir.path().join("target");
+                fs::write(&source, b"source")?;
+                if target_exists {
+                    fs::write(&target, b"target")?;
+                }
+                super::test_faults::run_child(
+                    "rename_fails_closed_when_atomic_rename_is_unsupported",
+                    dir.path(),
+                    super::test_faults::Fault::RenameError(errno),
+                )?;
+                assert_eq!(fs::read(&source)?, b"source");
+                if target_exists {
+                    assert_eq!(fs::read(&target)?, b"target");
+                } else {
+                    assert!(
+                        !target.exists(),
+                        "unsupported rename published a destination"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn operation_delete(paths: Vec<PathBuf>) -> Result<OperationSelection, OperationError> {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let handle_delete = async move {
+            Operation::Delete { paths }
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+
+        // Drain progress messages so the bounded channel never blocks the operation.
+        let handle_messages = async move { while rx.next().await.is_some() {} };
+
+        future::join(handle_messages, handle_delete).await.1
+    }
+
+    #[test(compio::test)]
+    async fn delete_surfaces_error_when_trash_fails() -> io::Result<()> {
+        // `trash::delete` fails on a path that does not exist, and that failure has to reach
+        // the caller: reporting success would show the delete as done with nothing trashed.
+        let fs = empty_fs()?;
+        let missing = fs.path().join("does-not-exist");
+        assert!(!missing.exists());
+
+        let result = operation_delete(vec![missing]).await;
+
+        assert!(
+            result.is_err(),
+            "Delete of a nonexistent path should surface an error, not report success"
+        );
+
+        Ok(())
     }
 
     #[test(compio::test)]

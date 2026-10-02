@@ -1,0 +1,2 @@
+[2m2026-10-02T18:34:25.136829Z[0m [33m WARN[0m [2mstorage_acceptance::recents[0m[2m:[0m failed to initialize recents history: File too large (os error 27) at path "/home/agent/.local/share/.tmprHlgp9"
+Error: Read(Os { code: 2, kind: NotFound, message: "No such file or directory" })
