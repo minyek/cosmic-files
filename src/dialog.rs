@@ -38,7 +38,7 @@ use crate::config::{
 use crate::key_bind::key_binds;
 use crate::localize::LANGUAGE_SORTER;
 use crate::mounter::{MOUNTERS, MounterItem, MounterItems, MounterKey, MounterMessage};
-use crate::tab::{self, HeadingOptions, ItemMetadata, Location, SearchLocation, Tab};
+use crate::tab::{self, HeadingOptions, Location, SearchLocation, Tab};
 use crate::zoom::{zoom_in_view, zoom_out_view, zoom_to_default};
 use crate::{fl, home_dir, menu, mime_icon};
 
@@ -2368,6 +2368,8 @@ mod tests {
                 window_id,
                 config_handler: None,
                 config: Config::default(),
+                state_handler: None,
+                state: crate::config::State::default(),
             },
         );
         app
