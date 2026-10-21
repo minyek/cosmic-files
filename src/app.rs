@@ -2916,7 +2916,7 @@ impl Application for App {
             .comments(fl!("comment"))
             .license("GPL-3.0-only")
             .license_url("https://spdx.org/licenses/GPL-3.0-only")
-            .developers([("Jeremy Soller", "jeremy@system76.com")])
+            .developers([("System76", "info@system76.com")])
             .links([
                 (fl!("repository"), "https://github.com/pop-os/cosmic-files"),
                 (
@@ -7693,6 +7693,10 @@ impl Application for App {
                 .map(|(entity, tab_msg)| Message::TabMessage(Some(entity), tab_msg)),
             )
         }));
+
+        if let Some(dialog) = &self.file_dialog_opt {
+            subscriptions.push(dialog.subscription());
+        };
 
         Subscription::batch(subscriptions)
     }
