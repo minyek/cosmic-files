@@ -336,10 +336,10 @@ pub fn context_menu<'a>(
                     }
                     if selected_mount_point == 0 {
                         if modifiers.shift() && !modifiers.control() {
-                            children.push(
-                                menu_item(fl!("delete-permanently"), Action::PermanentlyDelete)
-                                    .into(),
-                            );
+                            children.push(menu_item(
+                                fl!("delete-permanently"),
+                                Action::PermanentlyDelete,
+                            ));
                         } else {
                             children.push(menu_item(fl!("move-to-trash"), Action::Delete));
                         }
