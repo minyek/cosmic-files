@@ -46,7 +46,7 @@ commit_epoch=$(git -C "$repo_root" show -s --format=%ct "$commit")
 tag_name="epoch-$tag_version"
 snapshot_epoch=$(
     {
-        git -C "$repo_root" show -s --format=%ct "$tag_name"
+        git -C "$repo_root" log -1 --format=%ct "$tag_name"
         git -C "$repo_root" log --format=%ct "$tag_name..$commit"
     } | awk '$1 > newest { newest = $1 } END { if (newest) print newest }'
 )
