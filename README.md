@@ -8,7 +8,7 @@ This fork adds:
 - **Symlink folder badges** in list and grid views.
 - **Better large-directory performance** through parallel scanning, cached sorting, and rendering only visible rows.
 - **More responsive browsing** by moving filesystem and metadata work off the UI thread and coalescing filesystem watcher updates.
-- **A responsive properties pane when many files are selected**, by looking up each distinct owner and group once instead of once per selected file on every frame.
+- **A responsive properties pane when many files are selected**, by looking up each distinct owner and group once instead of once per selected file on every frame ([#1](https://github.com/minyek/cosmic-files/issues/1)).
 - **More reliable background work**, including protection against stale results, safer file-picker saves, and completing queued persistence writes before clean exit.
 - **Safer file operations**, with overwrite protection, failure-safe archive creation, and visible, copyable error messages.
 
