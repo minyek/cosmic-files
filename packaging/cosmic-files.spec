@@ -42,6 +42,8 @@ just rootdir=%{buildroot} prefix=%{_prefix} install
 desktop-file-validate %{buildroot}%{_datadir}/applications/com.system76.CosmicFiles.desktop
 
 %files
+# The build tree sits in a setgid checkout; record the package's own directories as plain 0755.
+%defattr(-,root,root,0755)
 %license LICENSE
 %doc README.md
 %{_bindir}/cosmic-files
