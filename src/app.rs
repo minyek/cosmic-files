@@ -1545,17 +1545,25 @@ impl App {
 
     // This wrapper ensures that local folders use trash and remote folders permanently delete with a dialog
     fn delete(paths: impl IntoIterator<Item = PathBuf>) -> Task<Message> {
+        Self::delete_confirming(paths, Vec::new())
+    }
+
+    /// Deletes `paths`, trashing those the Trash can take, and asks before deleting the rest and
+    /// every path in `dialog_paths` permanently.
+    fn delete_confirming(
+        paths: impl IntoIterator<Item = PathBuf>,
+        dialog_paths: Vec<PathBuf>,
+    ) -> Task<Message> {
         let paths: Vec<PathBuf> = paths.into_iter().collect();
         // Classifying trash vs permanent-delete stats each path, which blocks on slow mounts;
         // do it off-thread and finish in Message::DeleteClassified.
         Task::future(async move {
             let (trash_paths, dialog_paths) = tokio::task::spawn_blocking(move || {
                 let mut trash_paths = Vec::new();
-                let mut dialog_paths = Vec::new();
+                let mut dialog_paths = dialog_paths;
                 for path in paths {
-                    //TODO: is there a smarter way to check this? (like checking for trash folders)
-                    let can_trash = match path.metadata() {
-                        Ok(metadata) => matches!(tab::fs_kind(&metadata), tab::FsKind::Local),
+                    let can_trash = match path.symlink_metadata() {
+                        Ok(metadata) => tab::can_trash(&metadata),
                         Err(err) => {
                             log::warn!("failed to get metadata for {}: {}", path.display(), err);
                             false
@@ -3431,9 +3439,27 @@ impl Application for App {
                             }
                         }
                     } else {
-                        let paths: Box<[_]> = self.selected_paths(entity_opt).collect();
-                        if !paths.is_empty() {
-                            return Self::delete(paths);
+                        let mut paths = Vec::new();
+                        let mut dialog_paths = Vec::new();
+                        let selected = tab
+                            .items_opt()
+                            .into_iter()
+                            .flatten()
+                            .filter(|item| item.selected);
+                        for item in selected {
+                            let Some(path) =
+                                item.location_opt.clone().and_then(Location::into_path_opt)
+                            else {
+                                continue;
+                            };
+                            if item.metadata.can_trash() {
+                                paths.push(path);
+                            } else {
+                                dialog_paths.push(path);
+                            }
+                        }
+                        if !paths.is_empty() || !dialog_paths.is_empty() {
+                            return Self::delete_confirming(paths, dialog_paths);
                         }
                     }
                 }
@@ -8857,6 +8883,93 @@ mod tests {
             app.context_page,
             super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
         ));
+        Ok(())
+    }
+
+    // A folder opened from the Trash is a plain path location, so its children are already in
+    // the Trash: deleting them must ask to remove them for good rather than trash them again.
+    #[tokio::test]
+    async fn deleting_a_trashed_folders_children_asks_to_delete_them_permanently()
+    -> std::io::Result<()> {
+        use cosmic::Application;
+
+        let dir = tempfile::TempDir::new()?;
+        let child = dir.path().join("trashed.txt");
+        let local = dir.path().join("local.txt");
+        std::fs::write(&child, b"")?;
+        std::fs::write(&local, b"")?;
+        let trashed = crate::tab::item_from_trash_entry(
+            trash::TrashItem {
+                id: child.clone().into_os_string(),
+                name: "trashed.txt".into(),
+                original_parent: dir.path().join("documents"),
+                time_deleted: 0,
+            },
+            trash::TrashItemMetadata {
+                size: trash::TrashItemSize::Bytes(0),
+            },
+            crate::config::IconSizes::default(),
+        );
+        let kept = crate::tab::item_from_path(&local, crate::config::IconSizes::default())
+            .expect("a written file should resolve to an item");
+
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let tab = app.tab_model.data_mut::<crate::tab::Tab>(entity).unwrap();
+        tab.set_items(vec![trashed, kept]);
+        tab.items_opt
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .for_each(|item| item.selected = true);
+
+        match task_result(app.update(super::Message::Delete(None))).await {
+            super::Message::DeleteClassified {
+                trash_paths,
+                dialog_paths,
+            } => {
+                assert_eq!(trash_paths, vec![local]);
+                assert_eq!(dialog_paths, vec![child]);
+            }
+            _ => panic!("deleting must classify the selection"),
+        }
+        Ok(())
+    }
+
+    // The menus offer "Move to Trash" for a local symlink whose target is gone, so deleting it
+    // must trash the link rather than ask to delete it permanently.
+    #[tokio::test]
+    async fn deleting_a_dangling_symlink_trashes_it() -> std::io::Result<()> {
+        use cosmic::Application;
+
+        let dir = tempfile::TempDir::new()?;
+        let link = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("missing"), &link)?;
+        // Search lists a dangling link with the link's own metadata.
+        let item = crate::tab::item_from_entry(
+            link.clone(),
+            "dangling".into(),
+            std::fs::symlink_metadata(&link)?,
+            crate::config::IconSizes::default(),
+        );
+        assert!(item.metadata.can_trash());
+
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let tab = app.tab_model.data_mut::<crate::tab::Tab>(entity).unwrap();
+        tab.set_items(vec![item]);
+        tab.items_opt.as_mut().unwrap()[0].selected = true;
+
+        match task_result(app.update(super::Message::Delete(None))).await {
+            super::Message::DeleteClassified {
+                trash_paths,
+                dialog_paths,
+            } => {
+                assert_eq!(trash_paths, vec![link]);
+                assert!(dialog_paths.is_empty());
+            }
+            _ => panic!("deleting must classify the selection"),
+        }
         Ok(())
     }
 }

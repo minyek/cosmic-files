@@ -600,6 +600,12 @@ pub fn fs_kind(_metadata: &Metadata) -> FsKind {
     FsKind::Local
 }
 
+/// Whether deleting the file with this metadata moves it to the Trash. This app trashes files
+/// on local filesystems only and deletes the rest permanently, after asking.
+pub fn can_trash(metadata: &Metadata) -> bool {
+    fs_kind(metadata) == FsKind::Local
+}
+
 #[cfg(not(feature = "desktop"))]
 fn get_desktop_file_display_name(path: &Path) -> Option<String> {
     None
@@ -1993,6 +1999,16 @@ pub enum ItemMetadata {
 }
 
 impl ItemMetadata {
+    /// Whether deleting the item can move it to the Trash. A trash entry is already there.
+    pub fn can_trash(&self) -> bool {
+        match self {
+            Self::Path { metadata, .. } => can_trash(metadata),
+            Self::Trash { .. } | Self::SimpleDir { .. } | Self::SimpleFile { .. } => false,
+            #[cfg(feature = "gvfs")]
+            Self::GvfsPath { .. } => false,
+        }
+    }
+
     pub fn is_dir(&self) -> bool {
         match self {
             Self::Path { metadata, .. } => metadata.is_dir(),
@@ -9902,5 +9918,44 @@ mod tests {
             names.into_iter().collect::<Vec<_>>(),
             vec![String::new(), "root".to_string()]
         );
+    }
+
+    // Deleting moves an item to the Trash only when it is a file on a local filesystem; a trash
+    // entry is already in the Trash, and the simple network entries have no filesystem.
+    #[test]
+    fn only_local_path_items_can_be_trashed() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("local.txt");
+        fs::write(&path, b"")?;
+        let local = ItemMetadata::Path {
+            metadata: fs::metadata(&path)?,
+            children_opt: None,
+        };
+        let trashed = ItemMetadata::Trash {
+            metadata: trash::TrashItemMetadata {
+                size: trash::TrashItemSize::Bytes(0),
+            },
+            entry: trash::TrashItem {
+                id: path.clone().into_os_string(),
+                name: "local.txt".into(),
+                original_parent: dir.path().to_path_buf(),
+                time_deleted: 0,
+            },
+        };
+        assert!(local.can_trash());
+        assert!(!trashed.can_trash());
+        assert!(!ItemMetadata::SimpleFile { size: 0 }.can_trash());
+        assert!(!ItemMetadata::SimpleDir { entries: 0 }.can_trash());
+        #[cfg(feature = "gvfs")]
+        assert!(
+            !ItemMetadata::GvfsPath {
+                mtime: 0,
+                size_opt: None,
+                children_opt: None,
+                is_dir: false,
+            }
+            .can_trash()
+        );
+        Ok(())
     }
 }

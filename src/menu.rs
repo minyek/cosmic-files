@@ -172,7 +172,7 @@ fn context_menu_items(
     let menu_item_disabled =
         |label: String, action: Action| menu::Item::ButtonDisabled(label, None, TabAction(action));
     let delete_item = || {
-        let (label, action) = delete_menu_entry(false, modifiers);
+        let (label, action) = delete_entry_of(Some(tab), modifiers);
         menu_item(label, action)
     };
 
@@ -337,10 +337,7 @@ fn context_menu_items(
                         Action::RestoreFromTrash,
                     ));
                     children.push(menu::Item::Divider);
-                    children.push(menu_item(
-                        fl!("delete-permanently"),
-                        Action::PermanentlyDelete,
-                    ));
+                    children.push(delete_item());
                 } else {
                     if matches!(tab.mode, tab::Mode::App) {
                         children.push(menu::Item::Divider);
@@ -478,8 +475,7 @@ fn context_menu_items(
                     Action::RestoreFromTrash,
                 ));
                 children.push(menu::Item::Divider);
-                let (label, action) = delete_menu_entry(true, modifiers);
-                children.push(menu_item(label, action));
+                children.push(delete_item());
             } else {
                 // TODO: Nested menu
                 children.push(sort_item(fl!("sort-by-name"), HeadingOptions::Name));
@@ -637,15 +633,48 @@ pub fn dialog_menu(
     .into()
 }
 
-/// The label and action of a menu's delete entry. Inside the Trash, `Delete` removes
-/// entries together with their trash records.
-fn delete_menu_entry(in_trash: bool, modifiers: &Modifiers) -> (String, Action) {
+/// What deleting the selection does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Deletion {
+    /// The selection is in the Trash: deleting removes the entries and their trash records.
+    FromTrash,
+    /// At least one selected item can be moved to the Trash.
+    ToTrash,
+    /// Nothing selected can be moved to the Trash, such as files on a network mount or in a
+    /// folder opened from the Trash.
+    Permanent,
+}
+
+fn deletion_of<'a>(in_trash: bool, items: impl IntoIterator<Item = &'a tab::Item>) -> Deletion {
     if in_trash {
-        (fl!("delete-permanently"), Action::Delete)
-    } else if modifiers.shift() && !modifiers.control() {
-        (fl!("delete-permanently"), Action::PermanentlyDelete)
+        return Deletion::FromTrash;
+    }
+    let mut selected = items.into_iter().filter(|item| item.selected).peekable();
+    if selected.peek().is_some() && selected.all(|item| !item.metadata.can_trash()) {
+        Deletion::Permanent
     } else {
-        (fl!("move-to-trash"), Action::Delete)
+        Deletion::ToTrash
+    }
+}
+
+/// The label and action of the delete entry for the selection in `tab_opt`.
+fn delete_entry_of(tab_opt: Option<&Tab>, modifiers: &Modifiers) -> (String, Action) {
+    let deletion = deletion_of(
+        tab_opt.is_some_and(|tab| tab.location.is_trash()),
+        tab_opt.and_then(Tab::items_opt).into_iter().flatten(),
+    );
+    delete_menu_entry(deletion, modifiers)
+}
+
+/// The label and action of a menu's delete entry.
+fn delete_menu_entry(deletion: Deletion, modifiers: &Modifiers) -> (String, Action) {
+    match deletion {
+        Deletion::FromTrash => (fl!("delete-permanently"), Action::Delete),
+        Deletion::Permanent => (fl!("delete-permanently"), Action::PermanentlyDelete),
+        Deletion::ToTrash if modifiers.shift() && !modifiers.control() => {
+            (fl!("delete-permanently"), Action::PermanentlyDelete)
+        }
+        Deletion::ToTrash => (fl!("move-to-trash"), Action::Delete),
     }
 }
 
@@ -691,7 +720,7 @@ pub fn menu_bar<'a>(
     let can_paste =
         clipboard_paste_available && tab_opt.is_some_and(|tab| tab.location.supports_paste());
 
-    let (delete_label, delete_action) = delete_menu_entry(in_trash, modifiers);
+    let (delete_label, delete_action) = delete_entry_of(tab_opt, modifiers);
 
     responsive_menu_bar()
         .item_height(ItemHeight::Dynamic(40))
@@ -886,7 +915,7 @@ mod tests {
     use cosmic::iced::keyboard::Modifiers;
     use cosmic::widget::menu;
 
-    use super::{TabAction, lone_desktop_entry};
+    use super::{Deletion, TabAction, lone_desktop_entry};
     use crate::app::Action;
     use crate::config::IconSizes;
     use crate::fl;
@@ -1198,9 +1227,9 @@ mod tests {
     // In the Trash only `Delete`'s delete-from-trash operation removes an entry together with
     // its trash record; elsewhere `Delete` trashes local files, so only `PermanentlyDelete`
     // deletes them.
-    fn deletes_permanently(in_trash: bool, action: Action) -> bool {
+    fn deletes_permanently(deletion: Deletion, action: Action) -> bool {
         action
-            == if in_trash {
+            == if deletion == Deletion::FromTrash {
                 Action::Delete
             } else {
                 Action::PermanentlyDelete
@@ -1234,24 +1263,89 @@ mod tests {
         );
     }
 
-    // Every combination of location and Shift/Ctrl: an entry labelled "Delete permanently"
-    // must delete permanently, and outside the Trash only Shift without Ctrl does so.
+    // Every deletion with every Shift/Ctrl combination: an entry labelled "Delete permanently"
+    // must delete permanently. A selection the Trash can take is trashed unless Shift is held
+    // without Ctrl; any other selection is always deleted permanently.
     #[test]
     fn delete_menu_entry_label_matches_its_action() {
-        for in_trash in [false, true] {
+        for deletion in [Deletion::FromTrash, Deletion::ToTrash, Deletion::Permanent] {
             for shift in [false, true] {
                 for ctrl in [false, true] {
                     let mut modifiers = Modifiers::empty();
                     modifiers.set(Modifiers::SHIFT, shift);
                     modifiers.set(Modifiers::CTRL, ctrl);
-                    let (label, action) = super::delete_menu_entry(in_trash, &modifiers);
-                    let permanent = deletes_permanently(in_trash, action);
-                    let case = format!("in_trash={in_trash} shift={shift} ctrl={ctrl}");
+                    let (label, action) = super::delete_menu_entry(deletion, &modifiers);
+                    let permanent = deletes_permanently(deletion, action);
+                    let case = format!("{deletion:?} shift={shift} ctrl={ctrl}");
                     assert_eq!(label == fl!("delete-permanently"), permanent, "{case}");
-                    assert_eq!(permanent, in_trash || (shift && !ctrl), "{case}");
+                    assert_eq!(
+                        permanent,
+                        deletion != Deletion::ToTrash || (shift && !ctrl),
+                        "{case}"
+                    );
                 }
             }
         }
+    }
+
+    // Only a non-empty selection the Trash can take none of is deleted permanently; the
+    // Trash location always deletes from the Trash.
+    #[test]
+    fn deletion_of_a_selection() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let local = selected_items(&dir, &["local.txt"])?.remove(0);
+        let mut unselected = local.clone();
+        unselected.selected = false;
+        let mut trashed = trashed_item(&dir)?;
+        trashed.selected = true;
+        let cases = [
+            (
+                "nothing selected",
+                false,
+                vec![unselected.clone()],
+                Deletion::ToTrash,
+            ),
+            (
+                "a local file",
+                false,
+                vec![local.clone()],
+                Deletion::ToTrash,
+            ),
+            (
+                "a trashed folder's child",
+                false,
+                vec![trashed.clone()],
+                Deletion::Permanent,
+            ),
+            (
+                "an unselected local file beside a trashed child",
+                false,
+                vec![unselected, trashed.clone()],
+                Deletion::Permanent,
+            ),
+            (
+                "a local file and a trashed child",
+                false,
+                vec![local.clone(), trashed.clone()],
+                Deletion::ToTrash,
+            ),
+            (
+                "the Trash location",
+                true,
+                vec![trashed],
+                Deletion::FromTrash,
+            ),
+            (
+                "the Trash location, nothing selected",
+                true,
+                vec![],
+                Deletion::FromTrash,
+            ),
+        ];
+        for (case, in_trash, items, expected) in cases {
+            assert_eq!(super::deletion_of(in_trash, &items), expected, "{case}");
+        }
+        Ok(())
     }
 
     #[test]
@@ -1276,6 +1370,37 @@ mod tests {
     fn shift_offers_permanent_delete_for_an_ordinary_file() -> io::Result<()> {
         let dir = TempDir::new()?;
         assert_shift_offers_permanent_delete(&path_tab(&dir, "notes.txt")?);
+        Ok(())
+    }
+
+    // The menu bar and the context menu read the delete entry from the tab's selection; with
+    // no tab the menu bar keeps the plain "Move to Trash" entry.
+    #[test]
+    fn the_delete_entry_follows_the_tabs_selection() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let none = Modifiers::empty();
+        assert_eq!(
+            super::delete_entry_of(Some(&tab_showing(&dir, vec![trashed_item(&dir)?])), &none),
+            (fl!("delete-permanently"), Action::PermanentlyDelete)
+        );
+        assert_eq!(
+            super::delete_entry_of(Some(&path_tab(&dir, "local.txt")?), &none),
+            (fl!("move-to-trash"), Action::Delete)
+        );
+        assert_eq!(
+            super::delete_entry_of(
+                Some(&tab_at(
+                    crate::tab::Location::Trash,
+                    vec![trashed_item(&dir)?]
+                )),
+                &none
+            ),
+            (fl!("delete-permanently"), Action::Delete)
+        );
+        assert_eq!(
+            super::delete_entry_of(None, &none),
+            (fl!("move-to-trash"), Action::Delete)
+        );
         Ok(())
     }
 
