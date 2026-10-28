@@ -5,31 +5,23 @@ File manager for the COSMIC desktop environment
 
 We maintain this fork because System76 no longer accepts LLM-generated changes. Our first pull request upstream,
 [pop-os/cosmic-files#1879](https://github.com/pop-os/cosmic-files/pull/1879), which kept filesystem I/O off the GUI thread to
-remove a minute-long startup delay and a 12-second freeze after deleting files, was closed on that basis.
+remove a minute-long startup delay and a 12-second freeze after deleting files, was closed without converting it to an issue, despite it reporting and fixing a bug. I have found many significant issues in my use of cosmic-files, so I'm maintaining this fork to fix them all together with a small number of usability improvements.
 
 ## Fork improvements
 
 Each change below is tracked as an issue in this repository, with its cause, its fix and the tests that pin it.
 
-### Symlink badges
+### Bug fixes
 
-- Symlinked folders carry a link badge in list, grid and compact views and while dragging, so a link can be told from a real folder. ([#2](https://github.com/minyek/cosmic-files/issues/2))
+Defects present in upstream cosmic-files.
 
-### Large-directory performance
-
-Large folders open, scroll and update faster.
+#### Large folders
 
 - Reading a file in the open folder no longer rescans it; a write refreshes only that entry, and only added, removed or renamed entries rescan. ([#3](https://github.com/minyek/cosmic-files/issues/3))
-- Subfolder item counts are read only for visible rows (or all rows when sorting by size), not for every subfolder during the scan. ([#4](https://github.com/minyek/cosmic-files/issues/4))
-- A rescan keeps the thumbnails, sizes and checksums of entries that did not change. ([#5](https://github.com/minyek/cosmic-files/issues/5))
-- The sort order is cached and rebuilt only when the sorted field changes, not on every frame. ([#6](https://github.com/minyek/cosmic-files/issues/6))
-- List and grid views build widgets only for visible rows, with stable ids so focus follows the item while scrolling. ([#7](https://github.com/minyek/cosmic-files/issues/7))
 - Text previews are built only for the gallery and the preview pane, and capped at 16 KiB, so scrolling past text files no longer freezes the window. ([#8](https://github.com/minyek/cosmic-files/issues/8))
-- Folder entries are processed in parallel, so large folders on slow disks list sooner. ([#9](https://github.com/minyek/cosmic-files/issues/9))
-- A file whose name decides its type is typed from the name, without opening it. ([#10](https://github.com/minyek/cosmic-files/issues/10))
 - Drawing icons never waits for a file being read by a scan. ([#11](https://github.com/minyek/cosmic-files/issues/11))
 
-### Responsive browsing
+#### Responsive browsing
 
 The filesystem and metadata work below moved off the UI thread, so slow disks and network mounts no longer freeze the window for it.
 
@@ -58,7 +50,7 @@ The filesystem and metadata work below moved off the UI thread, so slow disks an
 - The open and save dialogs do their file checks in the background. ([#33](https://github.com/minyek/cosmic-files/issues/33))
 - The overwrite dialog and the trash watcher keep blocking file calls off the async workers. ([#34](https://github.com/minyek/cosmic-files/issues/34))
 
-### Reliable background work
+#### Reliable background work
 
 Background work no longer piles up, applies stale results or grows without bound.
 
@@ -68,12 +60,11 @@ Background work no longer piles up, applies stale results or grows without bound
 - The operation history keeps the newest 256 entries. ([#38](https://github.com/minyek/cosmic-files/issues/38))
 - The gallery clears all of its per-image state together, so memory no longer grows with every image viewed. ([#39](https://github.com/minyek/cosmic-files/issues/39))
 
-### Safe file operations
+#### Safe file operations
 
 File operations no longer overwrite or truncate files unexpectedly, and they report what actually happened.
 
 - Move to Trash reports an error when the file could not be trashed, instead of success. ([#40](https://github.com/minyek/cosmic-files/issues/40))
-- The failed-operations dialog has a Copy to clipboard button for its error text. ([#41](https://github.com/minyek/cosmic-files/issues/41))
 - Rename refuses to replace a file that appeared under the new name. ([#42](https://github.com/minyek/cosmic-files/issues/42))
 - Compress never overwrites an existing file, and a failed or cancelled compress leaves no partial archive. ([#43](https://github.com/minyek/cosmic-files/issues/43))
 - A compress that fails while finishing the archive reports the error. ([#44](https://github.com/minyek/cosmic-files/issues/44))
@@ -83,7 +74,7 @@ File operations no longer overwrite or truncate files unexpectedly, and they rep
 - Every "Delete permanently" menu entry deletes permanently, and holding Shift offers it in every menu, matching Shift+Delete. ([#54](https://github.com/minyek/cosmic-files/issues/54))
 - Files the Trash cannot take, on network mounts or in a folder opened from the Trash, read "Delete permanently" in every menu, and the Delete key no longer moves trashed files back into the Trash. ([#55](https://github.com/minyek/cosmic-files/issues/55))
 
-### Other fixes
+#### Other fixes
 
 - Trashed images show their own dimensions. ([#48](https://github.com/minyek/cosmic-files/issues/48))
 - Files without an extension on network mounts and in the Trash are no longer shown as empty files. ([#49](https://github.com/minyek/cosmic-files/issues/49))
@@ -91,6 +82,24 @@ File operations no longer overwrite or truncate files unexpectedly, and they rep
 - The launcher menu appears only for a single selected .desktop file. ([#51](https://github.com/minyek/cosmic-files/issues/51))
 - Default terminal ids keep a .desktop segment in the middle of the name. ([#52](https://github.com/minyek/cosmic-files/issues/52))
 - A launcher action always runs the command its menu showed. ([#53](https://github.com/minyek/cosmic-files/issues/53))
+
+### New features and improvements
+
+#### Usability
+
+- Symlinked folders carry a link badge in list, grid and compact views and while dragging, so a link can be told from a real folder. ([#2](https://github.com/minyek/cosmic-files/issues/2))
+- The failed-operations dialog has a Copy to clipboard button for its error text. ([#41](https://github.com/minyek/cosmic-files/issues/41))
+
+#### Performance
+
+Large folders open, scroll and update faster.
+
+- Subfolder item counts are read only for visible rows (or all rows when sorting by size), not for every subfolder during the scan. ([#4](https://github.com/minyek/cosmic-files/issues/4))
+- A rescan keeps the thumbnails, sizes and checksums of entries that did not change. ([#5](https://github.com/minyek/cosmic-files/issues/5))
+- The sort order is cached and rebuilt only when the sorted field changes, not on every frame. ([#6](https://github.com/minyek/cosmic-files/issues/6))
+- List and grid views build widgets only for visible rows, with stable ids so focus follows the item while scrolling. ([#7](https://github.com/minyek/cosmic-files/issues/7))
+- Folder entries are processed in parallel, so large folders on slow disks list sooner. ([#9](https://github.com/minyek/cosmic-files/issues/9))
+- A file whose name decides its type is typed from the name, without opening it. ([#10](https://github.com/minyek/cosmic-files/issues/10))
 
 See the [local build and installation guide](docs/guides/local-build-and-install.md) for this fork's release workflow.
 
