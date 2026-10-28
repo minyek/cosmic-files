@@ -101,12 +101,36 @@ cargo build --release
 cargo run --release
 ```
 
+## Build and install a Fedora RPM
+
+`packaging/build-rpm.sh` builds an RPM of this checkout for Fedora 45, including the fork's committed changes.
+
+```sh
+# Install the build dependencies
+sudo dnf5 install git rpm-build rust cargo just glib2-devel libxkbcommon-devel lld desktop-file-utils
+# Fetch the upstream epoch tags the version is derived from
+git remote add upstream https://github.com/pop-os/cosmic-files.git  # once per clone
+git fetch upstream 'refs/tags/epoch-*:refs/tags/epoch-*'
+# Build the RPM
+./packaging/build-rpm.sh
+# Install it, or update an earlier one
+sudo dnf5 install ./target/rpm/cosmic-files-local.rpm
+```
+
+- **Version:** taken from the nearest `epoch-*` tag and the current commit, never from `Cargo.toml`. A commit after `epoch-1.11.0` builds as `1.11.0^git<date>.<distance>.g<commit>`, which sorts above `1.11.0` and orders successive snapshots. Without a reachable `epoch-*` tag the build stops and says how to fetch the tags.
+- **Source:** the archive is made from the checkout's committed files. The build refuses to run while application files are modified or untracked.
+- **Output:** the build files and Cargo cache go under `target/rpm/`. The RPM is written to `target/rpm/rpmbuild/RPMS/<arch>/` and copied to `target/rpm/cosmic-files-local.rpm`. The first build downloads the Rust dependencies.
+
 ## Community and Contributing
 
 The COSMIC desktop environment is maintained by System76 for use in Pop!_OS. A list of all COSMIC projects can be found in the
 [cosmic-epoch](https://github.com/pop-os/cosmic-epoch) project's README. If you would like to discuss COSMIC and Pop!_OS, please
 consider joining the [Pop!_OS Chat](https://chat.pop-os.org/). More information and links can be found on the
 [Pop!_OS Website](https://pop.system76.com).
+
+We maintain this fork because System76 no longer accepts LLM-generated changes. Our first pull request upstream,
+[pop-os/cosmic-files#1879](https://github.com/pop-os/cosmic-files/pull/1879), which kept filesystem I/O off the GUI thread to
+remove a minute-long startup delay and a 12-second freeze after deleting files, was closed on that basis.
 
 ## License
 
