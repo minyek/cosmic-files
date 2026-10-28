@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# More than one account builds in this checkout, sharing it through its group. umask 0002 covers
+# what this script creates; rpmbuild resets the umask to 022 in its build steps, so on exit
+# everything this account owns under target/rpm gets group write.
+umask 0002
 
 script_dir=$(dirname -- "${BASH_SOURCE[0]}")
 repo_root=$(git -C "$script_dir/.." rev-parse --show-toplevel)
 spec_file="$repo_root/packaging/cosmic-files.spec"
 rpm_output="$repo_root/target/rpm"
 topdir="$rpm_output/rpmbuild"
+
+share_build_output() {
+    if [[ -d $rpm_output ]]; then
+        find "$rpm_output" -user "$(id -u)" ! -perm -g+w -exec chmod g+w {} + ||
+            printf 'Warning: could not give group write to everything under %s\n' "$rpm_output" >&2
+    fi
+}
+trap share_build_output EXIT
 
 if ! git -C "$repo_root" diff --quiet HEAD -- . ':(exclude)docs/**' ':(exclude)packaging/**'; then
     printf 'Refusing to build from modified application files. Commit or revert them first.\n' >&2
@@ -74,6 +86,6 @@ if [[ ! -f $rpm_file ]]; then
 fi
 
 local_rpm="$rpm_output/cosmic-files-local.rpm"
-install -m 0644 "$rpm_file" "$local_rpm"
+install -m 0664 "$rpm_file" "$local_rpm"
 printf 'Built RPM: %s\n' "$rpm_file"
 printf 'Installable path: %s\n' "$local_rpm"

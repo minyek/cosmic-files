@@ -55,7 +55,13 @@ source archive comes from this checkout's committed files, so the fork's
 committed changes are included. The
 build stops if application files are modified or untracked, and writes its RPM
 build files and Cargo cache under `target/rpm/`. Cargo downloads Rust
-dependencies on the first build when they are not cached.
+dependencies on the first build when they are not cached. On exit, including
+after a failed or refused build, the script gives group write to everything the
+running account owns under `target/rpm/`, so accounts that share the checkout
+through its group can each build. A build killed with SIGKILL skips that step,
+and killing only the script's own process lets rpmbuild keep writing after it;
+in either case the account that owns the leftovers reruns the script to restore
+group write.
 
 The named RPM is under `target/rpm/rpmbuild/RPMS/`, in the directory for the
 current architecture. The build also copies it to the stable path

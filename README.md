@@ -134,7 +134,7 @@ sudo dnf5 install ./target/rpm/cosmic-files-local.rpm
 
 - **Version:** taken from the nearest `epoch-*` tag and the current commit, never from `Cargo.toml`. A commit after `epoch-1.11.0` builds as `1.11.0^git<date>.<distance>.g<commit>`, which sorts above `1.11.0` and orders successive snapshots. Without a reachable `epoch-*` tag the build stops and says how to fetch the tags.
 - **Source:** the archive is made from the checkout's committed files. The build refuses to run while application files are modified or untracked.
-- **Output:** the build files and Cargo cache go under `target/rpm/`. The RPM is written to `target/rpm/rpmbuild/RPMS/<arch>/` and copied to `target/rpm/cosmic-files-local.rpm`. The first build downloads the Rust dependencies.
+- **Output:** the build files and Cargo cache go under `target/rpm/`. The RPM is written to `target/rpm/rpmbuild/RPMS/<arch>/` and copied to `target/rpm/cosmic-files-local.rpm`. The first build downloads the Rust dependencies. Everything the build leaves under `target/rpm/` is group-writable, so accounts that share the checkout through its group can each build. If a killed build left entries another account cannot change, the account that owns them reruns the script, which restores group write on exit even when it refuses to build.
 
 ## Community and Contributing
 
