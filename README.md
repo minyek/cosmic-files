@@ -1,6 +1,12 @@
 # cosmic-files
 File manager for the COSMIC desktop environment
 
+## Why this fork exists
+
+We maintain this fork because System76 no longer accepts LLM-generated changes. Our first pull request upstream,
+[pop-os/cosmic-files#1879](https://github.com/pop-os/cosmic-files/pull/1879), which kept filesystem I/O off the GUI thread to
+remove a minute-long startup delay and a 12-second freeze after deleting files, was closed on that basis.
+
 ## Fork improvements
 
 Each change below is tracked as an issue in this repository, with its cause, its fix and the tests that pin it.
@@ -127,10 +133,6 @@ The COSMIC desktop environment is maintained by System76 for use in Pop!_OS. A l
 [cosmic-epoch](https://github.com/pop-os/cosmic-epoch) project's README. If you would like to discuss COSMIC and Pop!_OS, please
 consider joining the [Pop!_OS Chat](https://chat.pop-os.org/). More information and links can be found on the
 [Pop!_OS Website](https://pop.system76.com).
-
-We maintain this fork because System76 no longer accepts LLM-generated changes. Our first pull request upstream,
-[pop-os/cosmic-files#1879](https://github.com/pop-os/cosmic-files/pull/1879), which kept filesystem I/O off the GUI thread to
-remove a minute-long startup delay and a 12-second freeze after deleting files, was closed on that basis.
 
 ## License
 
