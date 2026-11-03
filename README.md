@@ -48,7 +48,7 @@ The filesystem and metadata work below moved off the UI thread, so slow disks an
 - Launching a .desktop file parses it in the background. ([#31](https://github.com/minyek/cosmic-files/issues/31))
 - Recent files are recorded by one ordered background writer that finishes before the app or the picker closes. ([#32](https://github.com/minyek/cosmic-files/issues/32))
 - The open and save dialogs do their file checks in the background. ([#33](https://github.com/minyek/cosmic-files/issues/33))
-- The overwrite dialog and the trash watcher keep blocking file calls off the async workers. ([#34](https://github.com/minyek/cosmic-files/issues/34))
+- The overwrite dialog keeps blocking file calls off the async workers. ([#34](https://github.com/minyek/cosmic-files/issues/34))
 
 #### Reliable background work
 
