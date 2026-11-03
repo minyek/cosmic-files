@@ -59,11 +59,11 @@ Background work no longer piles up, applies stale results or grows without bound
 - Recent files are recorded on a fresh profile, by creating the history file first. ([#37](https://github.com/minyek/cosmic-files/issues/37))
 - The operation history keeps the newest 256 entries. ([#38](https://github.com/minyek/cosmic-files/issues/38))
 - The gallery clears all of its per-image state together, so memory no longer grows with every image viewed. ([#39](https://github.com/minyek/cosmic-files/issues/39))
-- Pausing a delete no longer freezes every other file operation until it resumes. ([#56](https://github.com/minyek/cosmic-files/issues/56))
-- Pausing or resuming never restarts an operation that was just cancelled or had failed. ([#56](https://github.com/minyek/cosmic-files/issues/56))
-- A pause, resume or cancel that arrives just as an operation checks its state is never lost. ([#56](https://github.com/minyek/cosmic-files/issues/56))
-- Cancelling a paused copy to or from a phone, camera or other gvfs mount ends it, instead of leaving it waiting for a resume. ([#56](https://github.com/minyek/cosmic-files/issues/56))
-- Resuming a paused copy to or from a phone, camera or other gvfs mount no longer freezes every file operation. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- Pausing a delete no longer freezes every other file operation until it resumes. ([#57](https://github.com/minyek/cosmic-files/issues/57))
+- Pausing or resuming never restarts an operation that was just cancelled or had failed. ([#57](https://github.com/minyek/cosmic-files/issues/57))
+- A pause, resume or cancel that arrives just as an operation checks its state is never lost. ([#57](https://github.com/minyek/cosmic-files/issues/57))
+- Cancelling a paused copy to or from a phone, camera or other gvfs mount ends it, instead of leaving it waiting for a resume. ([#57](https://github.com/minyek/cosmic-files/issues/57))
+- Resuming a paused copy to or from a phone, camera or other gvfs mount no longer freezes every file operation. ([#57](https://github.com/minyek/cosmic-files/issues/57))
 
 #### Safe file operations
 
