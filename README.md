@@ -62,8 +62,8 @@ Background work no longer piles up, applies stale results or grows without bound
 - Pausing a delete no longer freezes every other file operation until it resumes. ([#56](https://github.com/minyek/cosmic-files/issues/56))
 - Pausing or resuming never restarts an operation that was just cancelled or had failed. ([#56](https://github.com/minyek/cosmic-files/issues/56))
 - A pause, resume or cancel that arrives just as an operation checks its state is never lost. ([#56](https://github.com/minyek/cosmic-files/issues/56))
-- Cancelling a paused copy to or from a phone or camera (MTP) ends it, instead of leaving it waiting for a resume. ([#56](https://github.com/minyek/cosmic-files/issues/56))
-- Resuming a paused copy to or from a phone or camera (MTP) no longer freezes every file operation. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- Cancelling a paused copy to or from a phone, camera or other gvfs mount ends it, instead of leaving it waiting for a resume. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- Resuming a paused copy to or from a phone, camera or other gvfs mount no longer freezes every file operation. ([#56](https://github.com/minyek/cosmic-files/issues/56))
 
 #### Safe file operations
 
