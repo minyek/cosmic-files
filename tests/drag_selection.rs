@@ -12,7 +12,9 @@ use cosmic::widget::menu::key_bind::KeyBind;
 use cosmic::{Element, widget};
 use cosmic_files::app::Action;
 use cosmic_files::config::{IconSizes, TabConfig, ThumbCfg};
-use cosmic_files::tab::{Location, Message, Tab, View, scan_path};
+use cosmic_files::location::Location;
+use cosmic_files::scan::scan_path;
+use cosmic_files::tab::{Message, Tab, View};
 use tempfile::TempDir;
 
 const VIEW_SIZE: Size = Size::new(800.0, 300.0);
@@ -129,7 +131,7 @@ fn drag_selects_visible_items(view: View, expected: [&str; 2]) -> io::Result<()>
             .find(|item| item.name == "file00000.txt")
             .unwrap();
         assert!(
-            tree.find(&first_item.button_id).is_none(),
+            tree.find(&first_item.state.button_id).is_none(),
             "earlier rows must be culled"
         );
 
@@ -145,7 +147,7 @@ fn drag_selects_visible_items(view: View, expected: [&str; 2]) -> io::Result<()>
             bounds
                 .0
                 .iter()
-                .find(|(id, _)| *id == item.button_id)
+                .find(|(id, _)| *id == item.state.button_id)
                 .map(|(_, bounds)| *bounds)
                 .expect("target button must be in the widget tree")
         });
@@ -197,7 +199,7 @@ fn drag_selects_visible_items(view: View, expected: [&str; 2]) -> io::Result<()>
         .items_opt()
         .unwrap()
         .iter()
-        .filter(|item| item.selected)
+        .filter(|item| item.state.selected)
         .map(|item| item.name.as_str())
         .collect();
     assert_eq!(

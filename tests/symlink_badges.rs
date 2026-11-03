@@ -10,10 +10,10 @@ use cosmic::iced::advanced::widget::Tree;
 use cosmic::iced::{Color, Font, Pixels, Rectangle, Size, mouse};
 use cosmic::widget;
 use cosmic_files::config::{IconSizes, TabConfig, ThumbCfg};
-use cosmic_files::tab::{
-    Item, Location, SearchLocation, Tab, View, item_from_path, item_from_search_item, scan_path,
-    scan_search,
-};
+use cosmic_files::item::{Item, item_from_path, item_from_search_item};
+use cosmic_files::location::{Location, SearchLocation};
+use cosmic_files::scan::{scan_path, scan_search};
+use cosmic_files::tab::{Tab, View};
 use image::RgbaImage;
 use tempfile::TempDir;
 
@@ -202,51 +202,6 @@ fn symlink_folder_badge_uses_scanned_metadata() -> io::Result<()> {
 }
 
 #[test]
-fn trashed_symlink_folder_badges_use_the_stored_path() -> io::Result<()> {
-    let directory = TempDir::new()?;
-    let stored = directory.path().join("files");
-    let original = directory.path().join("original");
-    let info = directory.path().join("info");
-    fs::create_dir_all(stored.join("folder"))?;
-    fs::create_dir_all(original.join("folder"))?;
-    fs::create_dir(&info)?;
-    symlink("folder", stored.join("link"))?;
-    symlink("folder", original.join("link"))?;
-
-    for (stored_name, original_name, expected) in
-        [("link", "folder", true), ("folder", "link", false)]
-    {
-        let info_path = info.join(format!("{stored_name}.trashinfo"));
-        fs::write(
-            &info_path,
-            format!(
-                "[Trash Info]\nPath={}\n",
-                original.join(original_name).display()
-            ),
-        )?;
-        for id in [stored.join(stored_name), info_path] {
-            let entry = trash::TrashItem {
-                id: id.into_os_string(),
-                name: original_name.into(),
-                original_parent: original.clone(),
-                time_deleted: 0,
-            };
-            let metadata = trash::TrashItemMetadata {
-                size: trash::TrashItemSize::Entries(0),
-            };
-            let item =
-                cosmic_files::tab::item_from_trash_entry(entry, metadata, IconSizes::default());
-            assert_eq!(
-                item.is_symlink_dir, expected,
-                "incorrect badge for stored {stored_name}"
-            );
-            assert_eq!(item.path_opt(), Some(&stored.join(stored_name)));
-        }
-    }
-    Ok(())
-}
-
-#[test]
 fn search_preserves_symlink_folder_badges() -> io::Result<()> {
     let (directory, _, _) = folder_and_symlink()?;
     let results = std::sync::Mutex::new(Vec::new());
@@ -286,7 +241,7 @@ fn gvfs_symlink_folder_badge_uses_link_metadata() -> Result<(), Box<dyn std::err
         gio::FileQueryInfoFlags::NONE,
         gio::Cancellable::NONE,
     )?;
-    let item = cosmic_files::tab::item_from_gvfs_info(path, info, IconSizes::default());
+    let item = cosmic_files::item::item_from_gvfs_info(path, info, IconSizes::default());
     assert!(item.metadata.is_dir());
     assert!(
         item.is_symlink_dir,

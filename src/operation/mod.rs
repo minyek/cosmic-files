@@ -1,11 +1,7 @@
-use crate::app::{ArchiveType, DialogPage, Message, REPLACE_BUTTON_ID};
-use crate::config::IconSizes;
-use crate::spawn_detached::spawn_detached;
-use crate::{archive, fl, tab};
 use cosmic::iced::futures::channel::mpsc::Sender;
 use cosmic::iced::futures::{self, SinkExt, StreamExt, stream};
 use std::borrow::Cow;
-use std::fmt::Formatter;
+use std::fmt::{self, Display, Formatter};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,6 +9,12 @@ use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use walkdir::WalkDir;
 use zip::AesMode::Aes256;
+
+use crate::app::{ArchiveType, DialogPage, Message, REPLACE_BUTTON_ID};
+use crate::config::IconSizes;
+use crate::spawn_detached::spawn_detached;
+use crate::trash::{Trash, TrashExt, TrashItem};
+use crate::{archive, fl};
 
 pub use self::controller::{Controller, ControllerState};
 pub mod controller;
@@ -31,9 +33,11 @@ pub mod recursive;
 
 /// Builds the item shown for one side of a replace prompt, on compio's blocking pool because
 /// `item_from_path` stats the path and would otherwise stall the executor on a slow mount.
-async fn build_replace_item(path: PathBuf) -> Option<Box<tab::Item>> {
-    match compio::runtime::spawn_blocking(move || tab::item_from_path(path, IconSizes::default()))
-        .await
+async fn build_replace_item(path: PathBuf) -> Option<Box<crate::item::Item>> {
+    match compio::runtime::spawn_blocking(move || {
+        crate::item::item_from_path(path, IconSizes::default())
+    })
+    .await
     {
         Ok(Ok(item)) => Some(Box::new(item)),
         Ok(Err(err)) => {
@@ -280,30 +284,47 @@ async fn copy_or_move(
     .map_err(wrap_compio_spawn_error)?
 }
 
-pub async fn sync_to_disk(
-    written_files: Vec<PathBuf>,
-    target_dirs: std::collections::HashSet<PathBuf>,
-) {
-    // Sync files to disk
-    stream::iter(written_files.into_iter().map(|path| async move {
-        if let Ok(file) = compio::fs::OpenOptions::new().write(true).open(&path).await {
-            let _ = file.sync_all().await;
+/// Sync file descriptor wrappers to disk.
+pub async fn sync_to_disk(fds: Vec<(compio::fs::File, PathBuf)>) -> Result<(), SyncError> {
+    // Sync files and dirs to disk.
+    // Each future is attempted to be driven to conclusion which is why the results are collected
+    // rather than using try_collect(). try_collect() short circuits.
+    let errors: Vec<_> = stream::iter(fds.into_iter().map(|(fd, path)| async move {
+        // See write(2) which recommends fsync before closing to ensure write errors propagate.
+        if let Err(e) = fd.sync_all().await {
+            // Slightly ugly because borrowck wants path to be cloned.
+            return Some((e, path));
         }
+        // close(2) is unlikely to fail after fsync.
+        fd.close().await.err().map(|e| (e, path))
     }))
     .buffer_unordered(32)
-    .collect::<()>()
+    .filter_map(futures::future::ready)
+    .collect()
     .await;
 
-    // Sync directories to disk
-    stream::iter(target_dirs.into_iter().map(|path| async move {
-        if let Ok(dir) = compio::fs::OpenOptions::new().read(true).open(&path).await {
-            let _ = dir.sync_all().await;
-        }
-    }))
-    .buffer_unordered(16)
-    .collect::<()>()
-    .await;
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(SyncError(errors.into_boxed_slice()))
+    }
 }
+
+#[derive(Debug)]
+pub struct SyncError(pub Box<[(io::Error, PathBuf)]>);
+
+impl Display for SyncError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "failed to sync files to disk\n")?;
+        for (e, path) in &self.0 {
+            writeln!(f, "{e}: {path:?}")?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for SyncError {}
 
 pub fn copy_unique_path(from: &Path, to: &Path) -> PathBuf {
     // List of compound extensions to check
@@ -433,7 +454,7 @@ pub enum Operation {
     },
     /// Delete a path from the trash
     DeleteTrash {
-        items: Vec<trash::TrashItem>,
+        items: Vec<TrashItem>,
     },
     /// Empty the trash
     EmptyTrash,
@@ -468,7 +489,7 @@ pub enum Operation {
     },
     /// Restore a path from the trash
     Restore {
-        items: Vec<trash::TrashItem>,
+        items: Vec<TrashItem>,
     },
     /// Set executable and launch
     SetExecutableAndLaunch {
@@ -928,108 +949,84 @@ impl Operation {
 
                     controller.set_progress((i as f32) / (total as f32));
 
-                    compio::runtime::spawn_blocking(|| trash::delete(path))
+                    compio::runtime::spawn_blocking(|| Trash::trash(path))
                         .await
                         .map_err(wrap_compio_spawn_error)?
                         .map_err(|e| OperationError::from_err(e, &controller))?;
-                    //TODO: items_opt allows for easy restore
                 }
                 Ok(OperationSelection::default())
             }
             Self::DeleteTrash { items } => {
-                #[cfg(any(
-                    target_os = "windows",
-                    all(
-                        unix,
-                        not(target_os = "macos"),
-                        not(target_os = "ios"),
-                        not(target_os = "android")
-                    )
-                ))]
-                {
-                    let controller_clone = controller.clone();
-                    compio::runtime::spawn_blocking(move || -> Result<(), OperationError> {
-                        let controller = controller_clone;
-                        let count = items.len();
-                        for (i, item) in items.into_iter().enumerate() {
-                            futures::executor::block_on(async {
-                                controller
-                                    .check()
-                                    .await
-                                    .map_err(|s| OperationError::from_state(s, &controller))
-                            })?;
+                let controller_clone = controller.clone();
+                compio::runtime::spawn_blocking(move || -> Result<(), OperationError> {
+                    let controller = controller_clone;
+                    let count = items.len();
+                    for (i, item) in items.into_iter().enumerate() {
+                        futures::executor::block_on(async {
+                            controller
+                                .check()
+                                .await
+                                .map_err(|s| OperationError::from_state(s, &controller))
+                        })?;
 
-                            controller.set_progress(i as f32 / count as f32);
+                        controller.set_progress(i as f32 / count as f32);
 
-                            trash::os_limited::purge_all([item])
-                                .map_err(|e| OperationError::from_err(e, &controller))?;
-                        }
-                        Ok(())
-                    })
-                    .await
-                    .map_err(wrap_compio_spawn_error)?
-                    .map_err(|e| OperationError::from_err(e, &controller))?;
-                }
+                        Trash::purge(item).map_err(|e| OperationError::from_err(e, &controller))?;
+                    }
+                    Ok(())
+                })
+                .await
+                .map_err(wrap_compio_spawn_error)?
+                .map_err(|e| OperationError::from_err(e, &controller))?;
                 Ok(OperationSelection::default())
             }
             Self::EmptyTrash => {
-                #[cfg(any(
-                    target_os = "windows",
-                    all(
-                        unix,
-                        not(target_os = "macos"),
-                        not(target_os = "ios"),
-                        not(target_os = "android")
-                    )
-                ))]
-                {
-                    let controller_clone = controller.clone();
-                    compio::runtime::spawn_blocking(move || -> Result<(), OperationError> {
-                        let controller = controller_clone;
-                        let items = trash::os_limited::list()
-                            .map_err(|e| OperationError::from_err(e, &controller))?;
-                        let count = items.len();
-                        let mut errors: Vec<trash::Error> = Vec::new();
+                let controller_clone = controller.clone();
+                compio::runtime::spawn_blocking(move || -> Result<(), OperationError> {
+                    let controller = controller_clone;
+                    let items =
+                        Trash::list().map_err(|e| OperationError::from_err(e, &controller))?;
+                    let count = items.len();
+                    let mut errors: Vec<String> = Vec::new();
 
-                        for (i, item) in items.into_iter().enumerate() {
-                            futures::executor::block_on(async {
-                                controller
-                                    .check()
-                                    .await
-                                    .map_err(|s| OperationError::from_state(s, &controller))
-                            })?;
+                    for (i, item) in items.into_iter().enumerate() {
+                        futures::executor::block_on(async {
+                            controller
+                                .check()
+                                .await
+                                .map_err(|s| OperationError::from_state(s, &controller))
+                        })?;
 
-                            if let Err(e) = trash::os_limited::purge_all([item]) {
-                                errors.push(e);
-                            }
-
-                            controller.set_progress(i as f32 / count as f32);
+                        if let Err(e) = Trash::purge(item) {
+                            errors.push(e);
                         }
 
-                        // Report errors at the end
-                        if !errors.is_empty() {
-                            log::warn!("Failed to purge {} items:", errors.len());
-                            for e in &errors {
-                                log::warn!("  - {e}");
-                            }
+                        controller.set_progress(i as f32 / count as f32);
+                    }
 
-                            // Return an error to signal partial failure
-                            return Err(OperationError::from_err(
-                                format!(
-                                    "Failed to delete {} of {} items. Check log for details.",
-                                    errors.len(),
-                                    count
-                                ),
-                                &controller,
-                            ));
+                    // Report errors at the end
+                    if !errors.is_empty() {
+                        log::warn!("Failed to purge {} items:", errors.len());
+                        for e in &errors {
+                            log::warn!("  - {e}");
                         }
 
-                        Ok(())
-                    })
-                    .await
-                    .map_err(wrap_compio_spawn_error)?
-                    .map_err(|e| OperationError::from_err(e, &controller))?;
-                }
+                        // Return an error to signal partial failure
+                        return Err(OperationError::from_err(
+                            format!(
+                                "Failed to delete {} of {} items. Check log for details.",
+                                errors.len(),
+                                count
+                            ),
+                            &controller,
+                        ));
+                    }
+
+                    Ok(())
+                })
+                .await
+                .map_err(wrap_compio_spawn_error)?
+                .map_err(|e| OperationError::from_err(e, &controller))?;
                 Ok(OperationSelection::default())
             }
             Self::Extract {
@@ -1039,12 +1036,11 @@ impl Operation {
             } => {
                 let controller_clone = controller.clone();
                 compio::runtime::spawn(async move {
-                    let extracted = compio::runtime::spawn_blocking(move || {
+                    let op_sel = compio::runtime::spawn_blocking(move || {
                         let controller = controller_clone;
                         let total_paths = paths.len();
                         let mut op_sel = OperationSelection::default();
-                        let mut written_files = Vec::new();
-                        let mut target_dirs = std::collections::HashSet::new();
+                        let mut dirty_fds = Vec::new();
                         for (i, path) in paths.iter().enumerate() {
                             futures::executor::block_on(async {
                                 controller
@@ -1068,26 +1064,28 @@ impl Operation {
                                 op_sel.ignored.push(path.clone());
                                 op_sel.selected.push(new_dir.clone());
 
-                                let (files, dirs) = crate::archive::extract(
+                                let fds = crate::archive::extract(
                                     path,
                                     &new_dir,
                                     &password,
                                     &controller,
                                 )?;
-                                written_files.extend(files);
-                                target_dirs.extend(dirs);
+                                dirty_fds.extend(fds);
                             }
                         }
 
-                        Ok::<_, OperationError>((op_sel, written_files, target_dirs))
+                        // Batch sync file descriptors
+                        for fd in dirty_fds {
+                            // Drop would close the File and likely won't fail due to fsyncing here.
+                            // TIL there's no File::close; should be okay though.
+                            fd.sync_all()
+                                .map_err(|e| OperationError::from_err(e, &controller))?;
+                        }
+
+                        Ok::<_, OperationError>(op_sel)
                     })
                     .await
                     .map_err(wrap_compio_spawn_error)??;
-
-                    let (op_sel, written_files, target_dirs) = extracted;
-                    if !written_files.is_empty() || !target_dirs.is_empty() {
-                        sync_to_disk(written_files, target_dirs).await;
-                    }
 
                     Ok::<_, OperationError>(op_sel)
                 })
@@ -1206,14 +1204,6 @@ impl Operation {
             }
             .await
             .map_err(wrap_compio_spawn_error)?,
-            #[cfg(target_os = "macos")]
-            Self::Restore { .. } => {
-                // TODO: add support for macos
-                return Err(OperationError::from_msg(
-                    "Restoring from trash is not supported on macos",
-                ));
-            }
-            #[cfg(not(target_os = "macos"))]
             Self::Restore { items } => {
                 let total = items.len();
                 let mut paths = Vec::with_capacity(total);
@@ -1225,24 +1215,12 @@ impl Operation {
 
                     controller.set_progress((i as f32) / (total as f32));
 
-                    paths.push(item.original_path());
+                    paths.push(item.original_path.clone());
 
-                    // Items with .trashinfo id use standard restore; sub-items use manual move
-                    if item.id.to_str().is_some_and(|s| s.ends_with(".trashinfo")) {
-                        compio::runtime::spawn_blocking(|| trash::os_limited::restore_all([item]))
-                            .await
-                            .map_err(wrap_compio_spawn_error)?
-                            .map_err(|e| OperationError::from_err(e, &controller))?;
-                    } else {
-                        let from = PathBuf::from(&item.id);
-                        let to = item.original_path();
-                        if let Some(parent) = to.parent() {
-                            std::fs::create_dir_all(parent)
-                                .map_err(|e| OperationError::from_err(e, &controller))?;
-                        }
-                        std::fs::rename(&from, &to)
-                            .map_err(|e| OperationError::from_err(e, &controller))?;
-                    }
+                    compio::runtime::spawn_blocking(|| Trash::restore(item))
+                        .await
+                        .map_err(wrap_compio_spawn_error)?
+                        .map_err(|e| OperationError::from_err(e, &controller))?;
                 }
                 Ok(OperationSelection {
                     ignored: Vec::new(),
@@ -1340,12 +1318,13 @@ fn wrap_compio_spawn_error(err: Box<dyn std::any::Any + Send>) -> OperationError
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};
-    use std::io;
-    use std::path::PathBuf;
+    use std::io::{self, Write};
+    use std::path::{Path, PathBuf};
 
     use cosmic::iced::futures::channel::mpsc;
     use cosmic::iced::futures::{StreamExt, future};
     use log::debug;
+    use tempfile::tempdir;
     use test_log::test;
     use tokio::sync;
 
@@ -2054,6 +2033,47 @@ mod tests {
 
         assert!(file_path.exists(), "Original file should still exist");
         assert!(expected.exists(), "File should have been copied");
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn extract_zip_with_files_and_symlink() -> Result<(), Box<dyn std::error::Error>> {
+        let fs = tempdir()?;
+        let archive_path = fs.path().join("archive.zip");
+        let extract_dir = fs.path().join("archive");
+
+        {
+            let file = File::create(&archive_path)?;
+            let mut archive = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+
+            archive.add_directory("a/", options)?;
+            archive.start_file("a/FileA", options)?;
+            archive.write_all(b"a")?;
+            archive.start_file("FileB", options)?;
+            archive.write_all(b"b")?;
+            archive.add_symlink("FileC", "a/FileA", options)?;
+            archive.finish()?;
+        }
+
+        let (tx, _rx) = mpsc::channel(1);
+        Operation::Extract {
+            paths: Box::new([archive_path]),
+            to: fs.path().to_path_buf(),
+            password: None,
+        }
+        .perform(&sync::Mutex::new(tx).into(), Controller::default())
+        .await?;
+
+        assert_eq!(fs::read_to_string(extract_dir.join("a/FileA"))?, "a");
+        assert_eq!(fs::read_to_string(extract_dir.join("FileB"))?, "b");
+
+        let link = extract_dir.join("FileC");
+        assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+        assert_eq!(fs::read_link(&link)?, Path::new("a/FileA"));
+        assert_eq!(fs::read_to_string(&link)?, "a");
 
         Ok(())
     }

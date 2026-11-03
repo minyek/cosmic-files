@@ -35,10 +35,12 @@ use crate::app::{
 use crate::config::{
     Config, DialogConfig, State, TIME_CONFIG_ID, ThumbCfg, TimeConfig, TypeToSearch,
 };
+use crate::item::Item;
 use crate::key_bind::key_binds;
 use crate::localize::LANGUAGE_SORTER;
+use crate::location::{Location, SearchLocation};
 use crate::mounter::{MOUNTERS, MounterItem, MounterItems, MounterKey, MounterMessage};
-use crate::tab::{self, HeadingOptions, Location, SearchLocation, Tab};
+use crate::tab::{self, HeadingOptions, Tab};
 use crate::zoom::{zoom_in_view, zoom_out_view, zoom_to_default};
 use crate::{fl, home_dir, menu, mime_icon};
 
@@ -504,8 +506,8 @@ enum Message {
     TabRescan(
         u64,
         Location,
-        Option<Box<tab::Item>>,
-        Vec<tab::Item>,
+        Option<Box<Item>>,
+        Vec<Item>,
         Option<Vec<PathBuf>>,
     ),
     TabRescanFailed(u64),
@@ -722,7 +724,7 @@ impl App {
         let mut has_selected = false;
         if let Some(items) = self.tab.items_opt() {
             for item in items {
-                if item.selected {
+                if item.state.selected {
                     has_selected = true;
                     break;
                 }
@@ -784,7 +786,7 @@ impl App {
             PreviewKind::Selected => {
                 if let Some(items) = self.tab.items_opt() {
                     let preview_opt = {
-                        let mut selected = items.iter().filter(|item| item.selected);
+                        let mut selected = items.iter().filter(|item| item.state.selected);
 
                         match (selected.next(), selected.next()) {
                             // At least two selected items
@@ -982,7 +984,8 @@ impl App {
                         .icon(
                             // Show the folder icon for every favorite; picking an icon per kind
                             // means an is_dir stat that blocks on a dead or slow network mount.
-                            widget::icon::icon(tab::folder_icon_symbolic(&path, 16)).size(16),
+                            widget::icon::icon(crate::item::folder_icon_symbolic(&path, 16))
+                                .size(16),
                         )
                         .data(Location::Path(path.clone()))
                 });
@@ -1179,7 +1182,7 @@ impl Application for App {
                     .and_then(|items| {
                         items
                             .iter()
-                            .find(|item| item.selected)
+                            .find(|item| item.state.selected)
                             .map(|item| item.preview_actions().map(Message::TabMessage))
                     })
                     .unwrap_or_else(|| widget::space::horizontal().into());
@@ -1910,7 +1913,7 @@ impl Application for App {
                     && let Some(click_i) = click_i_opt
                     && let Some(items) = self.tab.items_opt()
                     && let Some(item) = items.get(click_i)
-                    && item.selected
+                    && item.state.selected
                     && !item.metadata.is_dir()
                 {
                     if *filename != item.name {
@@ -2062,7 +2065,7 @@ impl Application for App {
                     // Select based on filename
                     if let DialogKind::SaveFile { filename } = &self.flags.kind {
                         for item in &mut items {
-                            item.selected = &item.name == filename;
+                            item.state.selected = &item.name == filename;
                         }
                     }
 
@@ -2567,7 +2570,7 @@ mod tests {
         let dir = tempfile::TempDir::new()?;
         let path = dir.path().join("missing");
         let mut app = save_dialog(&dir, "new.txt");
-        app.tab.location = crate::tab::Location::Path(path);
+        app.tab.location = crate::location::Location::Path(path);
         let watcher = notify_debouncer_full::new_debouncer(
             std::time::Duration::from_millis(100),
             None,
@@ -2604,7 +2607,7 @@ mod tests {
         let nested = dir.path().join("child");
         std::fs::create_dir(&nested)?;
         let mut app = save_dialog(&dir, "new.txt");
-        app.tab.location = crate::tab::Location::Path(nested);
+        app.tab.location = crate::location::Location::Path(nested);
         let navigation = app.navigation.begin();
         let save = app.save_request.begin();
         let _ = app.leave_unmounted_paths(&[dir.path().to_path_buf()]);
@@ -2618,7 +2621,8 @@ mod tests {
     async fn save_navigation_intent_invalidates_an_earlier_save_check() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "new.txt");
-        app.tab.edit_location = Some(crate::tab::Location::Path(dir.path().join("other")).into());
+        app.tab.edit_location =
+            Some(crate::location::Location::Path(dir.path().join("other")).into());
         let checked = task_result(app.update(Message::Save(false))).await;
         let _ = app.update(Message::TabMessage(crate::tab::Message::EditLocationSubmit));
         let _ = app.update(checked);
@@ -2918,7 +2922,8 @@ mod tests {
 
     #[tokio::test]
     async fn submitting_a_picker_location_opens_the_requested_directory() -> io::Result<()> {
-        use crate::tab::{self, Location};
+        use crate::location::Location;
+        use crate::tab;
         use cosmic::iced::futures::StreamExt;
 
         let dir = TempDir::new()?;
@@ -2950,7 +2955,10 @@ mod tests {
         let _current = app.navigation.begin();
         let _ = app.update(Message::NavigationResolved {
             request: stale,
-            target: Some((crate::tab::Location::Path(dir.path().join("old")), None)),
+            target: Some((
+                crate::location::Location::Path(dir.path().join("old")),
+                None,
+            )),
         });
         assert_eq!(app.tab.location, original);
         Ok(())
@@ -2977,7 +2985,7 @@ mod tests {
     }
     #[tokio::test]
     async fn picker_watch_updates_reconcile_navigation_during_the_worker() -> io::Result<()> {
-        use crate::tab::Location;
+        use crate::location::Location;
         use cosmic::iced::futures::StreamExt;
 
         let dir = TempDir::new()?;
@@ -3024,7 +3032,7 @@ mod tests {
         let mut app = save_dialog(&dir, "report.txt");
         let request = app.navigation.begin();
         let location = app.tab.location.clone();
-        let target = crate::tab::Location::Path(dir.path().join("elsewhere"));
+        let target = crate::location::Location::Path(dir.path().join("elsewhere"));
         let _ = app.update(Message::TabMessage(crate::tab::Message::Location(
             target.clone(),
         )));

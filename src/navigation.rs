@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use cosmic::widget;
 
-use crate::tab::{self, Location};
+use crate::location::Location;
 
 #[derive(Default)]
 pub(crate) struct PendingRequest {
@@ -34,7 +34,7 @@ impl PendingRequest {
 }
 
 pub(crate) fn resolve_edit_location(
-    mut edit_location: tab::EditLocation,
+    mut edit_location: crate::location::EditLocation,
     typed_uri: bool,
 ) -> Option<(Location, Option<PathBuf>)> {
     if edit_location.selected.is_none()
@@ -95,7 +95,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_parent_after_a_symlink_resolves_against_its_target() -> std::io::Result<()> {
-        use crate::tab::Location;
+        use crate::location::Location;
         let dir = tempfile::tempdir()?;
         let target = dir.path().join("target/child");
         std::fs::create_dir_all(&target)?;

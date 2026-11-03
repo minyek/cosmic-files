@@ -13,7 +13,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cosmic::iced::{Event, Font, Pixels, Point, Rectangle, Size, keyboard::Modifiers, mouse};
     use cosmic_files::{
         config::IconSizes,
-        tab::{Location, Tab, View, scan_path},
+        location::Location,
+        scan::scan_path,
+        tab::{Tab, View},
     };
     use std::{collections::HashMap, path::PathBuf, time::Instant};
 

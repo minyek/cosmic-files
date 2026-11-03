@@ -1,4 +1,5 @@
-use cosmic_files::{config::IconSizes, tab::Location};
+use cosmic_files::trash::{Trash, TrashExt};
+use cosmic_files::{config::IconSizes, location::Location};
 use std::{error::Error, fs, path::PathBuf};
 
 #[path = "../src/recents.rs"]
@@ -51,12 +52,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let payload = fixture.join("trash-roundtrip.txt");
     fs::write(&payload, b"preserve these bytes through trash and restore")?;
-    trash::delete(&payload)?;
+    Trash::trash(&payload)?;
     assert!(!payload.exists());
-    let entries = trash::os_limited::list()?;
+    let entries = Trash::list()?;
     let entry = entries
         .into_iter()
-        .find(|entry| entry.original_path() == payload)
+        .find(|entry| entry.original_path == payload)
         .ok_or("trashed fixture missing")?;
     assert!(data.join("Trash/files").join(&entry.name).exists());
     let (_, trash_items) = Location::Trash.scan(IconSizes::default());
@@ -65,15 +66,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             .iter()
             .any(|item| item.name == "trash-roundtrip.txt")
     );
-    trash::os_limited::restore_all([entry])?;
+    Trash::restore(entry)?;
     assert_eq!(
         fs::read(&payload)?,
         b"preserve these bytes through trash and restore"
     );
     assert!(
-        !trash::os_limited::list()?
+        !Trash::list()?
             .iter()
-            .any(|entry| entry.original_path() == payload)
+            .any(|entry| entry.original_path == payload)
     );
     println!("PASS real trash deletion, application listing, and byte-preserving restore");
     Ok(())

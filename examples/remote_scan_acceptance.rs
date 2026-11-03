@@ -1,5 +1,7 @@
 use cosmic_files::config::IconSizes;
-use cosmic_files::tab::{Item, Location, scan_network, scan_path};
+use cosmic_files::item::Item;
+use cosmic_files::location::Location;
+use cosmic_files::scan::{scan_network, scan_path};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Eq, PartialEq)]

@@ -15,9 +15,9 @@ use std::sync::LazyLock;
 use crate::app::{Action, Message};
 use crate::config::{Config, ContextActionPreset};
 use crate::fl;
-use crate::tab::{
-    self, HeadingOptions, ItemMetadata, Location, LocationMenuAction, SearchLocation, Tab,
-};
+use crate::item::ItemMetadata;
+use crate::location::{Location, SearchLocation};
+use crate::tab::{self, HeadingOptions, LocationMenuAction, Tab};
 use crate::trash::{Trash, TrashExt};
 
 static MENU_ID: LazyLock<cosmic::widget::Id> =
@@ -82,11 +82,11 @@ impl<Message: Clone + 'static> MenuSnapshot<Message> {
     }
 }
 
-pub(crate) fn lone_desktop_entry(items: &[tab::Item]) -> Option<&Path> {
-    let mut selected = items.iter().filter(|item| item.selected);
+pub(crate) fn lone_desktop_entry(items: &[crate::item::Item]) -> Option<&Path> {
+    let mut selected = items.iter().filter(|item| item.state.selected);
     let only = selected.next()?;
     if selected.next().is_some()
-        || !matches!(&only.metadata, tab::ItemMetadata::Path { metadata, .. } if metadata.is_file())
+        || !matches!(&only.metadata, crate::item::ItemMetadata::Path { metadata, .. } if metadata.is_file())
     {
         return None;
     }
@@ -115,7 +115,7 @@ pub struct DesktopEntryActions {
 impl DesktopEntryActions {
     pub fn new(actions: Vec<DesktopAction>) -> Self {
         Self {
-            id: tab::next_work_id(),
+            id: crate::item::next_work_id(),
             actions,
         }
     }
@@ -142,7 +142,7 @@ pub(crate) fn desktop_entry_actions(tab: &Tab) -> Option<&DesktopEntryActions> {
     (path == selected_path
         && items
             .iter()
-            .any(|item| item.selected && item.work_id == *work_id))
+            .any(|item| item.state.selected && item.state.work_id == *work_id))
     .then_some(actions)
 }
 
@@ -202,7 +202,7 @@ fn context_menu_items(
     let mut any_trash_item = false;
     if let Some(items) = tab.items_opt() {
         for item in items {
-            if item.selected {
+            if item.state.selected {
                 selected += 1;
                 if item.metadata.is_dir() {
                     selected_mount_point += i32::from(item.is_mount_point);
@@ -507,7 +507,7 @@ pub fn dialog_menu(
     let mut selected_gallery = 0;
     if let Some(items) = tab.items_opt() {
         for item in items {
-            if item.selected && item.can_gallery() {
+            if item.state.selected && item.can_gallery() {
                 selected_gallery += 1;
             }
         }
@@ -645,11 +645,17 @@ enum Deletion {
     Permanent,
 }
 
-fn deletion_of<'a>(in_trash: bool, items: impl IntoIterator<Item = &'a tab::Item>) -> Deletion {
+fn deletion_of<'a>(
+    in_trash: bool,
+    items: impl IntoIterator<Item = &'a crate::item::Item>,
+) -> Deletion {
     if in_trash {
         return Deletion::FromTrash;
     }
-    let mut selected = items.into_iter().filter(|item| item.selected).peekable();
+    let mut selected = items
+        .into_iter()
+        .filter(|item| item.state.selected)
+        .peekable();
     if selected.peek().is_some() && selected.all(|item| !item.metadata.can_trash()) {
         Deletion::Permanent
     } else {
@@ -704,7 +710,7 @@ pub fn menu_bar<'a>(
     let mut selected_gallery = 0;
     if let Some(items) = tab_opt.and_then(|tab| tab.items_opt()) {
         for item in items {
-            if item.selected {
+            if item.state.selected {
                 selected += 1;
                 if item.metadata.is_dir() {
                     selected_dir += 1;
@@ -919,7 +925,7 @@ mod tests {
     use crate::app::Action;
     use crate::config::IconSizes;
     use crate::fl;
-    use crate::tab::{Item, item_from_path};
+    use crate::item::{Item, ItemMetadata, item_from_path};
 
     fn selected_items(dir: &TempDir, names: &[&str]) -> io::Result<Vec<Item>> {
         let mut items = Vec::new();
@@ -928,7 +934,7 @@ mod tests {
             std::fs::write(&path, b"")?;
             let mut item = item_from_path(&path, IconSizes::default())
                 .expect("a written file should resolve to an item");
-            item.selected = true;
+            item.state.selected = true;
             items.push(item);
         }
         Ok(items)
@@ -968,7 +974,7 @@ mod tests {
     fn an_unselected_desktop_entry_is_not() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut items = selected_items(&dir, &["editor.desktop"])?;
-        items[0].selected = false;
+        items[0].state.selected = false;
 
         assert_eq!(lone_desktop_entry(&items), None);
         Ok(())
@@ -980,7 +986,7 @@ mod tests {
         let path = dir.path().join("backups.desktop");
         std::fs::create_dir(&path)?;
         let mut item = item_from_path(&path, IconSizes::default()).unwrap();
-        item.selected = true;
+        item.state.selected = true;
         assert_eq!(lone_desktop_entry(&[item]), None);
         Ok(())
     }
@@ -994,10 +1000,13 @@ mod tests {
     }
 
     fn tab_showing(dir: &TempDir, items: Vec<Item>) -> crate::tab::Tab {
-        tab_at(crate::tab::Location::Path(dir.path().to_path_buf()), items)
+        tab_at(
+            crate::location::Location::Path(dir.path().to_path_buf()),
+            items,
+        )
     }
 
-    fn tab_at(location: crate::tab::Location, items: Vec<Item>) -> crate::tab::Tab {
+    fn tab_at(location: crate::location::Location, items: Vec<Item>) -> crate::tab::Tab {
         let mut tab = crate::tab::Tab::new(
             location,
             Default::default(),
@@ -1007,7 +1016,7 @@ mod tests {
             None,
         );
         tab.set_items(items);
-        tab.items_opt.as_mut().unwrap()[0].selected = true;
+        tab.items_opt.as_mut().unwrap()[0].state.selected = true;
         tab
     }
 
@@ -1039,7 +1048,7 @@ mod tests {
         let dir = TempDir::new()?;
         let mut tab = desktop_tab(&dir)?;
         let path = dir.path().join("editor.desktop");
-        let work_id = tab.items_opt().unwrap()[0].work_id;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
         let modifiers = cosmic::iced::keyboard::Modifiers::empty();
         std::fs::write(
             &path,
@@ -1074,7 +1083,7 @@ mod tests {
         let dir = TempDir::new()?;
         let mut tab = desktop_tab(&dir)?;
         let path = dir.path().join("editor.desktop");
-        let work_id = tab.items_opt().unwrap()[0].work_id;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
         let modifiers = cosmic::iced::keyboard::Modifiers::empty();
         let original = actions(&["Original"]);
         let old_id = original.id;
@@ -1105,7 +1114,7 @@ mod tests {
             .len();
         snapshot.set_open(true);
         snapshot.view(|| super::context_menu(&tab, &keys, &modifiers, false, &[]));
-        let work_id = tab.items_opt().unwrap()[0].work_id;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
         tab.update(
             crate::tab::Message::DesktopEntryParsed(
                 dir.path().join("editor.desktop"),
@@ -1137,7 +1146,7 @@ mod tests {
         let dir = TempDir::new()?;
         let mut tab = desktop_tab(&dir)?;
         assert!(super::desktop_entry_actions(&tab).is_none());
-        let work_id = tab.items_opt().unwrap()[0].work_id;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
         tab.update(
             crate::tab::Message::DesktopEntryParsed(
                 dir.path().join("editor.desktop"),
@@ -1154,7 +1163,7 @@ mod tests {
     fn a_valid_desktop_entry_without_actions_still_gets_its_launcher_menu() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut tab = desktop_tab(&dir)?;
-        let work_id = tab.items_opt().unwrap()[0].work_id;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
         tab.update(
             crate::tab::Message::DesktopEntryParsed(
                 dir.path().join("editor.desktop"),
@@ -1174,7 +1183,7 @@ mod tests {
         let path = dir.path().join("service.desktop");
         let _socket = std::os::unix::net::UnixListener::bind(&path)?;
         let mut item = item_from_path(&path, IconSizes::default()).unwrap();
-        item.selected = true;
+        item.state.selected = true;
         assert_eq!(lone_desktop_entry(&[item]), None);
         Ok(())
     }
@@ -1185,10 +1194,10 @@ mod tests {
         let mut tab = desktop_tab(&dir)?;
         let old_path = dir.path().join("editor.desktop");
         let other = selected_items(&dir, &["viewer.desktop"])?;
-        tab.items_opt.as_mut().unwrap()[0].selected = false;
+        tab.items_opt.as_mut().unwrap()[0].state.selected = false;
         tab.items_opt.as_mut().unwrap().extend(other);
-        let old_id = tab.items_opt().unwrap()[0].work_id;
-        let current_id = tab.items_opt().unwrap()[1].work_id;
+        let old_id = tab.items_opt().unwrap()[0].state.work_id;
+        let current_id = tab.items_opt().unwrap()[1].state.work_id;
         let modifiers = cosmic::iced::keyboard::Modifiers::empty();
         tab.update(
             crate::tab::Message::DesktopEntryParsed(
@@ -1213,9 +1222,9 @@ mod tests {
         let dir = TempDir::new()?;
         let mut tab = desktop_tab(&dir)?;
         let path = dir.path().join("editor.desktop");
-        let old = tab.items_opt().unwrap()[0].work_id;
+        let old = tab.items_opt().unwrap()[0].state.work_id;
         tab.set_items(vec![item_from_path(&path, IconSizes::default()).unwrap()]);
-        tab.items_opt.as_mut().unwrap()[0].selected = true;
+        tab.items_opt.as_mut().unwrap()[0].state.selected = true;
         tab.update(
             crate::tab::Message::DesktopEntryParsed(path, old, Some(actions(&["Old action"]))),
             cosmic::iced::keyboard::Modifiers::empty(),
@@ -1295,9 +1304,9 @@ mod tests {
         let dir = TempDir::new()?;
         let local = selected_items(&dir, &["local.txt"])?.remove(0);
         let mut unselected = local.clone();
-        unselected.selected = false;
+        unselected.state.selected = false;
         let mut trashed = trashed_item(&dir)?;
-        trashed.selected = true;
+        trashed.state.selected = true;
         let cases = [
             (
                 "nothing selected",
@@ -1352,7 +1361,7 @@ mod tests {
     fn shift_offers_permanent_delete_for_a_lone_desktop_launcher() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut tab = desktop_tab(&dir)?;
-        let work_id = tab.items_opt().unwrap()[0].work_id;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
         tab.update(
             crate::tab::Message::DesktopEntryParsed(
                 dir.path().join("editor.desktop"),
@@ -1390,7 +1399,7 @@ mod tests {
         assert_eq!(
             super::delete_entry_of(
                 Some(&tab_at(
-                    crate::tab::Location::Trash,
+                    crate::location::Location::Trash,
                     vec![trashed_item(&dir)?]
                 )),
                 &none
@@ -1425,25 +1434,25 @@ mod tests {
     fn trashed_item(dir: &TempDir) -> io::Result<Item> {
         let path = dir.path().join("notes.txt");
         std::fs::write(&path, b"")?;
-        Ok(crate::tab::item_from_trash_entry(
-            trash::TrashItem {
-                id: path.into_os_string(),
-                name: "notes.txt".into(),
-                original_parent: dir.path().join("documents"),
-                time_deleted: 0,
-            },
-            trash::TrashItemMetadata {
-                size: trash::TrashItemSize::Bytes(0),
-            },
-            IconSizes::default(),
-        ))
+        let mut item =
+            crate::item::item_from_path(&path, IconSizes::default()).map_err(io::Error::other)?;
+        let size = crate::trash::TrashItemSize::Bytes(0);
+        item.metadata = ItemMetadata::Trash {
+            size,
+            entry: crate::trash::TrashItem::for_test(
+                path,
+                dir.path().join("documents").join("notes.txt"),
+                size,
+            ),
+        };
+        Ok(item)
     }
 
     // In the Trash, every modifier state offers the delete-from-trash entry.
     #[test]
     fn the_trash_offers_its_delete_from_trash_entry() -> io::Result<()> {
         let dir = TempDir::new()?;
-        let tab = tab_at(crate::tab::Location::Trash, vec![trashed_item(&dir)?]);
+        let tab = tab_at(crate::location::Location::Trash, vec![trashed_item(&dir)?]);
         for modifiers in [Modifiers::empty(), Modifiers::SHIFT] {
             assert_eq!(
                 delete_entries(&super::context_menu_items(&tab, &modifiers, false, &[])),
