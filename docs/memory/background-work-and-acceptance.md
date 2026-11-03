@@ -19,5 +19,6 @@
 
 These facts were distilled from the scrolling worktree's implementation and
 acceptance journal. The corresponding implementations are in `src/tab.rs`,
-`src/app.rs`, `src/dialog.rs`, `src/recents.rs`, `src/mime_app.rs` and
-`src/persistence.rs`.
+`src/item/` (item construction, previews and thumbnails, which upstream split
+out of `src/tab.rs`), `src/app.rs`, `src/dialog.rs`, `src/recents.rs`,
+`src/mime_app.rs` and `src/persistence.rs`.
