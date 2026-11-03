@@ -3,6 +3,7 @@
 - [Main integration and release delivery](reports/2026-10-02-main-delivery.md)
 - [Local build and installation](guides/local-build-and-install.md)
 - [Background work and acceptance facts](memory/background-work-and-acceptance.md)
+- [Upstream contributions](memory/upstream-contributions.md)
 - [Completed local-improvement acceptance](reports/2026-10-02-acceptance-closure.md)
 - [Independent closure review](reports/2026-10-02-closure-review.md)
 

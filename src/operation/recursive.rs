@@ -702,7 +702,7 @@ impl Op {
         let to = gio::File::for_path(&self.to);
         let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let (pause_tx, mut pause_rx) = tokio::sync::watch::channel(false);
+        let (pause_tx, pause_rx) = tokio::sync::watch::channel(false);
 
         let task = compio::runtime::spawn_blocking(move || {
             let glib_context = glib::MainContext::new();
@@ -717,38 +717,21 @@ impl Op {
                         glib::Priority::LOW,
                     );
 
-                    let mut copy_fut = gio_copy_fut
-                        .map(|result| result.map_err(GioCopyError::GLib))
-                        .fuse();
+                    let copy_fut = gio_copy_fut.map(|result| result.map_err(GioCopyError::GLib));
 
-                    let progress_fut = std::pin::pin!(async {
+                    let progress_fut = async {
                         while let Some((current_bytes, _)) = progress_stream.next().await {
                             _ = progress_tx.send(current_bytes);
                         }
 
                         drop(progress_tx);
                         futures::future::pending::<()>().await;
-                    });
+                    };
 
-                    let mut progress_fut = progress_fut.fuse();
-                    let mut pause_rx2 = pause_rx.clone();
-
-                    loop {
-                        let until_paused = std::pin::pin!(pause_rx.wait_for(|paused| *paused));
-                        futures::select! {
-                            _ = &mut progress_fut => {},
-
-                            result = &mut copy_fut => {
-                                _ = tx.send(result.map(|_| ()));
-                                glib_loop2.quit();
-                                return;
-                            }
-
-                            _ = until_paused.fuse() => {
-                                _ = pause_rx2.wait_for(|paused| !*paused).await;
-                            }
-                        }
+                    if let Some(result) = run_pausable(copy_fut, progress_fut, pause_rx).await {
+                        _ = tx.send(result.map(|_| ()));
                     }
+                    glib_loop2.quit();
                 });
 
                 glib_loop.run();
@@ -789,12 +772,121 @@ impl Op {
                 _ = task => (),
 
                 _ = until_paused.fuse() => {
-                    // Pauses an active copy while the controller state is paused.
+                    // Pauses an active copy while the controller state is paused; a cancel or
+                    // failure during the pause ends the copy.
                     _ = pause_tx.send(true);
-                    ctx.controller.until_unpaused().await;
+                    let resumed = ctx.controller.check().await;
                     _ = pause_tx.send(false);
+                    if let Err(state) = resumed {
+                        return Err(GioCopyError::Controller(OperationError::from_state(
+                            state,
+                            &ctx.controller,
+                        )));
+                    }
                 }
             }
         }
+    }
+}
+
+/// Drives `copy` (and `progress` beside it) until the copy finishes, holding it off while `pause`
+/// reads true. Returns `None` once the sending side of `pause` is gone, which ends the copy.
+#[cfg(feature = "gvfs")]
+async fn run_pausable<T>(
+    copy: impl Future<Output = T>,
+    progress: impl Future<Output = ()>,
+    pause: tokio::sync::watch::Receiver<bool>,
+) -> Option<T> {
+    let mut copy = std::pin::pin!(copy.fuse());
+    let mut progress = std::pin::pin!(progress.fuse());
+    let mut until_paused_rx = pause.clone();
+    let mut until_resumed_rx = pause;
+    loop {
+        // `wait_for` returns a read guard on the channel; it is dropped here, before the arm
+        // waits for the resume, because the sender's `send` needs the write lock.
+        let until_paused = std::pin::pin!(
+            until_paused_rx
+                .wait_for(|paused| *paused)
+                .map(|seen| seen.is_ok())
+        );
+        futures::select! {
+            () = &mut progress => {},
+
+            result = &mut copy => return Some(result),
+
+            open = until_paused.fuse() => {
+                if !open || until_resumed_rx.wait_for(|paused| !*paused).await.is_err() {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "gvfs"))]
+mod tests {
+    use std::future::Future;
+    use std::pin::{Pin, pin};
+    use std::task::{Context, Poll};
+
+    use cosmic::iced::futures::future::pending;
+    use cosmic::iced::futures::task::noop_waker;
+
+    use super::run_pausable;
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        let waker = noop_waker();
+        future.poll(&mut Context::from_waker(&waker))
+    }
+
+    // Pausing holds the copy off and resuming lets it finish. The sender's resume runs on the
+    // runtime thread; a pause that kept the channel's read guard across the wait would block
+    // that send, and with it this test, for ever.
+    #[test]
+    fn a_paused_copy_finishes_after_a_resume() {
+        let (pause_tx, pause_rx) = tokio::sync::watch::channel(false);
+        let (copy_tx, copy_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut run = pin!(run_pausable(copy_rx, pending(), pause_rx));
+        assert!(poll_once(run.as_mut()).is_pending());
+
+        pause_tx.send(true).expect("the copy side is listening");
+        assert!(poll_once(run.as_mut()).is_pending());
+        copy_tx.send(()).expect("the copy future is alive");
+        assert!(
+            poll_once(run.as_mut()).is_pending(),
+            "a paused copy must not finish"
+        );
+
+        pause_tx.send(false).expect("the copy side is listening");
+        assert_eq!(poll_once(run.as_mut()), Poll::Ready(Some(Ok(()))));
+    }
+
+    // A cancelled paused copy resumes the channel and then drops it; the copy then ends
+    // instead of spinning on the closed channel.
+    #[test]
+    fn a_cancelled_paused_copy_ends() {
+        let (pause_tx, pause_rx) = tokio::sync::watch::channel(false);
+        let mut run = pin!(run_pausable(pending::<()>(), pending(), pause_rx));
+        pause_tx.send(true).expect("the copy side is listening");
+        assert!(poll_once(run.as_mut()).is_pending());
+
+        pause_tx.send(false).expect("the copy side is listening");
+        drop(pause_tx);
+
+        assert_eq!(poll_once(run.as_mut()), Poll::Ready(None));
+    }
+
+    // When the controlling side's future is dropped mid-pause, the copy ends instead of
+    // spinning on the closed channel.
+    #[test]
+    fn a_copy_ends_when_its_controller_goes_away() {
+        let (pause_tx, pause_rx) = tokio::sync::watch::channel(false);
+        let mut run = pin!(run_pausable(pending::<()>(), pending(), pause_rx));
+        pause_tx.send(true).expect("the copy side is listening");
+        assert!(poll_once(run.as_mut()).is_pending());
+
+        drop(pause_tx);
+
+        assert_eq!(poll_once(run.as_mut()), Poll::Ready(None));
     }
 }

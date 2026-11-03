@@ -59,6 +59,11 @@ Background work no longer piles up, applies stale results or grows without bound
 - Recent files are recorded on a fresh profile, by creating the history file first. ([#37](https://github.com/minyek/cosmic-files/issues/37))
 - The operation history keeps the newest 256 entries. ([#38](https://github.com/minyek/cosmic-files/issues/38))
 - The gallery clears all of its per-image state together, so memory no longer grows with every image viewed. ([#39](https://github.com/minyek/cosmic-files/issues/39))
+- Pausing a delete no longer freezes every other file operation until it resumes. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- Pausing or resuming never restarts an operation that was just cancelled or had failed. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- A pause, resume or cancel that arrives just as an operation checks its state is never lost. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- Cancelling a paused copy to or from a phone or camera (MTP) ends it, instead of leaving it waiting for a resume. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- Resuming a paused copy to or from a phone or camera (MTP) no longer freezes every file operation. ([#56](https://github.com/minyek/cosmic-files/issues/56))
 
 #### Safe file operations
 
@@ -82,6 +87,7 @@ File operations no longer overwrite or truncate files unexpectedly, and they rep
 - The launcher menu appears only for a single selected .desktop file. ([#51](https://github.com/minyek/cosmic-files/issues/51))
 - Default terminal ids keep a .desktop segment in the middle of the name. ([#52](https://github.com/minyek/cosmic-files/issues/52))
 - A launcher action always runs the command its menu showed. ([#53](https://github.com/minyek/cosmic-files/issues/53))
+- An idle cosmic-files is no longer counted as waiting on IO on Linux 6.15 and later, so it no longer makes its login session report IO pressure. ([#56](https://github.com/minyek/cosmic-files/issues/56))
 
 ### New features and improvements
 
