@@ -18,7 +18,9 @@ use crate::thumbnailer::thumbnailer;
 /// the preview can show.
 pub(crate) const TEXT_PREVIEW_MAX_BYTES: usize = 16 * 1024; // 16 KiB
 /// Maximum file size (bytes) to attempt text preview; files larger than this are skipped entirely.
-const TEXT_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MiB
+const TEXT_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MB
+
+const SVG_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MB
 
 #[derive(Debug)]
 pub enum ItemThumbnail {
@@ -217,7 +219,7 @@ impl ItemThumbnail {
         //TODO: adjust limits for internal thumbnailers as desired
         if mime.type_() == mime::IMAGE
             && mime.subtype() == mime::SVG
-            && check_size("svg", 8 * 1000 * 1000)
+            && check_size("svg", SVG_PREVIEW_MAX_FILE_BYTES)
         {
             tried_supported_file = true;
             // Try built-in svg thumbnailer
