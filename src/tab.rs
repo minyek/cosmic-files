@@ -21,7 +21,7 @@ use cosmic::{Apply, Element, cosmic_theme, font, theme};
 use i18n_embed::LanguageLoader;
 use icu::datetime::{DateTimeFormatter, fieldsets};
 use mime_guess::{Mime, mime};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -50,7 +50,7 @@ use crate::dialog::DialogKind;
 use crate::format_time::{FormatTime, date_time_formatter, format_time, time_formatter};
 use crate::item::{
     ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail, SearchItem,
-    folder_name, item_from_path, item_from_search_item,
+    folder_name, item_from_path, item_from_search_item, next_work_id,
 };
 use crate::large_image::{
     LargeImageManager, decode_large_image, should_use_dedicated_worker, should_use_tiling,
@@ -75,6 +75,13 @@ pub const THUMBNAIL_SIZE: u32 = (ICON_SIZE_GRID as u32) * (ICON_SCALE_MAX as u32
 // Uses 4 workers for balanced throughput and memory usage
 pub static THUMB_SEMAPHORE: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::const_new(num_cpus::get().min(4)));
+
+#[derive(Clone, Debug)]
+pub struct EntryRefresh {
+    pub path: PathBuf,
+    pub work_id: Option<u64>,
+    pub item_opt: Option<Item>,
+}
 
 pub(crate) static SORT_OPTION_FALLBACK: LazyLock<FxHashMap<String, (HeadingOptions, bool)>> =
     LazyLock::new(|| {
@@ -430,7 +437,7 @@ pub enum Message {
     ShiftPermissions(Option<(PathBuf, u32)>, u32, u32),
     SetSort(HeadingOptions, bool),
     TabComplete(PathBuf, Vec<(String, PathBuf)>),
-    Thumbnail(PathBuf, ItemThumbnail),
+    Thumbnail(PathBuf, ItemThumbnail, u64),
     ToggleSort(HeadingOptions),
     Drop(Option<(Location, ClipboardPaste)>),
     DndHover(Location),
@@ -442,10 +449,9 @@ pub enum Message {
     ZoomOut,
     HighlightDeactivate(usize),
     HighlightActivate(usize),
-    DirectorySize(PathBuf, DirSize),
-    #[cfg(feature = "gvfs")]
-    DirectoryChildren(PathBuf, usize),
-    Checksums(PathBuf, ChecksumState),
+    DirectorySize(PathBuf, DirSize, u64),
+    DirectoryChildren(PathBuf, Option<usize>, u64),
+    Checksums(PathBuf, ChecksumState, u64),
     CalculateChecksums(PathBuf),
     CopyChecksum(String),
     ImageDecoded(PathBuf, u32, u32, Vec<u8>, Option<(u32, u32)>, u64), // path, width, height, pixels, display_size, generation
@@ -464,6 +470,55 @@ impl MenuAction for LocationMenuAction {
 
     fn message(&self) -> Self::Message {
         Message::LocationMenuAction(*self)
+    }
+}
+
+/// Identifies an entry's content, so a rescan can tell an unchanged entry from a rewritten one.
+type ItemFingerprint = (Option<SystemTime>, Option<u64>);
+
+/// State an [`Item`] accumulated after the directory scan, moved onto its replacement when a
+/// rescan produces the same entry unchanged.
+struct ItemCarryover {
+    children_opt: Option<usize>,
+    image_dimensions: Option<(u32, u32)>,
+    icon_handle_grid: widget::icon::Handle,
+    icon_handle_list: widget::icon::Handle,
+    icon_handle_list_condensed: widget::icon::Handle,
+    thumbnail_opt: Option<ItemThumbnail>,
+    checksums: ChecksumState,
+}
+
+impl From<Item> for ItemCarryover {
+    fn from(item: Item) -> Self {
+        Self {
+            children_opt: item.metadata.children_count().copied(),
+            image_dimensions: item.image_dimensions,
+            icon_handle_grid: item.icon_handle_grid,
+            icon_handle_list: item.icon_handle_list,
+            icon_handle_list_condensed: item.icon_handle_list_condensed,
+            thumbnail_opt: item.thumbnail_opt,
+            checksums: item.state.checksums,
+        }
+    }
+}
+
+impl ItemCarryover {
+    /// Only finished results are moved over. An in-progress computation belongs to the item it
+    /// was started for, and is restarted for the replacement.
+    fn apply(self, item: &mut Item) {
+        if let Some(children) = self.children_opt {
+            item.metadata.set_children_count(children);
+        }
+        if self.thumbnail_opt.is_some() {
+            item.image_dimensions = self.image_dimensions;
+            item.icon_handle_grid = self.icon_handle_grid;
+            item.icon_handle_list = self.icon_handle_list;
+            item.icon_handle_list_condensed = self.icon_handle_list_condensed;
+            item.thumbnail_opt = self.thumbnail_opt;
+        }
+        if matches!(self.checksums, ChecksumState::Calculated(_)) {
+            item.state.checksums = self.checksums;
+        }
     }
 }
 
@@ -567,6 +622,8 @@ pub struct Tab {
     pub gallery: bool,
     pub(crate) parent_item_opt: Option<Box<Item>>,
     pub(crate) items_opt: Option<Vec<Item>>,
+    /// Directories whose child count could not be read, so it is not asked for again.
+    children_count_failed: FxHashSet<PathBuf>,
     pub(crate) scans: crate::scan::ScanState,
     pub dnd_hovered: Option<(Location, Instant)>,
     pub(crate) scrollable_id: widget::Id,
@@ -671,6 +728,7 @@ impl Tab {
             gallery: false,
             parent_item_opt: None,
             items_opt: None,
+            children_count_failed: FxHashSet::default(),
             scans: crate::scan::ScanState::default(),
             scrollable_id,
             select_focus: None,
@@ -707,14 +765,21 @@ impl Tab {
             .and_then(|items| items.iter().enumerate().find(|i| i.1.state.highlighted))
             .map(|(i, _)| i);
         let selected = self.selected_locations();
+        let mut carried = Self::take_rescan_carryover(self.items_opt.take());
         for item in &mut items {
             item.state.selected = false;
-            if let Some(location) = &item.location_opt
-                && selected.contains(location)
-            {
-                item.state.selected = true;
+            if let Some(location) = &item.location_opt {
+                if selected.contains(location) {
+                    item.state.selected = true;
+                }
+                if let Some(carryover) = carried.remove(&(location.clone(), item.fingerprint())) {
+                    carryover.apply(item);
+                } else if let Some(path) = item.path_opt() {
+                    self.large_image_manager.invalidate(path);
+                }
             }
         }
+        self.children_count_failed.clear();
         self.items_opt = Some(items);
         if let Some(i) = highlighted
             .zip(self.items_opt.as_mut())
@@ -722,6 +787,72 @@ impl Tab {
         {
             i.state.highlighted = true;
         }
+    }
+
+    pub(crate) fn refresh_requests(&mut self, paths: Vec<PathBuf>) -> Vec<(PathBuf, Option<u64>)> {
+        let mut requested: FxHashMap<_, _> = paths.into_iter().map(|path| (path, None)).collect();
+        if let Some(items) = self.items_opt.as_mut() {
+            for item in items {
+                if let Some(work_id) = item.path_opt().and_then(|path| requested.get_mut(path)) {
+                    item.state.work_id = next_work_id();
+                    *work_id = Some(item.state.work_id);
+                }
+            }
+        }
+        requested.into_iter().collect()
+    }
+
+    pub fn refresh_entries(&mut self, refreshed: Vec<EntryRefresh>) -> bool {
+        let Some(items) = self.items_opt.as_mut() else {
+            return true;
+        };
+        let mut wanted: FxHashMap<_, _> = refreshed
+            .into_iter()
+            .map(|refresh| (refresh.path.clone(), refresh))
+            .collect();
+        let mut complete = true;
+        for item in items {
+            let Some(refresh) = item.path_opt().and_then(|path| wanted.remove(path)) else {
+                continue;
+            };
+            if refresh.work_id != Some(item.state.work_id) {
+                continue;
+            }
+            let Some(mut replacement) = refresh.item_opt else {
+                complete = false;
+                continue;
+            };
+            replacement.is_mount_point = item.is_mount_point;
+            replacement.state.selected = item.state.selected;
+            replacement.state.highlighted = item.state.highlighted;
+            replacement.state.cut = item.state.cut;
+            replacement.state.overlaps_drag_rect = item.state.overlaps_drag_rect;
+            replacement.state.button_id = item.state.button_id.clone();
+            replacement.state.pos_opt.set(item.state.pos_opt.get());
+            replacement.state.rect_opt.set(item.state.rect_opt.get());
+            replacement.hidden |= item.hidden;
+            *item = replacement;
+            self.large_image_manager.invalidate(&refresh.path);
+            self.children_count_failed.remove(&refresh.path);
+        }
+        complete && wanted.is_empty()
+    }
+
+    /// Reusable results keyed by location and content fingerprint.
+    fn take_rescan_carryover(
+        items_opt: Option<Vec<Item>>,
+    ) -> FxHashMap<(Location, ItemFingerprint), ItemCarryover> {
+        let Some(items) = items_opt else {
+            return FxHashMap::default();
+        };
+        items
+            .into_iter()
+            .filter_map(|item| {
+                let location = item.location_opt.clone()?;
+                let key = (location, item.fingerprint());
+                Some((key, ItemCarryover::from(item)))
+            })
+            .collect()
     }
 
     pub fn cut_selected(&mut self) {
@@ -1141,13 +1272,10 @@ impl Tab {
             return Vec::new();
         };
 
-        let Some(ItemThumbnail::Image(_, original_dims)) = &item.thumbnail_opt else {
+        let Some(ItemThumbnail::Image(_, Some(original_dims))) = &item.thumbnail_opt else {
             return Vec::new();
         };
-
-        if let Some((w, h)) = original_dims
-            && !should_use_tiling(*w, *h)
-        {
+        if !should_use_tiling(original_dims.0, original_dims.1) {
             return Vec::new();
         }
 
@@ -1164,10 +1292,12 @@ impl Tab {
             .get()
             .map(|size| (size.width as u32, size.height as u32));
 
+        let original_dimensions = *original_dims;
+
         // Try to decode the image using LargeImageManager with adaptive resolution
-        let (should_decode, target_dimensions, generation) = self
-            .large_image_manager
-            .try_decode(&path, display_dimensions);
+        let (should_decode, target_dimensions, generation) =
+            self.large_image_manager
+                .try_decode(&path, display_dimensions, original_dimensions);
         if should_decode {
             vec![Command::Iced(
                 cosmic::iced::Task::perform(
@@ -2389,11 +2519,16 @@ impl Tab {
                     ));
                 }
             }
-            Message::Thumbnail(path, thumbnail) => {
+            Message::Thumbnail(path, thumbnail, work_id) => {
                 if let Some(ref mut items) = self.items_opt {
                     let location = Location::Path(path);
                     for item in items.iter_mut() {
-                        if item.location_opt.as_ref() == Some(&location) {
+                        if item.location_opt.as_ref() == Some(&location)
+                            && item.state.work_id == work_id
+                        {
+                            if let ItemThumbnail::Image(_, Some(dimensions)) = &thumbnail {
+                                item.image_dimensions = Some(*dimensions);
+                            }
                             let handle_opt = match &thumbnail {
                                 ItemThumbnail::NotImage => None,
                                 ItemThumbnail::Image(handle, _) => Some(widget::icon::Handle {
@@ -2518,46 +2653,66 @@ impl Tab {
             Message::ZoomOut => {
                 commands.push(Command::Action(Action::ZoomOut));
             }
-            Message::DirectorySize(path, dir_size) => {
+            Message::DirectorySize(path, dir_size, work_id) => {
                 let location = Location::Path(path);
                 if let Some(ref mut item) = self.parent_item_opt
                     && item.location_opt.as_ref() == Some(&location)
+                    && item.state.work_id == work_id
                 {
                     item.dir_size.clone_from(&dir_size);
                 }
                 if let Some(ref mut items) = self.items_opt {
                     for item in items.iter_mut() {
-                        if item.location_opt.as_ref() == Some(&location) {
+                        if item.location_opt.as_ref() == Some(&location)
+                            && item.state.work_id == work_id
+                        {
                             item.dir_size = dir_size;
                             break;
                         }
                     }
                 }
             }
-            #[cfg(feature = "gvfs")]
-            Message::DirectoryChildren(path, children) => {
-                if let Some(ref mut items) = self.items_opt {
-                    for item in items.iter_mut() {
-                        if item.path_opt() == Some(&path) {
-                            if let ItemMetadata::GvfsPath { children_opt, .. } = &mut item.metadata
-                            {
-                                *children_opt = Some(children);
+            Message::DirectoryChildren(path, children, work_id) => {
+                let location = Location::Path(path.clone());
+                if !self.items_opt.as_ref().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item.location_opt.as_ref() == Some(&location)
+                            && item.state.work_id == work_id
+                    })
+                }) {
+                    return commands;
+                }
+                match children {
+                    Some(children) => {
+                        if let Some(ref mut items) = self.items_opt {
+                            for item in items.iter_mut() {
+                                if item.location_opt.as_ref() == Some(&location)
+                                    && item.state.work_id == work_id
+                                {
+                                    item.metadata.set_children_count(children);
+                                    break;
+                                }
                             }
-                            break;
                         }
+                    }
+                    None => {
+                        self.children_count_failed.insert(path);
                     }
                 }
             }
-            Message::Checksums(path, checksum_state) => {
+            Message::Checksums(path, checksum_state, work_id) => {
                 let location = Location::Path(path);
                 if let Some(ref mut item) = self.parent_item_opt
                     && item.location_opt.as_ref() == Some(&location)
+                    && item.state.work_id == work_id
                 {
                     item.state.checksums = checksum_state.clone();
                 }
                 if let Some(ref mut items) = self.items_opt {
                     for item in items.iter_mut() {
-                        if item.location_opt.as_ref() == Some(&location) {
+                        if item.location_opt.as_ref() == Some(&location)
+                            && item.state.work_id == work_id
+                        {
                             item.state.checksums = checksum_state;
                             break;
                         }
@@ -2566,26 +2721,35 @@ impl Tab {
             }
             Message::CalculateChecksums(path) => {
                 let location = Location::Path(path.clone());
-                if let Some(ref mut item) = self.parent_item_opt
-                    && item.location_opt.as_ref() == Some(&location)
-                {
-                    item.state.checksums = ChecksumState::Calculating;
-                }
-                if let Some(ref mut items) = self.items_opt {
-                    for item in items.iter_mut() {
-                        if item.location_opt.as_ref() == Some(&location) {
-                            item.state.checksums = ChecksumState::Calculating;
-                            break;
-                        }
-                    }
-                }
+                let item = self
+                    .items_opt
+                    .as_mut()
+                    .and_then(|items| {
+                        items
+                            .iter_mut()
+                            .find(|item| item.location_opt.as_ref() == Some(&location))
+                    })
+                    .or_else(|| {
+                        self.parent_item_opt
+                            .as_deref_mut()
+                            .filter(|item| item.location_opt.as_ref() == Some(&location))
+                    });
+                let Some(item) = item else {
+                    return commands;
+                };
+                item.state.checksums = ChecksumState::Calculating;
+                let work_id = item.state.work_id;
                 commands.push(Command::Iced(
                     cosmic::Task::future(async move {
                         match calculate_checksums(&path).await {
-                            Ok(checksums) => {
-                                Message::Checksums(path, ChecksumState::Calculated(checksums))
+                            Ok(checksums) => Message::Checksums(
+                                path,
+                                ChecksumState::Calculated(checksums),
+                                work_id,
+                            ),
+                            Err(err) => {
+                                Message::Checksums(path, ChecksumState::Error(err), work_id)
                             }
-                            Err(err) => Message::Checksums(path, ChecksumState::Error(err)),
                         }
                     })
                     .into(),
@@ -2666,6 +2830,17 @@ impl Tab {
                 self.config.folders_first,
             ),
         }
+    }
+
+    /// Whether the subscription should read `item`'s child count. A visible row shows it;
+    /// ordering by size additionally reads every directory's count, however far off screen,
+    /// because an unread count sorts as zero and reshuffles the listing as it arrives.
+    fn fetches_children_count(&self, item: &Item, visible: bool) -> bool {
+        (visible || self.sort_options().0 == HeadingOptions::Size)
+            && item.metadata.children_count_pending()
+            && item
+                .path_opt()
+                .is_some_and(|path| !self.children_count_failed.contains(path))
     }
 
     fn column_sort(&self) -> Option<Vec<(usize, &Item)>> {
@@ -4630,7 +4805,7 @@ impl Tab {
     pub fn subscription(&self, preview: bool) -> Subscription<Message> {
         //TODO: how many thumbnail loads should be in flight at once?
         let jobs = self.thumb_config.jobs.get() as usize;
-        let mut subscriptions = Vec::with_capacity(jobs + 3);
+        let mut subscriptions = Vec::with_capacity(2 * jobs + 3);
 
         if let Some(items) = &self.items_opt {
             //TODO: move to function
@@ -4643,105 +4818,47 @@ impl Tab {
                 Rectangle::new(point, size)
             };
 
-            // Count the children of visible directories in the background. Doing it while
-            // scanning costs one directory listing per entry, which stalls remote filesystems.
-            #[cfg(feature = "gvfs")]
+            let mut thumbnails = 0;
+            let mut children_counts = 0;
             for item in items {
-                let ItemMetadata::GvfsPath {
-                    children_opt: None,
-                    is_dir: true,
-                    ..
-                } = &item.metadata
-                else {
+                // Items with no determined rect (which should include hidden items) are never
+                // visible.
+                let visible = item
+                    .state
+                    .rect_opt
+                    .get()
+                    .is_some_and(|rect| rect.intersects(&visible_rect));
+
+                let Some(path) = item.path_opt() else {
                     continue;
                 };
 
-                // Skip items that are not visible, or have no determined rect
-                match item.state.rect_opt.get() {
-                    Some(rect) if rect.intersects(&visible_rect) => {}
-                    _ => continue,
+                if children_counts < jobs && self.fetches_children_count(item, visible) {
+                    children_counts += 1;
+                    subscriptions.push(children_count_subscription(
+                        path.clone(),
+                        item.state.work_id,
+                    ));
                 }
 
-                let Some(path) = item.path_opt().cloned() else {
+                if !visible {
                     continue;
-                };
-
-                struct ChildrenWrapper(PathBuf);
-                impl Hash for ChildrenWrapper {
-                    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                        self.0.hash(state);
-                    }
                 }
 
-                subscriptions.push(Subscription::run_with(
-                    ChildrenWrapper(path),
-                    |ChildrenWrapper(path)| {
-                        let path = path.clone();
-                        stream::channel(
-                            1,
-                            move |mut output: futures::channel::mpsc::Sender<_>| async move {
-                                let message = {
-                                    let path = path.clone();
-                                    tokio::task::spawn_blocking(move || {
-                                        let children = match fs::read_dir(&path) {
-                                            Ok(entries) => entries.count(),
-                                            Err(err) => {
-                                                log::warn!(
-                                                    "failed to read directory {}: {}",
-                                                    path.display(),
-                                                    err
-                                                );
-                                                0
-                                            }
-                                        };
-                                        Message::DirectoryChildren(path, children)
-                                    })
-                                    .await
-                                    .unwrap()
-                                };
-
-                                if let Err(err) = output.send(message).await {
-                                    log::warn!("failed to send directory children: {err}");
-                                }
-
-                                std::future::pending().await
-                            },
-                        )
-                    },
-                ));
-            }
-
-            for item in items {
                 if item.thumbnail_opt.is_some() {
                     // Skip items that already have a mime type and thumbnail
                     continue;
                 }
 
-                match item.state.rect_opt.get() {
-                    Some(rect) => {
-                        if !rect.intersects(&visible_rect) {
-                            // Skip items that are not visible
-                            continue;
-                        }
-                    }
-                    None => {
-                        // Skip items with no determined rect (this should include hidden items)
-                        continue;
-                    }
-                }
-
-                let Some(path) = item.path_opt().cloned() else {
-                    continue;
-                };
-
-                let metadata = item.metadata.clone();
-                let can_thumbnail = match metadata {
+                let can_thumbnail = match item.metadata {
                     ItemMetadata::Path { .. } => true,
                     #[cfg(feature = "gvfs")]
                     ItemMetadata::GvfsPath { .. } => true,
                     _ => false,
                 };
-                if can_thumbnail {
+                if can_thumbnail && thumbnails < jobs {
+                    let path = path.clone();
+                    let metadata = item.metadata.clone();
                     let mime = item.mime.clone();
                     let max_jobs = jobs;
                     let max_mb = u64::from(self.thumb_config.max_mem_mb.get());
@@ -4764,6 +4881,7 @@ impl Tab {
                     #[derive(Clone)]
                     struct Wrapper {
                         path: PathBuf,
+                        work_id: u64,
                         metadata: ItemMetadata,
                         mime: mime::Mime,
                         effective_max_mb: u64,
@@ -4774,12 +4892,14 @@ impl Tab {
                     impl Hash for Wrapper {
                         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                             self.path.hash(state);
+                            self.work_id.hash(state);
                         }
                     }
 
                     subscriptions.push(Subscription::run_with(
                         Wrapper {
                             path: path.clone(),
+                            work_id: item.state.work_id,
                             metadata,
                             mime,
                             effective_max_mb,
@@ -4789,6 +4909,7 @@ impl Tab {
                         |wrapper| {
                             let Wrapper {
                                 path,
+                                work_id,
                                 metadata,
                                 mime,
                                 effective_max_mb,
@@ -4824,7 +4945,7 @@ impl Tab {
                                                 path.display(),
                                                 start.elapsed()
                                             );
-                                            Message::Thumbnail(path, thumbnail)
+                                            Message::Thumbnail(path, thumbnail, work_id)
                                         })
                                         .await
                                         .unwrap()
@@ -4846,9 +4967,10 @@ impl Tab {
                             )
                         },
                     ));
+                    thumbnails += 1;
                 }
 
-                if subscriptions.len() >= jobs {
+                if thumbnails >= jobs && children_counts >= jobs {
                     break;
                 }
             }
@@ -4871,19 +4993,22 @@ impl Tab {
                         if let DirSize::Calculating(controller) = &item.dir_size {
                             struct Wrapper {
                                 path: PathBuf,
+                                work_id: u64,
                                 controller: Controller,
                             }
                             impl Hash for Wrapper {
                                 fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                                     self.path.hash(state);
+                                    self.work_id.hash(state);
                                 }
                             }
                             subscriptions.push(Subscription::run_with(
-                                Wrapper { path: path.clone(), controller: controller.clone() },
-                                |Wrapper { path, controller }| {
+                                Wrapper { path: path.clone(), work_id: item.state.work_id, controller: controller.clone() },
+                                |Wrapper { path, work_id, controller }| {
                                     let path = path.clone();
+                                    let work_id = *work_id;
                                     let controller = controller.clone();
-                                    stream::channel(1, |mut output: futures::channel::mpsc::Sender<_>| async move {
+                                    stream::channel(1, move |mut output: futures::channel::mpsc::Sender<_>| async move {
                                         let message = {
                                             let start = Instant::now();
                                             match calculate_dir_size(&path, controller).await {
@@ -4896,6 +5021,7 @@ impl Tab {
                                                     Message::DirectorySize(
                                                         path.clone(),
                                                         DirSize::Directory(size),
+                                                        work_id,
                                                     )
                                                 }
                                                 Err(err) => {
@@ -4907,6 +5033,7 @@ impl Tab {
                                                     Message::DirectorySize(
                                                         path.clone(),
                                                         DirSize::Error(err.to_string()),
+                                                        work_id,
                                                     )
                                                 }
                                             }
@@ -5138,6 +5265,56 @@ impl Tab {
     }
 }
 
+fn children_count_subscription(path: PathBuf, work_id: u64) -> Subscription<Message> {
+    struct Wrapper {
+        path: PathBuf,
+        work_id: u64,
+    }
+
+    impl Hash for Wrapper {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.path.hash(state);
+            self.work_id.hash(state);
+        }
+    }
+
+    Subscription::run_with(Wrapper { path, work_id }, |wrapper| {
+        let path = wrapper.path.clone();
+        let work_id = wrapper.work_id;
+        stream::channel(
+            1,
+            move |mut output: futures::channel::mpsc::Sender<_>| async move {
+                let children = {
+                    let dir = path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        fs::read_dir(&dir)
+                            .inspect_err(|err| {
+                                log::warn!("failed to read directory {}: {}", dir.display(), err);
+                            })
+                            .ok()
+                            .map(Iterator::count)
+                    })
+                    .await
+                    .unwrap_or_else(|err| {
+                        log::warn!("failed to count children of {}: {}", path.display(), err);
+                        None
+                    })
+                };
+                let message = Message::DirectoryChildren(path.clone(), children, work_id);
+
+                match output.send(message).await {
+                    Ok(()) => {}
+                    Err(err) => {
+                        log::warn!("failed to send child count for {}: {}", path.display(), err);
+                    }
+                }
+
+                std::future::pending().await
+            },
+        )
+    })
+}
+
 pub fn respond_to_scroll_direction(delta: ScrollDelta, modifiers: &Modifiers) -> Option<Message> {
     if !modifiers.control() {
         return None;
@@ -5208,7 +5385,9 @@ pub fn text_editor_class(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+
+    use std::io::BufWriter;
+    use std::path::{Path, PathBuf};
     use std::{fs, io};
 
     use cosmic::iced::mouse::ScrollDelta;
@@ -5219,12 +5398,19 @@ mod tests {
     use tempfile::TempDir;
     use test_log::test;
 
-    use super::{ItemMetadata, ItemThumbnail, Location, Message, Tab, respond_to_scroll_direction};
+    use cosmic::iced::{Size, Subscription};
+
+    use super::{EntryRefresh, HeadingOptions, Message, Tab, respond_to_scroll_direction};
     use crate::app::test_utils::{
         NAME_LEN, NUM_DIRS, NUM_FILES, NUM_HIDDEN, NUM_NESTED, assert_eq_tab_path, empty_fs,
         eq_path_item, filter_dirs, read_dir_sorted, simple_fs, tab_click_new,
     };
     use crate::config::{IconSizes, TabConfig, ThumbCfg};
+    use crate::item::{
+        ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail, item_from_entry,
+        item_from_path,
+    };
+    use crate::location::Location;
     use crate::scan::scan_path;
 
     // Boilerplate for tab tests. Checks if simulated clicks selected items.
@@ -5789,6 +5975,621 @@ mod tests {
                 thumb
             ),
         }
+        Ok(())
+    }
+
+    fn write_test_png(path: &Path, width: u32, height: u32) -> io::Result<()> {
+        let mut encoder = png::Encoder::new(BufWriter::new(fs::File::create(path)?), width, height);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .and_then(|mut writer| writer.write_image_data(&vec![0; (width * height) as usize]))
+            .map_err(io::Error::other)
+    }
+
+    #[test]
+    fn cached_thumbnails_do_not_invent_original_dimensions() -> io::Result<()> {
+        use crate::thumbnail_cacher::{CachedThumbnail, ThumbnailCacher, ThumbnailSize};
+        let dir = TempDir::new()?;
+        let path = dir.path().join("document.pdf");
+        fs::write(&path, b"unsupported original")?;
+        let cache = ThumbnailCacher::new(&path, ThumbnailSize::from_pixel_size(64))
+            .map_err(io::Error::other)?;
+        let cached_path = cache
+            .update_with_image(image::DynamicImage::new_rgba8(7, 3))
+            .map_err(|err| io::Error::other(err.to_string()))?
+            .to_path_buf();
+        assert!(matches!(
+            cache.get_cached_thumbnail(),
+            CachedThumbnail::Valid(_)
+        ));
+        let item = item_from_path(&path, IconSizes::default()).unwrap();
+        let thumbnail = ItemThumbnail::new(&path, item.metadata, item.mime, 64, 64, 1, 64);
+        fs::remove_file(cached_path)?;
+        assert!(matches!(thumbnail, ItemThumbnail::Image(_, None)));
+        Ok(())
+    }
+
+    #[test]
+    fn review_a_local_thumbnail_populates_image_details() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("photo.png");
+        write_test_png(&path, 7, 3)?;
+        let mut tab = test_tab(&dir);
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let item = &tab.items_opt().unwrap()[0];
+        let work_id = item.state.work_id;
+        let thumbnail = ItemThumbnail::new(
+            &path,
+            item.metadata.clone(),
+            item.mime.clone(),
+            64,
+            64,
+            1,
+            64,
+        );
+        tab.update(
+            Message::Thumbnail(path, thumbnail, work_id),
+            Modifiers::empty(),
+        );
+        assert_eq!(tab.items_opt().unwrap()[0].image_dimensions, Some((7, 3)));
+        Ok(())
+    }
+
+    #[test]
+    fn stale_thumbnail_dimensions_cannot_populate_a_replacement() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("photo.png");
+        write_test_png(&path, 7, 3)?;
+        let mut tab = test_tab(&dir);
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let old = tab.items_opt().unwrap()[0].state.work_id;
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        tab.update(
+            Message::Thumbnail(
+                path.clone(),
+                ItemThumbnail::Image(widget::image::Handle::from_path(path), Some((7, 3))),
+                old,
+            ),
+            Modifiers::empty(),
+        );
+        assert_eq!(tab.items_opt().unwrap()[0].image_dimensions, None);
+        Ok(())
+    }
+
+    fn tab_with_files(count: usize) -> io::Result<(TempDir, Tab)> {
+        let dir = tempfile::tempdir()?;
+        for i in 0..count {
+            fs::write(dir.path().join(format!("file{i:05}.txt")), b"x")?;
+        }
+        let mut tab = Tab::new(
+            Location::Path(dir.path().into()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        tab.size_opt.set(Some(Size::new(800.0, 300.0)));
+        Ok((dir, tab))
+    }
+
+    #[test]
+    fn scan_path_leaves_child_counts_for_the_visible_rows() -> io::Result<()> {
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let items = scan_path(&fs.path().to_path_buf(), IconSizes::default());
+
+        let dirs: Vec<&Item> = items.iter().filter(|item| item.metadata.is_dir()).collect();
+        assert!(!dirs.is_empty(), "fixture should contain directories");
+        for dir in dirs {
+            assert_eq!(
+                None,
+                dir.metadata.children_count(),
+                "{} was counted during the scan",
+                dir.name
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn size_ordering_reads_child_counts_for_off_screen_rows() -> io::Result<()> {
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let mut tab = Tab::new(
+            Location::Path(fs.path().into()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+        tab.set_items(scan_path(&fs.path().to_path_buf(), IconSizes::default()));
+        let dir_index = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .position(|item| item.metadata.is_dir())
+            .expect("fixture should contain directories");
+
+        assert!(
+            !tab.fetches_children_count(&tab.items_opt().expect("populated")[dir_index], false),
+            "a name-ordered listing reads counts for visible rows only"
+        );
+
+        tab.sort_name = HeadingOptions::Size;
+        assert!(
+            tab.fetches_children_count(&tab.items_opt().expect("populated")[dir_index], false),
+            "ordering by size must read every directory's count, or unread counts sort as zero"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn directory_children_message_fills_in_the_count() -> io::Result<()> {
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let mut tab = Tab::new(
+            Location::Path(fs.path().into()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+        tab.set_items(scan_path(&fs.path().to_path_buf(), IconSizes::default()));
+
+        let dir_path = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.metadata.is_dir())
+            .and_then(|item| item.path_opt().cloned())
+            .expect("fixture should contain a directory");
+
+        tab.update(
+            Message::DirectoryChildren(dir_path.clone(), Some(7), entry_work_id(&tab, &dir_path)),
+            Modifiers::empty(),
+        );
+
+        let counted = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.path_opt() == Some(&dir_path))
+            .and_then(|item| item.metadata.children_count().copied());
+        assert_eq!(Some(7), counted);
+        Ok(())
+    }
+
+    /// chmod fixes permissions without touching mtime or size, so an error carried across
+    /// rescans on that fingerprint would never be retried however the directory changes.
+    #[test]
+    fn rescan_retries_a_failed_directory_size() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(2)?;
+        let path = dir.path().join("file00000.txt");
+
+        for item in tab.items_opt.as_mut().expect("tab should be populated") {
+            if item.path_opt() == Some(&path) {
+                item.dir_size = DirSize::Error("permission denied".to_string());
+            }
+        }
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+
+        let item = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.path_opt() == Some(&path))
+            .expect("entry should survive the rescan");
+        assert!(
+            !matches!(item.dir_size, DirSize::Error(_)),
+            "a failed size computation survived the rescan"
+        );
+        Ok(())
+    }
+
+    /// A rescan's (modified, size) fingerprint cannot detect writes within mtime granularity.
+    #[test]
+    fn a_same_size_rewrite_with_equal_mtime_keeps_the_old_thumbnail() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(2)?;
+        let path = dir.path().join("file00000.txt");
+        tab.update(
+            Message::Thumbnail(
+                path.clone(),
+                ItemThumbnail::NotImage,
+                entry_work_id(&tab, &path),
+            ),
+            Modifiers::empty(),
+        );
+        let modified = fs::metadata(&path)?.modified()?;
+
+        fs::write(&path, b"y")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)?
+            .set_modified(modified)?;
+
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+
+        let item = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.path_opt() == Some(&path))
+            .expect("entry should survive the rescan");
+        assert!(
+            item.thumbnail_opt.is_some(),
+            "an equal fingerprint carries results across a rewrite; content is not consulted"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rescan_keeps_the_thumbnail_of_an_unchanged_entry() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(4)?;
+        let path = dir.path().join("file00000.txt");
+
+        tab.update(
+            Message::Thumbnail(
+                path.clone(),
+                ItemThumbnail::NotImage,
+                entry_work_id(&tab, &path),
+            ),
+            Modifiers::empty(),
+        );
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+
+        let thumbnailed = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.path_opt() == Some(&path))
+            .expect("entry should survive the rescan");
+        assert!(
+            thumbnailed.thumbnail_opt.is_some(),
+            "rescan discarded a thumbnail for an unchanged entry"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rescan_drops_the_thumbnail_of_a_rewritten_entry() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(4)?;
+        let path = dir.path().join("file00000.txt");
+
+        tab.update(
+            Message::Thumbnail(
+                path.clone(),
+                ItemThumbnail::NotImage,
+                entry_work_id(&tab, &path),
+            ),
+            Modifiers::empty(),
+        );
+        fs::write(&path, b"rewritten with a different length")?;
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+
+        let rewritten = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.path_opt() == Some(&path))
+            .expect("entry should survive the rescan");
+        assert!(
+            rewritten.thumbnail_opt.is_none(),
+            "rescan kept a thumbnail for an entry whose content changed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_entries_updates_size_without_a_rescan() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(4)?;
+        let path = dir.path().join("file00000.txt");
+        fs::write(&path, b"grown considerably")?;
+
+        assert!(tab.refresh_entries(vec![refreshed_entry(&tab, &path)]));
+
+        let refreshed = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .find(|item| item.path_opt() == Some(&path))
+            .expect("entry should still be listed");
+        assert_eq!(Some(18), refreshed.metadata.file_size());
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_entries_reports_an_entry_missing_from_the_listing() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(4)?;
+        let unlisted = dir.path().join("appeared_since_the_scan.txt");
+        fs::write(&unlisted, b"new")?;
+
+        assert!(
+            !tab.refresh_entries(vec![refreshed_entry(&tab, &unlisted)]),
+            "an entry the listing does not hold should ask the caller for a rescan"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_entries_reports_a_vanished_entry() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(4)?;
+        let path = dir.path().join("file00000.txt");
+
+        assert!(
+            !tab.refresh_entries(vec![EntryRefresh {
+                work_id: Some(entry_work_id(&tab, &path)),
+                path,
+                item_opt: None
+            }]),
+            "a vanished entry should ask the caller for a rescan"
+        );
+        Ok(())
+    }
+
+    fn entry_work_id(tab: &Tab, path: &Path) -> u64 {
+        tab.items_opt()
+            .unwrap()
+            .iter()
+            .find(|item| item.path_opt().is_some_and(|p| p == path))
+            .unwrap()
+            .state
+            .work_id
+    }
+
+    fn refreshed_entry(tab: &Tab, path: &Path) -> EntryRefresh {
+        EntryRefresh {
+            path: path.to_path_buf(),
+            work_id: tab
+                .items_opt()
+                .unwrap()
+                .iter()
+                .find(|item| item.path_opt().is_some_and(|p| p == path))
+                .map(|item| item.state.work_id),
+            item_opt: fs::metadata(path).ok().map(|metadata| {
+                item_from_entry(
+                    path.to_path_buf(),
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    metadata,
+                    IconSizes::default(),
+                )
+            }),
+        }
+    }
+
+    #[test]
+    fn an_observed_write_invalidates_equal_fingerprint_results() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(1)?;
+        let path = dir.path().join("file00000.txt");
+        let modified = filetime::FileTime::from_last_modification_time(&fs::metadata(&path)?);
+        let item = &mut tab.items_opt.as_mut().unwrap()[0];
+        let fingerprint = item.fingerprint();
+        item.thumbnail_opt = Some(ItemThumbnail::NotImage);
+        item.state.checksums = ChecksumState::Calculated(FileChecksums {
+            sha256: "old".into(),
+        });
+        item.state.selected = true;
+        let button_id = item.state.button_id.clone();
+        fs::write(&path, b"y")?;
+        filetime::set_file_mtime(&path, modified)?;
+        let refreshed = refreshed_entry(&tab, &path);
+        assert_eq!(
+            refreshed.item_opt.as_ref().unwrap().fingerprint(),
+            fingerprint
+        );
+        assert!(tab.refresh_entries(vec![refreshed]));
+        let item = &tab.items_opt().unwrap()[0];
+        assert!(item.thumbnail_opt.is_none());
+        assert!(matches!(item.state.checksums, ChecksumState::NotCalculated));
+        assert!(item.state.selected);
+        assert_eq!(item.state.button_id, button_id);
+        Ok(())
+    }
+
+    #[test]
+    fn a_content_refresh_discards_derived_results_before_and_after_rescan() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(1)?;
+        let path = dir.path().join("file00000.txt");
+        let item = &mut tab.items_opt.as_mut().unwrap()[0];
+        item.thumbnail_opt = Some(ItemThumbnail::NotImage);
+        item.state.checksums = ChecksumState::Calculated(FileChecksums {
+            sha256: "old result".into(),
+        });
+        item.image_dimensions = Some((900, 800));
+        item.state.selected = true;
+        let button_id = item.state.button_id.clone();
+        fs::write(&path, b"a longer document")?;
+        assert!(tab.refresh_entries(vec![refreshed_entry(&tab, &path)]));
+        let item = &tab.items_opt().unwrap()[0];
+        assert!(item.thumbnail_opt.is_none());
+        assert!(matches!(item.state.checksums, ChecksumState::NotCalculated));
+        assert_eq!(item.image_dimensions, None);
+        assert!(item.state.selected);
+        assert_eq!(item.state.button_id, button_id);
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        assert!(tab.items_opt().unwrap()[0].thumbnail_opt.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_entry_results_cannot_populate_a_replacement() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(1)?;
+        let path = dir.path().join("file00000.txt");
+        let old = entry_work_id(&tab, &path);
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        tab.update(
+            Message::Thumbnail(path.clone(), ItemThumbnail::NotImage, old),
+            Modifiers::empty(),
+        );
+        tab.update(
+            Message::Checksums(path.clone(), ChecksumState::Error("stale".into()), old),
+            Modifiers::empty(),
+        );
+        tab.update(
+            Message::DirectorySize(path.clone(), DirSize::Directory(999), old),
+            Modifiers::empty(),
+        );
+        tab.update(
+            Message::DirectoryChildren(path.clone(), None, old),
+            Modifiers::empty(),
+        );
+        let item = &tab.items_opt().unwrap()[0];
+        assert!(item.thumbnail_opt.is_none());
+        assert!(matches!(item.state.checksums, ChecksumState::NotCalculated));
+        assert!(matches!(item.dir_size, DirSize::NotDirectory));
+        assert!(!tab.children_count_failed.contains(&path));
+        let current = item.state.work_id;
+        tab.update(
+            Message::Thumbnail(path, ItemThumbnail::NotImage, current),
+            Modifiers::empty(),
+        );
+        assert!(tab.items_opt().unwrap()[0].thumbnail_opt.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn a_later_refresh_request_supersedes_earlier_results() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(1)?;
+        let path = dir.path().join("file00000.txt");
+        tab.refresh_requests(vec![path.clone()]);
+        let old = refreshed_entry(&tab, &path);
+        fs::write(&path, b"latest document")?;
+        tab.refresh_requests(vec![path.clone()]);
+        let current = refreshed_entry(&tab, &path);
+        assert!(tab.refresh_entries(vec![old]));
+        assert!(tab.refresh_entries(vec![current]));
+        assert_eq!(tab.items_opt().unwrap()[0].metadata.file_size(), Some(15));
+        Ok(())
+    }
+
+    #[test]
+    fn rescan_recalculates_recursive_size_after_a_descendant_changes() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let child = dir.path().join("child");
+        fs::create_dir(&child)?;
+        fs::write(child.join("file"), b"x")?;
+        let mut tab = tab_at(Location::Path(dir.path().to_path_buf()));
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let fingerprint = tab.items_opt().unwrap()[0].fingerprint();
+        tab.items_opt.as_mut().unwrap()[0].dir_size = DirSize::Directory(1);
+        fs::write(child.join("file"), b"a longer child")?;
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let item = &tab.items_opt().unwrap()[0];
+        assert_eq!(item.fingerprint(), fingerprint);
+        assert!(matches!(item.dir_size, DirSize::Calculating(_)));
+        Ok(())
+    }
+
+    fn subscription_ids(subscription: Subscription<Message>) -> Vec<u64> {
+        use cosmic::iced::advanced::subscription::{Hasher, into_recipes};
+        use std::hash::Hasher as _;
+        into_recipes(subscription)
+            .into_iter()
+            .map(|recipe| {
+                let mut hash = Hasher::default();
+                recipe.hash(&mut hash);
+                hash.finish()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rescans_restart_child_counts_and_directory_size_work() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir(dir.path().join("child"))?;
+        let mut tab = tab_at(Location::Path(dir.path().to_path_buf()));
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        tab.size_opt.set(Some(Size::new(800.0, 300.0)));
+        tab.items_opt.as_mut().unwrap()[0].state.selected = true;
+        let controller = match &tab.items_opt().unwrap()[0].dir_size {
+            DirSize::Calculating(controller) => controller.clone(),
+            _ => panic!("directory should need a size calculation"),
+        };
+        let _ = tab.list_view();
+        let old = subscription_ids(tab.subscription(true));
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let _ = tab.list_view();
+        let current = subscription_ids(tab.subscription(true));
+        assert!(controller.is_cancelled());
+        assert_eq!(old.len(), 3);
+        assert_eq!(current.len(), old.len());
+        assert!(old.iter().all(|identity| !current.contains(identity)));
+        match &tab.items_opt().unwrap()[0].dir_size {
+            DirSize::Calculating(controller) => assert!(!controller.is_cancelled()),
+            _ => panic!("replacement should need a size calculation"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_current_child_counts_and_sizes_are_applied() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("child");
+        fs::create_dir(&path)?;
+        let mut tab = tab_at(Location::Path(dir.path().to_path_buf()));
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let old = entry_work_id(&tab, &path);
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+        let current = entry_work_id(&tab, &path);
+        tab.update(
+            Message::DirectoryChildren(path.clone(), Some(77), old),
+            Modifiers::empty(),
+        );
+        tab.update(
+            Message::DirectorySize(path.clone(), DirSize::Error("cancelled".into()), old),
+            Modifiers::empty(),
+        );
+        let item = &tab.items_opt().unwrap()[0];
+        assert_eq!(item.metadata.children_count(), None);
+        assert!(matches!(item.dir_size, DirSize::Calculating(_)));
+        tab.update(
+            Message::DirectoryChildren(path.clone(), Some(4), current),
+            Modifiers::empty(),
+        );
+        tab.update(
+            Message::DirectorySize(path, DirSize::Directory(100), current),
+            Modifiers::empty(),
+        );
+        let item = &tab.items_opt().unwrap()[0];
+        assert_eq!(item.metadata.children_count(), Some(&4));
+        assert!(matches!(item.dir_size, DirSize::Directory(100)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_current_checksum_result_is_accepted() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(1)?;
+        let path = dir.path().join("file00000.txt");
+        let current = entry_work_id(&tab, &path);
+        tab.update(
+            Message::Checksums(
+                path,
+                ChecksumState::Calculated(FileChecksums {
+                    sha256: "fresh".into(),
+                }),
+                current,
+            ),
+            Modifiers::empty(),
+        );
+        match &tab.items_opt().unwrap()[0].state.checksums {
+            ChecksumState::Calculated(checksums) => assert_eq!(checksums.sha256, "fresh"),
+            _ => panic!("current checksum result should be stored"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn external_thumbnail_without_image_dimensions_does_not_start_a_decode() -> io::Result<()> {
+        let (_dir, mut tab) = tab_with_files(1)?;
+        tab.gallery = true;
+        tab.select_focus = Some(0);
+        tab.items_opt.as_mut().unwrap()[0].thumbnail_opt = Some(ItemThumbnail::Image(
+            widget::image::Handle::from_rgba(1, 1, vec![0; 4]),
+            None,
+        ));
+        assert!(tab.trigger_async_decode().is_empty());
         Ok(())
     }
 

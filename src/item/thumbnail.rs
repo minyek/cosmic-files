@@ -54,13 +54,8 @@ impl ItemThumbnail {
             ThumbnailCacher::new(path, ThumbnailSize::from_pixel_size(thumbnail_size));
         match thumbnail_cacher.as_ref() {
             Ok(cache) => match cache.get_cached_thumbnail() {
-                CachedThumbnail::Valid((thumbnail_path, size)) => {
-                    // Check original image dimensions even when loading cached thumbnail
-                    // This prevents trying to load huge images in preview mode
-                    let original_dims = match image::image_dimensions(path) {
-                        Ok((width, height)) => Some((width, height)),
-                        Err(_) => size.map(|s| (s.pixel_size(), s.pixel_size())),
-                    };
+                CachedThumbnail::Valid((thumbnail_path, _)) => {
+                    let original_dims = image::image_dimensions(path).ok();
 
                     return Self::Image(
                         widget::image::Handle::from_path(thumbnail_path),
