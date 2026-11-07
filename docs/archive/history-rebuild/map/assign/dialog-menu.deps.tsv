@@ -1,0 +1,17 @@
+issue-A	needs	issue-B	evidence
+19	needs	51	menu::desktop_entry_actions calls lone_desktop_entry to find the lone launcher
+53	needs	19	DesktopAction/snapshot id live in DesktopEntryActions, the cached parse of #19
+51	adjacent	19	lone_desktop_entry replaces the selected==1 arm that sat beside the inline parse
+55	needs	54	delete_entry_of/deletion_of extend delete_menu_entry and the delete_item closure of #54
+54	needs	55	LOW: tests a_trashed_folders_child_is_deleted_permanently and delete_entries use trashed_item (TrashItem::for_test, ItemMetadata::Trash); in final form delete_menu_entry takes Deletion (#55); #54 alone needs a bool in_trash form
+18	needs	13	dialog existing_entry_in_dir reads Tab::lists_directory/find_entry_is_dir (tab.rs, #18) over a listing; picker Tab::new lexical normalize relies on #13
+33	needs	13	Dialog::new drops canonicalize because Tab::new normalizes lexically (#13)
+25	needs	13	dialog NavigationResolved/EditLocationSubmit use crate::navigation (PendingRequest, resolve_edit_location)
+47	needs	13	FolderCreated uses crate::navigation::PendingRequest (self.navigation.begin/finish)
+33	needs	13	SaveChecked uses crate::navigation::PendingRequest as save_request
+36	needs	27	dialog WatcherUpdated stores the paths reconcile registered (watcher::reconcile and Message::WatcherUpdated are #27)
+33	needs	32	Open/Save results go through App::close (persistence::flush) and recents::record_recently_used (#32); close() is used by SaveChecked
+32	adjacent	37	recents::record_recently_used is the worker; initialize_history (#37) is inside it
+33	adjacent	35	dialog NotifyEvents contains_change line sits beside rescan_tab_if_idle (#35)
+33	needs	47	LOW: inline create_dir lines were assigned to #47; #33 names that call but FolderCreated is its only completion path
+47	adjacent	25	both share App.navigation PendingRequest invalidation lines

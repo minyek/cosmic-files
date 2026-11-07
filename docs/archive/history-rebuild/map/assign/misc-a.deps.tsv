@@ -1,0 +1,19 @@
+37	needs	32	recents::initialize_history is called from apply_recents_mutation, which the 32 writer introduced
+46	needs	32	persistence::flush (32) drains the default-app writer via mime_app::barrier; 46 adds that half
+46	needs	43	write_default_at uses atomic_file::stage, introduced for compress staging
+24	needs	23	terminal tests and default_terminal_id: None use MimeAppCache::empty() added by 23
+23	needs	11	MimeAppCache::reload uses mime_icon::SHARED_MIME_INFO (MIME_ICON_CACHE.shared_mime_info removed)
+49	needs	10	is_placeholder_mime filters mime_from_file_name and name_may_decide_type from 10
+11	needs	10	mime_queries_can_run_while_the_icon_cache_is_in_use calls mime_for_path("notes.txt", None, true), which goes through the name path
+39	needs	15	large_image tests call try_decode(&path, None, (1, 1)), the original_dimensions parameter from 15
+13	needs	25	a_parent_after_a_symlink_resolves_against_its_target calls resolve_edit_location added with 25
+27	needs	36	panicking_watch_preserves_the_watcher_for_a_later_request asserts the registered-set return value from 36
+36	needs	27	reconcile (27) is the function 36 changes to return registered paths
+12	needs	13	trash/mod.rs uses navigation::PendingRequest
+17	needs	13	App.nav_context_request is a PendingRequest
+22	needs	13	NavSelectChecked uses request ids from PendingRequest (app.rs navigation)
+23	needs	13	App.mime_cache_request is a PendingRequest
+25	needs	13	EditLocationSubmit uses self.navigation.begin(); resolve_edit_location sits in navigation.rs created by 13
+30	needs	13	App.preview_request is a PendingRequest
+33	needs	13	dialog.rs navigation and save_request are PendingRequests
+3	adjacent	5	LargeImageManager::invalidate is called from Tab::refresh_entries (3) and Tab::set_items (5); owner unclear

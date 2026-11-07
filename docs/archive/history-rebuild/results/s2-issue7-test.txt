@@ -1,0 +1,246 @@
+   Compiling cosmic-files v1.11.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/history-rebuild-check)
+warning: unused import: `self`
+  --> src/app.rs:73:23
+   |
+73 | use crate::mime_app::{self, MimeApp, MimeAppCache, MimeAppMatch};
+   |                       ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `SurfaceIdWrapper` and `self as iced_winit`
+  --> src/dialog.rs:12:46
+   |
+12 | use cosmic::iced::platform_specific::shell::{self as iced_winit, SurfaceIdWrapper};
+   |                                              ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused import: `RwLock`
+  --> src/item/mod.rs:12:27
+   |
+12 | use std::sync::{LazyLock, RwLock};
+   |                           ^^^^^^
+
+warning: unused import: `Duration`
+ --> src/item/metadata.rs:2:17
+  |
+2 | use std::time::{Duration, SystemTime};
+  |                 ^^^^^^^^
+
+warning: unused import: `i18n_embed::LanguageLoader`
+  --> src/menu.rs:10:5
+   |
+10 | use i18n_embed::LanguageLoader;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Instant` and `self`
+  --> src/mime_app.rs:15:17
+   |
+15 | use std::time::{self, Instant};
+   |                 ^^^^  ^^^^^^^
+
+warning: unused imports: `fs` and `io`
+  --> src/mime_app.rs:16:11
+   |
+16 | use std::{fs, io, process};
+   |           ^^  ^^
+
+warning: unused import: `FsKind`
+ --> src/scan/path.rs:7:25
+  |
+7 | use crate::item::{self, FsKind, Item};
+  |                         ^^^^^^
+
+warning: unused import: `i18n_embed::LanguageLoader`
+  --> src/tab.rs:21:5
+   |
+21 | use i18n_embed::LanguageLoader;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Instant`
+  --> src/thumbnailer.rs:10:5
+   |
+10 | use std::time::Instant;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `fs`
+  --> src/thumbnailer.rs:11:11
+   |
+11 | use std::{fs, process};
+   |           ^^
+
+warning: unused import: `mime_guess::mime`
+ --> src/trash/fallback.rs:1:5
+  |
+1 | use mime_guess::mime;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `trash_files_dir`
+  --> src/trash/fallback.rs:10:52
+   |
+10 | use crate::trash::{Trash, TrashExt, TrashItemSize, trash_files_dir};
+   |                                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `StreamExt`
+  --> src/operation/recursive.rs:13:26
+   |
+13 | use futures::{FutureExt, StreamExt};
+   |                          ^^^^^^^^^
+
+warning: unused import: `FutureExt`
+  --> src/operation/recursive.rs:13:15
+   |
+13 | use futures::{FutureExt, StreamExt};
+   |               ^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src/app.rs:1552:38
+     |
+1552 |                 Ok((parent_item_opt, mut items)) => {
+     |                                      ----^^^^^
+     |                                      |
+     |                                      help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `mounter_items`
+    --> src/app.rs:1547:13
+     |
+1547 |         let mounter_items = self.mounter_items.clone();
+     |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_mounter_items`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src/app.rs:2593:13
+     |
+2593 |         let mut nav = cosmic::widget::nav_bar(nav_model, |entity| {
+     |             ----^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/dialog.rs:749:38
+    |
+749 |                 Ok((parent_item_opt, mut items)) => {
+    |                                      ----^^^^^
+    |                                      |
+    |                                      help: remove this `mut`
+
+warning: unused variable: `mounter_items`
+   --> src/dialog.rs:745:13
+    |
+745 |         let mounter_items = self.mounter_items.clone();
+    |             ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_mounter_items`
+
+warning: unused variable: `path`
+   --> src/item/mod.rs:154:34
+    |
+154 | fn get_desktop_file_display_name(path: &Path) -> Option<String> {
+    |                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: unused variable: `path`
+   --> src/item/mod.rs:159:26
+    |
+159 | fn get_desktop_file_icon(path: &Path) -> Option<String> {
+    |                          ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: variable does not need to be mutable
+   --> src/item/mod.rs:369:9
+    |
+369 |     let mut is_gvfs = false;
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `entry`
+   --> src/menu.rs:154:32
+    |
+154 |             } else if let Some(entry) = selected_desktop_entry {
+    |                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_entry`
+
+warning: unused variable: `symbolic`
+  --> src/mounter/mod.rs:78:24
+   |
+78 |     pub fn icon(&self, symbolic: bool) -> Option<widget::icon::Handle> {
+   |                        ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_symbolic`
+
+warning: variable does not need to be mutable
+   --> src/mouse_area.rs:112:51
+    |
+112 |     pub fn wayland_on_right_press_window_position(mut self) -> Self {
+    |                                                   ----^^^^
+    |                                                   |
+    |                                                   help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> src/scan/path.rs:30:9
+   |
+30 |     let mut remote_scannable = false;
+   |         ----^^^^^^^^^^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `path`
+  --> src/trash/fallback.rs:24:5
+   |
+24 |     path: PathBuf,
+   |     ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: unused variable: `name`
+  --> src/trash/fallback.rs:25:5
+   |
+25 |     name: String,
+   |     ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `metadata`
+  --> src/trash/fallback.rs:26:5
+   |
+26 |     metadata: fs::Metadata,
+   |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_metadata`
+
+warning: unused variable: `sizes`
+  --> src/trash/fallback.rs:27:5
+   |
+27 |     sizes: IconSizes,
+   |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_sizes`
+
+warning: function `err_str` is never used
+  --> src/lib.rs:46:15
+   |
+46 | pub(crate) fn err_str<T: ToString>(err: T) -> String {
+   |               ^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `assert_eq_tab_path_contents` is never used
+    --> src/app.rs:7351:12
+     |
+7351 |     pub fn assert_eq_tab_path_contents(tab: &Tab, path: &Path) {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variants `Items`, `MountResult`, `NetworkAuth`, `NetworkResult`, and `TrashChanged` are never constructed
+   --> src/mounter/mod.rs:107:5
+    |
+106 | pub enum MounterMessage {
+    |          -------------- variants in this enum
+107 |     Items(MounterItems),
+    |     ^^^^^
+108 |     MountResult(MounterItem, Result<bool, String>),
+    |     ^^^^^^^^^^^
+109 |     NetworkAuth(String, MounterAuth, mpsc::Sender<MounterAuth>),
+    |     ^^^^^^^^^^^
+110 |     NetworkResult(String, Result<bool, String>),
+    |     ^^^^^^^^^^^^^
+111 |     TrashChanged,
+    |     ^^^^^^^^^^^^
+    |
+    = note: `MounterMessage` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: `cosmic-files` (lib test) generated 34 warnings (run `cargo fix --lib -p cosmic-files --tests` to apply 29 suggestions)
+    Finished `test` profile [optimized + debuginfo] target(s) in 26.47s
+     Running unittests src/lib.rs (target/debug/deps/cosmic_files-82e9cff841c981c8)
+
+running 1 test
+test tab::tests::virtual_rows_match_actual_layout_at_each_scroll_position ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.11s
+

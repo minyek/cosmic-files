@@ -1,0 +1,15 @@
+55	needs	14	delete_confirming/Message::Delete route into Message::DeleteClassified and the off-thread delete classification (H40-H43,H74-H75)
+14	needs	55	INVERSE NOTE: in final code 14's classification calls crate::item::can_trash(&symlink_metadata); a 14-only commit must keep path.metadata()+FsKind (removed by 55 via the H4 use line)
+36	needs	27	WatcherUpdated(.., requested) and watcher::reconcile returning registered paths extend 27's off-thread update_watcher (H22,H61)
+3	adjacent	35	classify_events Structural result leads to rescan_tab_if_idle / TabRescan (35) in the NotifyEvents handler (other agent's hunks)
+30	needs	22	App.preview_request uses crate::navigation::PendingRequest; PendingRequest is introduced with the navigation request (22/25) (H24,H62); which of 22/25 first adds src/navigation.rs is unverified
+17	needs	22	nav_context_request uses crate::navigation::PendingRequest (H24)
+23	needs	22	mime_cache_request uses crate::navigation::PendingRequest (H24)
+25	adjacent	22	both extend the App.navigation PendingRequest and its invalidate() calls (H24,H38,H53,H58)
+17	needs	12	nav_context_items calls Trash::is_empty_cached() (H26 line 96)
+53	needs	19	ExecEntryAction(u64,usize) snapshot id comes from DesktopEntryActions parsed off-thread (H7,H8,H36)
+20	needs	31	open_classified launches desktop entries via the spawn_blocking launch_desktop_entries (H30 sits inside open_classified)
+22	needs	13	favourite open after NavSelectChecked relies on no-stat Location::normalize/folder_name; weak, textual theme only
+13	adjacent	12	H55-H56 favourite icon without stat could equally belong to 12 (startup sidebar freeze)
+22	adjacent	25	leave_unmounted_paths (H58) invalidates pending navigation shared by both
+28	adjacent	20	OpenLaunchLocations and OpenFileClassified are neighbouring Message variants (H16)

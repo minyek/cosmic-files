@@ -6,6 +6,7 @@
 - [Upstream contributions](memory/upstream-contributions.md)
 - [Completed local-improvement acceptance](reports/2026-10-02-acceptance-closure.md)
 - [Independent closure review](reports/2026-10-02-closure-review.md)
+- [History rebuild: spec](archive/history-rebuild/history-rebuild-spec.md), [plan](archive/history-rebuild/history-rebuild-plan.md) and [commit map](archive/history-rebuild/history-rebuild-map.md), with its inventory and checkers
 
 Keep active requirements and plans in `requirements/` and `plans/`. Move them
 under `archive/<topic>/` when their acceptance is complete; preserve filenames

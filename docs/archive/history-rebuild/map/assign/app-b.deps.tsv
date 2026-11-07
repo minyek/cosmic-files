@@ -1,0 +1,12 @@
+35	needs	3	hunks 83,84: Structural arm and TabRefreshEntries fallback call rescan_tab_if_idle; #35 extends the listing-change arms #3 introduces
+55	needs	14	hunk 154 tests assert Message::DeleteClassified{trash_paths,dialog_paths}, introduced by #14 (d70f661 changes it)
+55	needs	2	hunk 154 deleting_a_dangling_symlink test calls item_from_entry and metadata.can_trash on symlink items
+22	needs	20	hunks 131/132: NavSelectChecked opens a file with Self::open_file (static fn from #20)
+22	adjacent	25	navigation PendingRequest field shared; invalidate calls (hunks 101,102,104,126) and tests serve both
+25	adjacent	22	same shared navigation PendingRequest; NavigationResolved (25) and NavSelectChecked/NavigationMounted (22)
+36	needs	27	hunk 85 WatcherUpdated and hunk 154 a_failed_watch test exercise watcher::reconcile/update_watcher from #27
+36	needs	35	test a_failed_watch_does_not_resubmit uses test_app (shared fixture); no code dependency beyond #27
+28	adjacent	20	hunk 86 OpenFileClassified (20) and OpenLaunchLocations (28) are adjacent arms
+23	adjacent	46	hunks 112,113: queue_default ordered default-app writer shared between #23 and #46
+32	needs	23	hunk 154 clean_exit test flushes persistence which drains the default-app writer from #23/#46 (inferred)
+41	needs	38	hunk 154 failed_operations_text tests use the same failed_operations map whose cap is #38 (types only; weak)

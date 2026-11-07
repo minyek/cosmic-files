@@ -1,0 +1,7 @@
+src_app.rs.diff	67	85	12	            if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
+src_app.rs.diff	82	3	35	                    .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
+src_menu.rs.diff	6	1	51	    let selected_desktop_entry = tab.items_opt().and_then(|items| lone_desktop_entry(items));
+src_app.rs.diff	73	3	14	                            return Self::delete(paths);
+src_tab.rs.diff	109	25	1	                    user_ids.insert(metadata.uid());
+src_tab.rs.diff	109	31	1	                    group_ids.insert(metadata.gid());
+src_app.rs.diff	40	2	14	<DROP>

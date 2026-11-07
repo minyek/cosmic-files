@@ -1,0 +1,68 @@
+1	Look up each owner and group once per frame in the multi-selection pane
+2	Show a badge on symlinked folders in list and grid views
+48	Read the dimensions of a trashed image from the trashed copy
+3,4,5,6,15,39,35,29	Rescan only what changed and keep computed item state across rescans
+7	Build list and grid rows only for the visible range
+8	Build text previews only where one is displayed
+9	Show a large folder's entries while it is still being scanned
+11	Draw icons without waiting on a slow file read
+10	Choose a file's icon from its name before reading its contents
+14,54,55,51,53,19	Classify deletes off the UI thread and fix the delete and launcher menu entries
+13,25,22,20,26,27,36,32,33,46	Move blocking path checks, watcher updates and recents and default-app writes off the UI thread
+31	Parse a .desktop file off the UI thread when launching it
+47	Show an error when New folder fails in the file picker
+37	Record recent files on a fresh profile
+12	Check the Trash state off the UI thread
+16	Read cached metadata in the properties pane
+17	Stop the sidebar context menu statting its entry on every frame
+18	Stop the New, Rename and Compress dialogs statting on every keystroke
+21	Write pasted clipboard data off the UI thread without a name race
+23	Build and save the Open-with application cache off the UI thread
+24,52	Resolve the default terminal and open it without waiting for xdg-mime
+28	Resolve launch locations off the UI thread
+30	Build the item for sidebar Open with and Preview off the UI thread
+38	Cap the operation history
+40	Test that a failed move to Trash is reported
+57	Fix pausing, resuming and cancelling file operations
+34,42,56	Run blocking filesystem calls off the async runtime, keep Rename from replacing files and stop an idle runtime counting as IO wait
+41	Make the Failed operations text selectable and copyable
+43	Stage compressed archives and keep an existing archive
+44	Report a failure while finishing an archive
+45	Include file names that are not valid UTF-8 in archives
+49	Type extensionless remote and trashed files from their names
+50	Type files in GVFS URI listings as files
+59	Name the SVG preview size limit
+60	Log rather than panic when the notification task fails to run
+61	Remove the unused Tab::items_opt_mut
+10,49	Type files from their names first, and never type unknown names as empty
+13,25,22,20,26,27,36,32,33,46,37	Move blocking path checks, watcher updates and recents and default-app writes off the UI thread
+29	Build search results in the search worker
+3,4,5,6,15	Rescan only what changed and keep computed item state
+39	Clear the gallery's per-image state together
+35	Run at most one rescan per folder, with one queued follow-up
+51	Offer the launcher menu only for a single .desktop file
+19	Parse a .desktop file once per context menu, not every frame
+53	Run the launcher action whose command the menu showed
+14	Classify deletes off the UI thread
+54	Make every Delete permanently entry delete permanently
+55	Label deletes the Trash cannot take as Delete permanently
+13,25	Resolve navigation and typed locations off the UI thread
+20	Sniff the types of opened files off the UI thread
+22	Check network favourites off the UI thread
+32,37	Record recent files in one ordered background writer
+46	Replace mimeapps.list atomically and in order
+33	Do the file picker's file checks off the UI thread
+27,36	Update the file watcher off the UI thread and retry failed watches
+26	Reuse scanned metadata instead of statting items again
+52	Keep a .desktop segment inside a default terminal id
+24	Cache the default terminal instead of asking xdg-mime each time
+34	Build the overwrite dialog's items off the async runtime
+42	Refuse to rename over a file that appeared under the new name
+56	Update compio so an idle runtime is not counted as IO wait
+19,53	Parse a .desktop file once per context menu and run the action it showed
+54,55	Make every Delete permanently menu entry delete permanently
+32,37,46,33	Record recents, defaults and picker results off the UI thread, in order
+3,4,5,15	Rescan only what changed and keep computed item state
+6	Cache the sort order and rebuild it only when its inputs change
+27	Update the file watcher off the UI thread
+36	Watch a folder again after its watch failed

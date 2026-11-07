@@ -1,0 +1,34 @@
+# dependent issue	needed issue	reason (inventory deps files, plus checks)
+6	29	#6 tests send Items through the #29 search results channel (found by D6)
+12	13	TrashState uses crate::navigation::PendingRequest (src/navigation.rs); owner not confirmed, may be another issue that first adds navigation.rs
+16	2	a_trashed_file_reports_its_size uses TrashItem::for_test (added with the trash symlink-badge tests)
+17	12	nav_context_items calls Trash::is_empty_cached() (H26 line 96)
+17	13	App.nav_context_request is a PendingRequest
+17	22	nav_context_request uses crate::navigation::PendingRequest (H24)
+18	13	dialog existing_entry_in_dir reads Tab::lists_directory/find_entry_is_dir (tab.rs, #18) over a listing; picker Tab::new lexical normalize relies on #13
+19	5	menu.rs DesktopEntryActions id = next_work_id(); DesktopEntryParsed checked against item.state.work_id
+19	51	menu::desktop_entry_actions calls lone_desktop_entry to find the lone launcher
+22	13	favourite open after NavSelectChecked relies on no-stat Location::normalize/folder_name; weak, textual theme only
+22	20	hunks 131/132: NavSelectChecked opens a file with Self::open_file (static fn from #20)
+23	11	MimeAppCache::reload uses mime_icon::SHARED_MIME_INFO (MIME_ICON_CACHE.shared_mime_info removed)
+23	13	App.mime_cache_request is a PendingRequest
+23	22	mime_cache_request uses crate::navigation::PendingRequest (H24)
+24	23	terminal tests and default_terminal_id: None use MimeAppCache::empty() added by 23
+30	13	App.preview_request is a PendingRequest
+30	22	App.preview_request uses crate::navigation::PendingRequest; PendingRequest is introduced with the navigation request (22/25) (H24,H62); which of 22/25 first adds src/navigation.rs is unverified
+33	13	SaveChecked uses crate::navigation::PendingRequest as save_request
+36	35	test a_failed_watch_does_not_resubmit uses test_app (shared fixture); no code dependency beyond #27
+39	15	try_decode signature changes and ImageDecodeFailed generation share large_image.rs generation scheme
+41	38	hunk 154 failed_operations_text tests use the same failed_operations map whose cap is #38 (types only; weak)
+44	43	finalization (mod.rs H12, H17) finishes writers over the staged file that 43 publishes; the finalization tests assert no staging file is left (H36 78-142)
+46	43	write_default_at uses atomic_file::stage, introduced for compress staging
+47	13	FolderCreated uses crate::navigation::PendingRequest (self.navigation.begin/finish)
+47	18	FolderCreated uses Path, which joins the dialog.rs std::path import in #18 (found by D6)
+48	2	trash_item_reads_image_dimensions_from_the_trashed_file uses TrashItem::for_test
+50	49	mime_for_file_info falls back to mime_for_path(name, None, true), whose remote name-only guess #49 fixes (zero-size placeholder)
+55	2	hunk 154 deleting_a_dangling_symlink test calls item_from_entry and metadata.can_trash on symlink items
+55	14	hunk 154 tests assert Message::DeleteClassified{trash_paths,dialog_paths}, introduced by #14 (d70f661 changes it)
+56	34	build_replace_item's Err arm (mod.rs H4 body 14-15) is rewritten from Err(_) to Err(err) with {err}; the arm exists only once 34 adds it
+56	42	rename_noreplace's map_err (mod.rs H4 body 60) is rewritten to format the JoinError; the call exists only once 42 adds it
+56	57	compio 0.19 without #57's Delete fix brings back #57's first cause (spec D4; review H2)
+57	40	a_resumed_delete_carries_on (mod.rs H36 body 514) expects the trash step to fail on a missing path, which holds only once 40 propagates the inner trash::delete result; it also uses operation_delete, 40's fixture (H36 458-472)

@@ -1,0 +1,18 @@
+3	needs	5	refresh_requests/refresh_entries use ItemState.work_id and next_work_id (introduced with #5's stale-result guard); refresh_entries also invalidates via large_image_manager.invalidate
+3	needs	6	refresh_entries calls resort_if_ordered_by and sort_cache (or #6 patches those lines into #3's function)
+3	needs	4	refresh_entries removes from children_count_failed
+3	needs	7	refresh_entries copies state.button_id (stable next_button_id)
+5	needs	15	ItemCarryover carries Item.image_dimensions
+5	needs	4	ItemCarryover uses metadata.children_count()/set_children_count; DirectoryChildren Option message
+5	needs	39	set_items/refresh_entries call large_image_manager.invalidate (large_image.rs)
+15	needs	5	Thumbnail handler stores dimensions only under the work_id guard
+13	adjacent	25	Message::LocationSelect is produced by #25's EditLocationSubmit resolution (Command result)
+25	needs	13	EditLocationSubmit result is delivered as Message::LocationSelect and cd_selection
+19	needs	51	Message handler calls menu::lone_desktop_entry (pub(crate), requires one regular file)
+53	needs	19	ExecEntryAction handler reads menu::desktop_entry_actions(self) and DesktopEntryActions snapshot id from #19
+22	needs	13	Message::Location now assumes a directory; routing of Location::Path files relies on LocationSelect/cd no longer stating
+4	needs	6	DirectoryChildren Size arm calls resort_if_ordered_by; fetches_children_count reads sort_options
+6	adjacent	29	capped_search_keeps_new_results_in_modified_order test; search drain inserts by modified time
+29	needs	2	search worker builds Items with is_symlink_dir (item_from_search_item signature)
+26	adjacent	18	selected_paths_with_dir / find_entry_is_dir placed together in tab.rs
+39	needs	15	try_decode signature changes and ImageDecodeFailed generation share large_image.rs generation scheme

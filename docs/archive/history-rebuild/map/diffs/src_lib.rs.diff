@@ -1,0 +1,35 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 3de2f1f..fb4bad3 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8 +8 @@ use std::path::PathBuf;
+-use std::{env, fs, process};
++use std::{env, process};
+@@ -17,0 +18 @@ mod archive;
++mod atomic_file;
+@@ -34,0 +36 @@ mod mouse_area;
++mod navigation;
+@@ -35,0 +38,2 @@ pub mod operation;
++mod persistence;
++mod recents;
+@@ -41 +45,2 @@ mod thumbnailer;
+-pub(crate) mod trash;
++pub mod trash;
++mod watcher;
+@@ -208,5 +213,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+-            match fs::canonicalize(&path) {
+-                Ok(absolute) => Location::Path(absolute),
+-                Err(err) => {
+-                    log::warn!("failed to canonicalize {}: {}", path.display(), err);
+-                    continue;
++            // Daemonization changes cwd. Resolve relative arguments against the invoking cwd,
++            // leaving symlink and parent-component resolution to background filesystem work.
++            if path.is_absolute() {
++                Location::Path(path)
++            } else {
++                match env::current_dir() {
++                    Ok(dir) => Location::Path(dir.join(path)),
++                    Err(err) => {
++                        log::warn!("failed to resolve {}: {}", path.display(), err);
++                        continue;
++                    }

@@ -1,0 +1,349 @@
+diff --git a/src/item/mod.rs b/src/item/mod.rs
+index 285ea7f..d3d0f7a 100644
+--- a/src/item/mod.rs
++++ b/src/item/mod.rs
+@@ -3,0 +4 @@ use cosmic::iced::advanced::text;
++use cosmic::iced::widget::stack;
+@@ -11,0 +13 @@ use std::sync::{LazyLock, RwLock};
++use std::time::SystemTime;
+@@ -30 +32 @@ mod thumbnail;
+-pub use self::fs_kind::FsKind;
++pub use self::fs_kind::{FsKind, can_trash};
+@@ -32,0 +35 @@ pub use self::state::ItemState;
++pub(crate) use self::state::next_work_id;
+@@ -33,0 +37,2 @@ pub use self::thumbnail::ItemThumbnail;
++#[cfg(test)]
++pub(crate) use self::thumbnail::TEXT_PREVIEW_MAX_BYTES;
+@@ -134,6 +139,5 @@ pub fn folder_name<P: AsRef<Path>>(path: P) -> (String, bool) {
+-                match (get_filename_from_path(path), fs::metadata(path)) {
+-                    (Ok(name), Ok(metadata)) => {
+-                        let is_gvfs = FsKind::new(&metadata) == FsKind::Gvfs;
+-                        display_name_for_file(path, &name, is_gvfs, false)
+-                    }
+-                    _ => name.to_string_lossy().into_owned(),
++                // The name comes from the path component alone: every tab title and breadcrumb
++                // calls this on the GUI thread, where a stat blocks on slow mounts.
++                match get_filename_from_path(path) {
++                    Ok(name) => display_name_for_file(path, &name, false, false),
++                    Err(_) => name.to_string_lossy().into_owned(),
+@@ -303 +306,0 @@ pub fn item_from_gvfs_info(path: PathBuf, file_info: gio::FileInfo, sizes: IconS
+-        //TODO: calculate children in the background (and make it cancellable?)
+@@ -320,0 +324 @@ pub fn item_from_gvfs_info(path: PathBuf, file_info: gio::FileInfo, sizes: IconS
++        is_symlink_dir: is_dir && file_info.is_symlink(),
+@@ -358,0 +363,6 @@ pub fn item_from_entry(
++    let is_symlink = metadata.is_symlink();
++    let metadata = if is_symlink {
++        fs::metadata(&path).unwrap_or(metadata)
++    } else {
++        metadata
++    };
+@@ -417,14 +427,5 @@ pub fn item_from_entry(
+-    let mut children_opt = None;
+-    let mut dir_size = DirSize::NotDirectory;
+-    if metadata.is_dir() && !remote {
+-        dir_size = DirSize::Calculating(Controller::default());
+-        //TODO: calculate children in the background (and make it cancellable?)
+-        match fs::read_dir(&path) {
+-            Ok(entries) => {
+-                children_opt = Some(entries.count());
+-            }
+-            Err(err) => {
+-                log::warn!("failed to read directory {}: {}", path.display(), err);
+-            }
+-        }
+-    }
++    let dir_size = if metadata.is_dir() && !remote {
++        DirSize::Calculating(Controller::default())
++    } else {
++        DirSize::NotDirectory
++    };
+@@ -437,0 +439 @@ pub fn item_from_entry(
++        is_symlink_dir: metadata.is_dir() && (is_symlink || path.is_symlink()),
+@@ -440 +442,3 @@ pub fn item_from_entry(
+-            children_opt,
++            // Counting children costs one directory read per entry, almost all of them off
++            // screen; the count is filled in for the rows that are displayed.
++            children_opt: None,
+@@ -487,0 +492,3 @@ pub struct FileChecksums {
++/// Identifies an entry's content, so a rescan can tell an unchanged entry from a rewritten one.
++pub(crate) type ItemFingerprint = (Option<SystemTime>, Option<u64>);
++
+@@ -491,0 +499 @@ pub struct Item {
++    pub is_symlink_dir: bool,
+@@ -506,0 +515,31 @@ impl Item {
++    pub(crate) fn fingerprint(&self) -> ItemFingerprint {
++        (self.metadata.modified(), self.metadata.file_size())
++    }
++
++    pub(crate) fn icon(
++        &self,
++        handle: &widget::icon::Handle,
++        size: u16,
++    ) -> Element<'static, Message> {
++        let icon = widget::icon::icon(handle.clone())
++            .content_fit(ContentFit::Contain)
++            .size(size);
++        if !self.is_symlink_dir {
++            return icon.into();
++        }
++
++        static SYMLINK_BADGE: LazyLock<widget::icon::Handle> = LazyLock::new(|| {
++            widget::icon::from_svg_bytes(
++                include_bytes!("../../res/icons/emblem-symbolic-link.svg").as_slice(),
++            )
++        });
++        let badge = widget::icon::icon(SYMLINK_BADGE.clone()).size((size / 3).max(8).min(size));
++        stack![
++            icon,
++            widget::container(badge)
++                .align_left(Length::Fixed(f32::from(size)))
++                .align_bottom(Length::Fixed(f32::from(size)))
++        ]
++        .into()
++    }
++
+@@ -543 +582,4 @@ impl Item {
+-    pub fn file_metadata(&self) -> Option<Metadata> {
++    /// Full metadata available without filesystem I/O, so it is safe to read on the GUI thread.
++    /// Only a local path caches it; every other kind of item returns `None` and is rendered from
++    /// the cached [`ItemMetadata`] fields.
++    pub fn cached_metadata(&self) -> Option<Metadata> {
+@@ -546,6 +588,12 @@ impl Item {
+-            #[cfg(feature = "gvfs")]
+-            ItemMetadata::GvfsPath { .. } => self.path_opt().and_then(|p| fs::metadata(p).ok()),
+-            _ => {
+-                //TODO: other metadata types
+-                None
+-            }
++            _ => None,
++        }
++    }
++
++    /// Human-readable size text for a directory item, from the cached dir-size calculation
++    /// (empty when there is nothing to show).
++    fn dir_size_text(&self) -> String {
++        match &self.dir_size {
++            DirSize::Calculating(_) => fl!("calculating"),
++            DirSize::Directory(size) => format_size(*size),
++            DirSize::NotDirectory => String::new(),
++            DirSize::Error(err) => err.clone(),
+@@ -658,19 +706,3 @@ impl Item {
+-        if let Some(metadata) = self.file_metadata() {
+-            if metadata.is_dir() {
+-                if let Some(children) = self.metadata.children_count() {
+-                    details = details.push(widget::text::body(fl!("items", items = children)));
+-                }
+-                let size = match &self.dir_size {
+-                    DirSize::Calculating(_) => fl!("calculating"),
+-                    DirSize::Directory(size) => format_size(*size),
+-                    DirSize::NotDirectory => String::new(),
+-                    DirSize::Error(err) => err.clone(),
+-                };
+-                if !size.is_empty() {
+-                    details = details.push(widget::text::body(fl!("item-size", size = size)));
+-                }
+-            } else {
+-                details = details.push(widget::text::body(fl!(
+-                    "item-size",
+-                    size = format_size(metadata.len())
+-                )));
++        if self.metadata.is_dir() {
++            if let Some(children) = self.metadata.children_count() {
++                details = details.push(widget::text::body(fl!("items", items = children)));
+@@ -677,0 +710,10 @@ impl Item {
++            let size = self.dir_size_text();
++            if !size.is_empty() {
++                details = details.push(widget::text::body(fl!("item-size", size = size)));
++            }
++        } else if let Some(size) = self.metadata.file_size() {
++            details = details.push(widget::text::body(fl!(
++                "item-size",
++                size = format_size(size)
++            )));
++        }
+@@ -679,2 +721,2 @@ impl Item {
+-            let date_time_formatter = date_time_formatter(military_time);
+-            let time_formatter = time_formatter(military_time);
++        let date_time_formatter = date_time_formatter(military_time);
++        let time_formatter = time_formatter(military_time);
+@@ -682,6 +724,4 @@ impl Item {
+-            if let Ok(time) = metadata.created() {
+-                details = details.push(widget::selectable_text::body(fl!(
+-                    "item-created",
+-                    created = format_time(time, &date_time_formatter, &time_formatter).to_string()
+-                )));
+-            }
++        // Creation and access times, and the permission controls below, need full metadata, which
++        // only a local path caches: any other item would have to be stat-ed here, on the GUI
++        // thread, every frame the preview is shown.
++        let cached_metadata = self.cached_metadata();
+@@ -689,6 +729,6 @@ impl Item {
+-            if let Ok(time) = metadata.modified() {
+-                details = details.push(widget::selectable_text::body(fl!(
+-                    "item-modified",
+-                    modified = format_time(time, &date_time_formatter, &time_formatter).to_string()
+-                )));
+-            }
++        if let Some(time) = cached_metadata.as_ref().and_then(|m| m.created().ok()) {
++            details = details.push(widget::selectable_text::body(fl!(
++                "item-created",
++                created = format_time(time, &date_time_formatter, &time_formatter).to_string()
++            )));
++        }
+@@ -696,6 +736,6 @@ impl Item {
+-            if let Ok(time) = metadata.accessed() {
+-                details = details.push(widget::selectable_text::body(fl!(
+-                    "item-accessed",
+-                    accessed = format_time(time, &date_time_formatter, &time_formatter).to_string()
+-                )));
+-            }
++        if let Some(time) = self.metadata.modified() {
++            details = details.push(widget::selectable_text::body(fl!(
++                "item-modified",
++                modified = format_time(time, &date_time_formatter, &time_formatter).to_string()
++            )));
++        }
+@@ -703,3 +743,6 @@ impl Item {
+-            #[cfg(unix)]
+-            if let Some(path) = self.path_opt() {
+-                use std::os::unix::fs::MetadataExt;
++        if let Some(time) = cached_metadata.as_ref().and_then(|m| m.accessed().ok()) {
++            details = details.push(widget::selectable_text::body(fl!(
++                "item-accessed",
++                accessed = format_time(time, &date_time_formatter, &time_formatter).to_string()
++            )));
++        }
+@@ -707 +750,5 @@ impl Item {
+-                let mode = metadata.mode();
++        #[cfg(unix)]
++        if let Some(metadata) = cached_metadata.as_ref()
++            && let Some(path) = self.path_opt()
++        {
++            use std::os::unix::fs::MetadataExt;
+@@ -709,22 +756 @@ impl Item {
+-                let user_name = uzers::get_user_by_uid(metadata.uid())
+-                    .and_then(|user| user.name().to_str().map(ToOwned::to_owned))
+-                    .unwrap_or_default();
+-                let user_path = path.clone();
+-                settings.push(
+-                    widget::settings::item::builder(user_name)
+-                        .description(fl!("owner"))
+-                        .control(widget::dropdown(
+-                            Cow::Borrowed(MODE_NAMES.as_slice()),
+-                            Some(get_mode_part(mode, MODE_SHIFT_USER).try_into().unwrap()),
+-                            move |selected| {
+-                                Message::SetPermissions(
+-                                    user_path.clone(),
+-                                    set_mode_part(
+-                                        mode,
+-                                        MODE_SHIFT_USER,
+-                                        selected.try_into().unwrap(),
+-                                    ),
+-                                )
+-                            },
+-                        )),
+-                );
++            let mode = metadata.mode();
+@@ -732,22 +758,18 @@ impl Item {
+-                let group_name = uzers::get_group_by_gid(metadata.gid())
+-                    .and_then(|group| group.name().to_str().map(ToOwned::to_owned))
+-                    .unwrap_or_default();
+-                let group_path = path.clone();
+-                settings.push(
+-                    widget::settings::item::builder(group_name)
+-                        .description(fl!("group"))
+-                        .control(widget::dropdown(
+-                            Cow::Borrowed(MODE_NAMES.as_slice()),
+-                            Some(get_mode_part(mode, MODE_SHIFT_GROUP).try_into().unwrap()),
+-                            move |selected| {
+-                                Message::SetPermissions(
+-                                    group_path.clone(),
+-                                    set_mode_part(
+-                                        mode,
+-                                        MODE_SHIFT_GROUP,
+-                                        selected.try_into().unwrap(),
+-                                    ),
+-                                )
+-                            },
+-                        )),
+-                );
++            let user_name = uzers::get_user_by_uid(metadata.uid())
++                .and_then(|user| user.name().to_str().map(ToOwned::to_owned))
++                .unwrap_or_default();
++            let user_path = path.clone();
++            settings.push(
++                widget::settings::item::builder(user_name)
++                    .description(fl!("owner"))
++                    .control(widget::dropdown(
++                        Cow::Borrowed(MODE_NAMES.as_slice()),
++                        Some(get_mode_part(mode, MODE_SHIFT_USER).try_into().unwrap()),
++                        move |selected| {
++                            Message::SetPermissions(
++                                user_path.clone(),
++                                set_mode_part(mode, MODE_SHIFT_USER, selected.try_into().unwrap()),
++                            )
++                        },
++                    )),
++            );
+@@ -755,3 +777,8 @@ impl Item {
+-                let other_path = path.clone();
+-                settings.push(widget::settings::item::builder(fl!("other")).control(
+-                    widget::dropdown(
++            let group_name = uzers::get_group_by_gid(metadata.gid())
++                .and_then(|group| group.name().to_str().map(ToOwned::to_owned))
++                .unwrap_or_default();
++            let group_path = path.clone();
++            settings.push(
++                widget::settings::item::builder(group_name)
++                    .description(fl!("group"))
++                    .control(widget::dropdown(
+@@ -759 +786 @@ impl Item {
+-                        Some(get_mode_part(mode, MODE_SHIFT_OTHER).try_into().unwrap()),
++                        Some(get_mode_part(mode, MODE_SHIFT_GROUP).try_into().unwrap()),
+@@ -762,2 +789,2 @@ impl Item {
+-                                other_path.clone(),
+-                                set_mode_part(mode, MODE_SHIFT_OTHER, selected.try_into().unwrap()),
++                                group_path.clone(),
++                                set_mode_part(mode, MODE_SHIFT_GROUP, selected.try_into().unwrap()),
+@@ -766,3 +793,16 @@ impl Item {
+-                    ),
+-                ));
+-            }
++                    )),
++            );
++
++            let other_path = path.clone();
++            settings.push(
++                widget::settings::item::builder(fl!("other")).control(widget::dropdown(
++                    Cow::Borrowed(MODE_NAMES.as_slice()),
++                    Some(get_mode_part(mode, MODE_SHIFT_OTHER).try_into().unwrap()),
++                    move |selected| {
++                        Message::SetPermissions(
++                            other_path.clone(),
++                            set_mode_part(mode, MODE_SHIFT_OTHER, selected.try_into().unwrap()),
++                        )
++                    },
++                )),
++            );
+@@ -771,4 +811 @@ impl Item {
+-        if let Some(path) = self.path_opt()
+-            && let Ok(img) = image::image_dimensions(path)
+-        {
+-            let (width, height) = img;
++        if let Some((width, height)) = self.image_dimensions {
+@@ -779,2 +816 @@ impl Item {
+-        if let Some(metadata) = self.file_metadata()
+-            && !metadata.is_dir()
++        if !self.metadata.is_dir()
+@@ -831,3 +867,8 @@ impl Item {
+-            column = column.push(
+-                widget::button::standard(fl!("open")).on_press(Message::Open(Some(path.clone()))),
+-            );
++            // Decide navigate-vs-open from cached metadata so Message::Open's handler never
++            // stats the path on the GUI thread.
++            let message = if self.metadata.is_dir() {
++                Message::Location(Location::Path(path.clone()))
++            } else {
++                Message::Open(Some(path.clone()))
++            };
++            column = column.push(widget::button::standard(fl!("open")).on_press(message));

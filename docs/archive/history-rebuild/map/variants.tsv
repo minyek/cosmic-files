@@ -1,0 +1,15 @@
+src_mime_icon.rs.diff	4	28	49	    (!guess.uncertain()).then(|| mime.clone())
+src_operation_mod.rs.diff	4	14	56	        Err(_) => {
+src_operation_mod.rs.diff	4	15	56	            log::error!("compio runtime spawn failed while building replace item");
+src_operation_mod.rs.diff	4	64	56	        .map_err(|_| io::Error::other("compio runtime spawn failed while renaming"))?
+src_app.rs.diff	40	20	55	                let mut dialog_paths = Vec::new();
+src_app.rs.diff	40	22	55	                    let can_trash = match path.metadata() {
+src_app.rs.diff	40	23	55	                        Ok(metadata) => matches!(FsKind::new(&metadata), FsKind::Local),
+src_app.rs.diff	22	1	36	    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+src_app.rs.diff	84	1	36	            Message::WatcherUpdated(mut watcher_wrapper, paths) => {
+src_app.rs.diff	84	3	36	                    let stale = paths != self.open_directory_paths();
+src_dialog.rs.diff	9	1	36	    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+src_dialog.rs.diff	55	1	36	            Message::WatcherUpdated(mut wrapper, paths) => {
+src_dialog.rs.diff	55	3	36	                    let stale = paths != self.watched_paths();
+src_watcher.rs.diff	1	47	36	        Ok(()) => (watcher, new_paths),
+src_app.rs.diff	40	21	55	                for path in paths {<NL>                    //TODO: is there a smarter way to check this? (like checking for trash folders)

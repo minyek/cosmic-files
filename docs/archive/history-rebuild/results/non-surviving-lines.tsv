@@ -1,0 +1,36 @@
+7ed6cb18	f3e3d05c	src/tab.rs	mechanical	user_ids.insert(metadata.uid());
+7ed6cb18	f3e3d05c	src/tab.rs	mechanical	group_ids.insert(metadata.gid());
+e4c7f6e8	68e40249	src/app.rs	issue-driven	.filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
+e4c7f6e8	8bce7259	src/dialog.rs	mechanical	use super::{App, Application, Config, Core, DialogKind, Flags, Message, window};
+68e40249	daf9714b	src/app.rs	mechanical	use super::{ListingChange, classify_events};
+68e40249	b1a1755f	src/tab.rs	issue-driven	folder_name, item_from_path, item_from_search_item, next_work_id,
+68e40249	1a7483b9	src/tab.rs	mechanical	use cosmic::iced::{Size, Subscription};
+68e40249	6f5e8903	src/tab.rs	mechanical	use super::{EntryRefresh, HeadingOptions, Message, Tab, respond_to_scroll_direction};
+68e40249	d369d0af	src/tab.rs	mechanical	ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail, item_from_entry,
+68e40249	d369d0af	src/tab.rs	mechanical	item_from_path,
+68e40249	6f5e8903	src/tab.rs	mechanical	use crate::location::Location;
+6f5e8903	aed63d1e	src/tab.rs	mechanical	use super::{EntryRefresh, HeadingOptions, Instant, Message, Tab, respond_to_scroll_direction};
+d369d0af	aed63d1e	src/tab.rs	mechanical	TEXT_PREVIEW_MAX_BYTES, item_from_entry, item_from_path,
+089c006b	766baa1a	src/menu.rs	issue-driven	let selected_desktop_entry = tab.items_opt().and_then(|items| lone_desktop_entry(items));
+089c006b	53682e14	src/menu.rs	mechanical	use super::lone_desktop_entry;
+089c006b	53682e14	src/menu.rs	mechanical	use crate::item::{Item, item_from_path};
+9f9b23c5	53682e14	src/app.rs	issue-driven	let mut dialog_paths = Vec::new();
+9f9b23c5	53682e14	src/app.rs	issue-driven	//TODO: is there a smarter way to check this? (like checking for trash folders)
+9f9b23c5	53682e14	src/app.rs	issue-driven	let can_trash = match path.metadata() {
+9f9b23c5	53682e14	src/app.rs	issue-driven	Ok(metadata) => matches!(FsKind::new(&metadata), FsKind::Local),
+9f9b23c5	53682e14	src/app.rs	issue-driven	return Self::delete(paths);
+53682e14	aed63d1e	src/app.rs	issue-driven	use crate::item::{Item, ItemMetadata, folder_icon_symbolic, item_from_path};
+aed63d1e	b1a1755f	src/app.rs	issue-driven	use crate::item::{Item, ItemMetadata, item_from_path};
+daf9714b	8b00c2dc	src/app.rs	mechanical	use super::{ListingChange, Mime, OpenTargets, classify_events};
+fe0359be	0a51cb04	src/app.rs	issue-driven	WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+fe0359be	0a51cb04	src/app.rs	issue-driven	Message::WatcherUpdated(mut watcher_wrapper, paths) => {
+fe0359be	0a51cb04	src/app.rs	issue-driven	let stale = paths != self.open_directory_paths();
+fe0359be	0a51cb04	src/dialog.rs	issue-driven	WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+fe0359be	0a51cb04	src/dialog.rs	issue-driven	Message::WatcherUpdated(mut wrapper, paths) => {
+fe0359be	0a51cb04	src/dialog.rs	issue-driven	let stale = paths != self.watched_paths();
+fe0359be	0a51cb04	src/watcher.rs	issue-driven	Ok(()) => (watcher, new_paths),
+46b2a47d	1e79d06f	src/app.rs	issue-driven	if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
+8b00c2dc	edbdaa76	src/app.rs	mechanical	classify_events, retry_extract_with_password,
+0ef0e332	22f9ef3a	src/operation/mod.rs	issue-driven	Err(_) => {
+0ef0e332	22f9ef3a	src/operation/mod.rs	issue-driven	log::error!("compio runtime spawn failed while building replace item");
+824fcbb2	22f9ef3a	src/operation/mod.rs	issue-driven	.map_err(|_| io::Error::other("compio runtime spawn failed while renaming"))?

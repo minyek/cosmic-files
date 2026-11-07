@@ -1,0 +1,9 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 29b6672..1da6363 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -28,0 +29 @@ paste = "1.0"
++rayon = "1"
+@@ -71 +72 @@ bstr = "1.12.1"
+-version = "0.18"
++version = "0.19"

@@ -1,0 +1,11 @@
+3	needs	5	tab.rs refresh_requests/refresh_entries gate on ItemState.work_id and next_work_id (item/state.rs)
+4	needs	5	DirectoryChildren(path, children, work_id) is applied only when item.state.work_id matches
+15	needs	5	stale_thumbnail_dimensions_cannot_populate_a_replacement relies on the work id
+19	needs	5	menu.rs DesktopEntryActions id = next_work_id(); DesktopEntryParsed checked against item.state.work_id
+2	needs	48	trash/gvfs.rs: is_symlink_dir reads trashed_path_opt, which #48 introduces
+12	needs	13	TrashState uses crate::navigation::PendingRequest (src/navigation.rs); owner not confirmed, may be another issue that first adds navigation.rs
+50	needs	49	mime_for_file_info falls back to mime_for_path(name, None, true), whose remote name-only guess #49 fixes (zero-size placeholder)
+55	needs	54	TESTING.md line 1 is rewritten by #54 and extended by #55; menu.rs delete_menu_entry (#54) becomes delete_entry_of (#55)
+2	adjacent	4	item_from_entry hunks 9-12 interleave the is_symlink_dir and child-count changes
+2	adjacent	50	mounter/gvfs.rs shares the network_scan and tests mod with #50
+16	adjacent	15	item/mod.rs preview pane hunks 16-33 interleave cached_metadata (#16) and image_dimensions (#15)

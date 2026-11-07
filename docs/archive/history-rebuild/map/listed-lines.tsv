@@ -1,0 +1,22 @@
+# adding-sha8	path	kind	issue	reason	exact stripped line
+e4c7f6e8	src/app.rs	issue-driven	3	#35's form from 3d7f065; #3 classifies events and refreshes changed entries	.filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
+68e40249	src/tab.rs	issue-driven	30	#30 builds the item in a task, so tab.rs stops importing item_from_path	folder_name, item_from_path, item_from_search_item, next_work_id,
+089c006b	src/menu.rs	issue-driven	19	#51's form from 6ea68d5; #19 replaces it with one parse per context menu	let selected_desktop_entry = tab.items_opt().and_then(|items| lone_desktop_entry(items));
+9f9b23c5	src/app.rs	issue-driven	55	#14's form from 66dac3f; #55 seeds the dialog list with the caller's paths	let mut dialog_paths = Vec::new();
+9f9b23c5	src/app.rs	issue-driven	55	#14's form from 66dac3f keeps upstream's TODO; #55 removes it (d70f661)	//TODO: is there a smarter way to check this? (like checking for trash folders)
+9f9b23c5	src/app.rs	issue-driven	55	#14's form (upstream's metadata check); #55 classifies with symlink_metadata	let can_trash = match path.metadata() {
+9f9b23c5	src/app.rs	issue-driven	55	#14's form (upstream's FsKind check, re-indented); #55 decides by item::can_trash	Ok(metadata) => matches!(FsKind::new(&metadata), FsKind::Local),
+9f9b23c5	src/app.rs	issue-driven	55	#14's form from 66dac3f; #55 seeds the dialog list with the caller's paths	return Self::delete(paths);
+53682e14	src/app.rs	issue-driven	13	#13 calls crate::item::folder_icon_symbolic path-qualified for favourites	use crate::item::{Item, ItemMetadata, folder_icon_symbolic, item_from_path};
+aed63d1e	src/app.rs	issue-driven	30	#30 builds the item in a task, so app.rs stops importing item_from_path	use crate::item::{Item, ItemMetadata, item_from_path};
+fe0359be	src/app.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 adds the requested set	WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+fe0359be	src/app.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 adds the requested set	Message::WatcherUpdated(mut watcher_wrapper, paths) => {
+fe0359be	src/app.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 compares against the requested set	let stale = paths != self.open_directory_paths();
+fe0359be	src/dialog.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 adds the requested set	WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+fe0359be	src/dialog.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 adds the requested set	Message::WatcherUpdated(mut wrapper, paths) => {
+fe0359be	src/dialog.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 compares against the requested set	let stale = paths != self.watched_paths();
+fe0359be	src/watcher.rs	issue-driven	36	#27's form from f80f57df (app.rs also a4a0c806); #36 returns the registered set	Ok(()) => (watcher, new_paths),
+46b2a47d	src/app.rs	issue-driven	17	#17 restructures the sidebar menu, moving and re-indenting the empty-Trash entry	if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
+0ef0e332	src/operation/mod.rs	issue-driven	56	#34's compio 0.18 form from 66dac3f; compio 0.19 reports the JoinError, which #56 logs	Err(_) => {
+0ef0e332	src/operation/mod.rs	issue-driven	56	#34's compio 0.18 form from 66dac3f; compio 0.19 reports the JoinError, which #56 logs	log::error!("compio runtime spawn failed while building replace item");
+824fcbb2	src/operation/mod.rs	issue-driven	56	#42's compio 0.18 form from 66dac3f; #56 formats the JoinError	.map_err(|_| io::Error::other("compio runtime spawn failed while renaming"))?

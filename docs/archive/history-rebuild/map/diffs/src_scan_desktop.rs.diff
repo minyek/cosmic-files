@@ -1,0 +1,6 @@
+diff --git a/src/scan/desktop.rs b/src/scan/desktop.rs
+index 481cecc..822beda 100644
+--- a/src/scan/desktop.rs
++++ b/src/scan/desktop.rs
+@@ -82,0 +83 @@ pub fn scan_desktop(
++            is_symlink_dir: false,
