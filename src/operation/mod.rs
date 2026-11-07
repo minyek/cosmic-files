@@ -20,6 +20,9 @@ use crate::{archive, fl};
 pub use self::controller::{Controller, ControllerState};
 pub mod controller;
 
+#[cfg(all(test, unix))]
+mod test_faults;
+
 pub use notifiers::*;
 mod notifiers;
 
@@ -748,7 +751,9 @@ impl Operation {
                                 }
 
                                 archive
-                                    .finish()
+                                    .into_inner()
+                                    .and_then(flate2::write::GzEncoder::finish)
+                                    .and_then(|mut writer| writer.flush())
                                     .map_err(|e| OperationError::from_err(e, &controller))?;
                             }
                             ArchiveType::Zip => {
@@ -849,6 +854,8 @@ impl Operation {
 
                                 archive
                                     .finish()
+                                    .map_err(|e| OperationError::from_err(e, &controller))?
+                                    .flush()
                                     .map_err(|e| OperationError::from_err(e, &controller))?;
                             }
                         }
@@ -1386,6 +1393,71 @@ mod tests {
     #[test(compio::test)]
     async fn failed_tgz_leaves_no_destination() -> io::Result<()> {
         compress_missing_source(crate::app::ArchiveType::Tgz).await
+    }
+
+    #[cfg(unix)]
+    async fn compress_finalization_failure(
+        archive_type: crate::app::ArchiveType,
+        test_name: &str,
+    ) -> io::Result<()> {
+        if let Some(dir) = super::test_faults::child_directory() {
+            let (tx, mut rx) = mpsc::channel(1);
+            let operation = Operation::Compress {
+                paths: Vec::new(),
+                to: dir.join(format!("archive{}", archive_type.extension())),
+                archive_type,
+                password: None,
+            };
+            let run = async move {
+                operation
+                    .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                    .await
+            };
+            let drain = async move { while rx.next().await.is_some() {} };
+            let err = future::join(run, drain)
+                .await
+                .0
+                .expect_err("archive finalization should report the write failure");
+            assert!(
+                err.to_string()
+                    .contains(&io::Error::from_raw_os_error(libc::EFBIG).to_string()),
+                "unexpected compression error: {err}"
+            );
+            return Ok(());
+        }
+
+        let dir = empty_fs()?;
+        super::test_faults::run_child(
+            test_name,
+            dir.path(),
+            super::test_faults::Fault::FileSizeLimit,
+        )?;
+        assert_eq!(
+            fs::read_dir(dir.path())?.count(),
+            0,
+            "failed finalization left a destination or staging file"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn zip_finalization_failure_leaves_no_destination_or_staging_file() -> io::Result<()> {
+        compress_finalization_failure(
+            crate::app::ArchiveType::Zip,
+            "zip_finalization_failure_leaves_no_destination_or_staging_file",
+        )
+        .await
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn tgz_finalization_failure_leaves_no_destination_or_staging_file() -> io::Result<()> {
+        compress_finalization_failure(
+            crate::app::ArchiveType::Tgz,
+            "tgz_finalization_failure_leaves_no_destination_or_staging_file",
+        )
+        .await
     }
 
     async fn compress_cancelled(archive_type: crate::app::ArchiveType) -> io::Result<()> {
