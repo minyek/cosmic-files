@@ -18,9 +18,11 @@ struct MimeIconKey {
 #[derive(Default)]
 pub struct MimeIconCache {
     cache: FxHashMap<MimeIconKey, Option<icon::Handle>>,
-    #[cfg(unix)]
-    pub shared_mime_info: xdg_mime::SharedMimeInfo,
 }
+
+#[cfg(unix)]
+pub(crate) static SHARED_MIME_INFO: LazyLock<xdg_mime::SharedMimeInfo> =
+    LazyLock::new(xdg_mime::SharedMimeInfo::new);
 
 impl MimeIconCache {
     #[cfg(not(unix))]
@@ -33,7 +35,7 @@ impl MimeIconCache {
         self.cache
             .entry(key)
             .or_insert_with_key(|key| {
-                let mut icon_names = self.shared_mime_info.lookup_icon_names(&key.mime);
+                let mut icon_names = SHARED_MIME_INFO.lookup_icon_names(&key.mime);
                 if icon_names.is_empty() {
                     return None;
                 }
@@ -69,21 +71,20 @@ pub fn mime_for_path(
     remote: bool,
 ) -> Mime {
     let path = path.as_ref();
-    let mime_icon_cache = MIME_ICON_CACHE.lock().unwrap();
     // Try the shared mime info cache first
-    let mut gb = mime_icon_cache.shared_mime_info.guess_mime_type();
-    gb.zero_size(false);
+    let mut guess_builder = SHARED_MIME_INFO.guess_mime_type();
+    guess_builder.zero_size(false);
     if remote {
         if let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) {
-            gb.file_name(file_name);
+            guess_builder.file_name(file_name);
         }
     } else {
-        gb.path(path);
+        guess_builder.path(path);
     }
     if let Some(metadata) = metadata_opt {
-        gb.metadata(metadata.clone());
+        guess_builder.metadata(metadata.clone());
     }
-    let guess = gb.guess();
+    let guess = guess_builder.guess();
     let guessed_mime = guess.mime_type();
 
     /// Checks if the `Mime` is a special variant returned by `xdg-mime`.
@@ -121,14 +122,30 @@ pub fn parent_mime_types(_mime: &Mime) -> Option<Vec<Mime>> {
 
 #[cfg(unix)]
 pub fn parent_mime_types(mime: &Mime) -> Option<Vec<Mime>> {
-    let mime_icon_cache = MIME_ICON_CACHE.lock().unwrap();
-    mime_icon_cache.shared_mime_info.get_parents_aliased(mime)
+    SHARED_MIME_INFO.get_parents_aliased(mime)
 }
 
+#[cfg(unix)]
 pub fn is_mime_subclass_of(mime_type: &Mime, base: &Mime) -> bool {
-    let mime_icon_cache = MIME_ICON_CACHE.lock().unwrap();
+    SHARED_MIME_INFO.mime_type_subclass(mime_type, base)
+}
 
-    mime_icon_cache
-        .shared_mime_info
-        .mime_type_subclass(mime_type, base)
+#[cfg(not(unix))]
+pub fn is_mime_subclass_of(mime_type: &Mime, base: &Mime) -> bool {
+    mime_type == base
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+
+    use super::mime_for_path;
+
+    #[test]
+    fn mime_queries_can_run_while_the_icon_cache_is_in_use() {
+        let _icons = super::MIME_ICON_CACHE.lock().unwrap();
+        let mime = mime_for_path("notes.txt", None, true);
+        assert_eq!(mime, "text/plain");
+        assert!(super::is_mime_subclass_of(&mime, &mime));
+        let _ = super::parent_mime_types(&mime);
+    }
 }
