@@ -77,7 +77,6 @@ use crate::mounter::{
 };
 use crate::operation::{
     Controller, Operation, OperationError, OperationErrorType, OperationSelection, ReplaceResult,
-    copy_unique_path,
 };
 use crate::spawn_detached::spawn_detached;
 use crate::tab::{self, HOVER_DURATION, HeadingOptions, SORT_OPTION_FALLBACK, Tab};
@@ -406,6 +405,39 @@ impl OpenTargets {
         }
         Self::ByMime(groups)
     }
+}
+
+fn write_unique_file(to: &Path, name: &str, data: &[u8]) -> io::Result<PathBuf> {
+    use std::io::Write;
+
+    let name_path = Path::new(name);
+    let stem = name_path.file_stem().unwrap_or_default().to_string_lossy();
+    let extension = name_path.extension().map(|value| value.to_string_lossy());
+    for index in 0u64.. {
+        let candidate = if index == 0 {
+            name.to_string()
+        } else {
+            let copied = format!("{stem} ({} {index})", fl!("copy_noun"));
+            extension.as_ref().map_or_else(
+                || copied.clone(),
+                |extension| format!("{copied}.{extension}"),
+            )
+        };
+        let path = to.join(candidate);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(data)?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::other("failed to allocate a pasted file name"))
 }
 
 /// Messages that are used specifically by our [`App`].
@@ -1882,6 +1914,26 @@ impl App {
                     cosmic::action::none()
                 }
             }
+        })
+    }
+
+    fn write_pasted_file(
+        to: PathBuf,
+        base_name: String,
+        data: impl AsRef<[u8]> + Send + 'static,
+        label: &'static str,
+    ) -> Task<Message> {
+        Task::future(async move {
+            match tokio::task::spawn_blocking(move || {
+                write_unique_file(&to, &base_name, data.as_ref())
+            })
+            .await
+            {
+                Ok(Ok(path)) => log::info!("pasted {label} saved to {}", path.display()),
+                Ok(Err(err)) => log::error!("failed to save pasted {label}: {err}"),
+                Err(err) => log::error!("failed to save pasted {label}: {err}"),
+            }
+            cosmic::action::none()
         })
     }
 
@@ -4212,18 +4264,7 @@ impl Application for App {
 
                 // Generate unique filename for the pasted image
                 let base_name = format!("{}.{}", fl!("pasted-image"), extension);
-                let base_path = to.join(&base_name);
-                let final_path = copy_unique_path(&base_path, &to);
-
-                // Write image data to file
-                match fs::write(&final_path, &contents.data) {
-                    Ok(_) => {
-                        log::info!("Pasted image saved to {:?}", final_path);
-                    }
-                    Err(err) => {
-                        log::error!("Failed to save pasted image: {}", err);
-                    }
-                }
+                return Self::write_pasted_file(to, base_name, contents.data, "image");
             }
             Message::PasteVideo(to) => {
                 return clipboard::read_data::<ClipboardPasteVideo>().map(move |contents_opt| {
@@ -4247,18 +4288,7 @@ impl Application for App {
 
                 // Generate unique filename for the pasted video
                 let base_name = format!("{}.{}", fl!("pasted-video"), extension);
-                let base_path = to.join(&base_name);
-                let final_path = copy_unique_path(&base_path, &to);
-
-                // Write video data to file
-                match fs::write(&final_path, &contents.data) {
-                    Ok(_) => {
-                        log::info!("Pasted video saved to {:?}", final_path);
-                    }
-                    Err(err) => {
-                        log::error!("Failed to save pasted video: {}", err);
-                    }
-                }
+                return Self::write_pasted_file(to, base_name, contents.data, "video");
             }
             Message::PasteText(to) => {
                 return clipboard::read_data::<ClipboardPasteText>().map(move |contents_opt| {
@@ -4273,18 +4303,7 @@ impl Application for App {
             Message::PasteTextContents(to, contents) => {
                 // Generate unique filename for the pasted text
                 let base_name = format!("{}.txt", fl!("pasted-text"));
-                let base_path = to.join(&base_name);
-                let final_path = copy_unique_path(&base_path, &to);
-
-                // Write text data to file
-                match fs::write(&final_path, &contents.data) {
-                    Ok(_) => {
-                        log::info!("Pasted text saved to {:?}", final_path);
-                    }
-                    Err(err) => {
-                        log::error!("Failed to save pasted text: {}", err);
-                    }
-                }
+                return Self::write_pasted_file(to, base_name, contents.data, "text");
             }
             Message::CheckClipboard => {
                 // Check if clipboard has any paste-able content and cache it
@@ -7935,6 +7954,39 @@ mod tests {
             OpenTargets::ByMime(groups) => assert_eq!(groups.len(), 2),
             OpenTargets::Archives(_) => panic!("a text file is not an archive"),
         }
+    }
+
+    #[test]
+    fn pasted_files_preserve_existing_content() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let first = super::write_unique_file(dir.path(), "pasted.txt", b"first")?;
+        let second = super::write_unique_file(dir.path(), "pasted.txt", b"second")?;
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first)?, b"first");
+        assert_eq!(std::fs::read(second)?, b"second");
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_pastes_keep_both_payloads() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let barrier = std::sync::Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                super::write_unique_file(dir.path(), "pasted.txt", b"first")
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                super::write_unique_file(dir.path(), "pasted.txt", b"second")
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        let (first, second) = (first?, second?);
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first)?, b"first");
+        assert_eq!(std::fs::read(second)?, b"second");
+        Ok(())
     }
 
     fn test_app(dir: &tempfile::TempDir) -> super::App {
