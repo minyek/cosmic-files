@@ -247,7 +247,7 @@ fn context_menu_items(
         ) => {
             if selected_trash_only {
                 children.push(menu_item(fl!("open"), Action::Open));
-                if !Trash::is_empty() {
+                if !Trash::is_empty_cached() {
                     children.push(menu_item(fl!("empty-trash"), Action::EmptyTrash));
                 }
             } else if let Some(snapshot) = desktop_actions {
