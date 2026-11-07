@@ -40,7 +40,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 use walkdir::WalkDir;
 
-use crate::app::{Action, PreviewItem, PreviewKind};
+use crate::app::{Action, PreviewKind};
 use crate::clipboard::{ClipboardCopy, ClipboardKind, ClipboardPaste};
 use crate::config::{
     ContextActionPreset, ICON_SCALE_MAX, ICON_SIZE_GRID, IconSizes, TabConfig, ThumbCfg,
@@ -49,7 +49,7 @@ use crate::dialog::DialogKind;
 use crate::format_time::{FormatTime, date_time_formatter, format_time, time_formatter};
 use crate::item::{
     ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail, SearchItem,
-    folder_name, item_from_path, item_from_search_item, next_work_id,
+    folder_name, item_from_search_item, next_work_id,
 };
 use crate::large_image::{
     LargeImageManager, decode_large_image, should_use_dedicated_worker, should_use_tiling,
@@ -371,6 +371,7 @@ pub enum Command {
     OpenTrash,
     ParseDesktopEntry(PathBuf, u64),
     Preview(PreviewKind),
+    PreviewPath(PathBuf),
     RunContextAction(usize),
     SetOpenWith(Mime, String),
     SetPermissions(PathBuf, u32),
@@ -1716,21 +1717,9 @@ impl Tab {
                     }
                     LocationMenuAction::Preview(ancestor_index) => {
                         if let Some(path) = path_for_index(ancestor_index) {
-                            //TODO: blocking code, run in command
-                            match item_from_path(&path, IconSizes::default()) {
-                                Ok(item) => {
-                                    commands.push(Command::Preview(PreviewKind::Custom(
-                                        PreviewItem(Box::new(item)),
-                                    )));
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "failed to get item from path {}: {}",
-                                        path.display(),
-                                        err
-                                    );
-                                }
-                            }
+                            // Building the ancestor's Item stats it; Command::PreviewPath does
+                            // that off-thread so a slow mount cannot freeze the GUI.
+                            commands.push(Command::PreviewPath(path));
                         }
                     }
                     LocationMenuAction::AddToSidebar(ancestor_index) => {
