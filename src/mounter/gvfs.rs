@@ -23,11 +23,24 @@ const TARGET_URI_ATTRIBUTE: &str = "standard::target-uri";
 const SCAN_ATTRIBUTES: &str = "standard::name,\
 standard::display-name,\
 standard::type,\
+standard::content-type,\
 standard::size,\
 standard::icon,\
 standard::is-hidden,\
 standard::is-symlink,\
 time::modified";
+
+fn mime_for_file_info(info: &gio::FileInfo, force_dir: bool) -> mime_guess::Mime {
+    if force_dir || matches!(info.file_type(), gio::FileType::Directory) {
+        return "inode/directory".parse().unwrap();
+    }
+
+    info.has_attribute(gio::FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE)
+        .then(|| info.content_type())
+        .flatten()
+        .and_then(|content_type| content_type.as_str().parse().ok())
+        .unwrap_or_else(|| crate::mime_icon::mime_for_path(info.name(), None, true))
+}
 
 fn resolve_uri(uri: &str) -> (String, gio::File) {
     let file = gio::File::for_uri(uri);
@@ -213,8 +226,7 @@ fn network_scan(uri: &str, sizes: IconSizes) -> Result<Vec<Item>, String> {
                     )
             };
             (
-                //TODO: get mime from content_type?
-                "inode/directory".parse().unwrap(),
+                mime_for_file_info(&info, force_dir),
                 file_icon(sizes.grid()),
                 file_icon(sizes.list()),
                 file_icon(sizes.list_condensed()),
@@ -809,6 +821,64 @@ impl Mounter for Gvfs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file_info(
+        file_type: gio::FileType,
+        name: &str,
+        content_type: Option<&str>,
+    ) -> gio::FileInfo {
+        let info = gio::FileInfo::new();
+        info.set_file_type(file_type);
+        info.set_name(name);
+        if let Some(content_type) = content_type {
+            info.set_content_type(content_type);
+        }
+        info
+    }
+
+    #[test]
+    fn regular_file_uses_gio_content_type() {
+        let info = file_info(gio::FileType::Regular, "misleading.bin", Some("text/plain"));
+
+        assert_eq!(mime_for_file_info(&info, false).to_string(), "text/plain");
+    }
+
+    #[test]
+    fn directory_uses_directory_mime() {
+        let info = file_info(gio::FileType::Directory, "folder.txt", Some("text/plain"));
+
+        assert_eq!(
+            mime_for_file_info(&info, false).to_string(),
+            "inode/directory"
+        );
+    }
+
+    #[test]
+    fn forced_directory_uses_directory_mime() {
+        let info = file_info(gio::FileType::Regular, "network-entry.txt", None);
+
+        assert_eq!(
+            mime_for_file_info(&info, true).to_string(),
+            "inode/directory"
+        );
+    }
+
+    #[test]
+    fn regular_file_without_content_type_uses_name() {
+        let text = file_info(gio::FileType::Regular, "notes.txt", None);
+
+        assert_eq!(mime_for_file_info(&text, false).to_string(), "text/plain");
+    }
+
+    #[test]
+    fn unknown_regular_file_falls_back_to_octet_stream() {
+        let unknown = file_info(gio::FileType::Regular, "payload.unknown-extension", None);
+
+        assert_eq!(
+            mime_for_file_info(&unknown, false).to_string(),
+            "application/octet-stream"
+        );
+    }
 
     #[cfg(unix)]
     #[test]
