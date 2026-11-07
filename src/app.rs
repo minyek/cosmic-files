@@ -567,6 +567,7 @@ pub enum Message {
     Undo(usize),
     UndoTrash(widget::ToastId, Arc<[PathBuf]>),
     UndoTrashStart(Vec<TrashItem>),
+    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
     WindowClose,
     WindowCloseRequested(window::Id),
     WindowMaximize(window::Id, bool),
@@ -868,6 +869,9 @@ pub struct App {
         Debouncer<RecommendedWatcher, RecommendedCache>,
         FxHashSet<PathBuf>,
     )>,
+    // Set when update_watcher is called while a watch update is already running off-thread, so
+    // the watched-path set is reconciled once the in-flight update finishes.
+    watcher_update_pending: bool,
     windows: FxHashMap<window::Id, Window>,
     nav_dnd_hover: Option<(Location, Instant)>,
     tab_dnd_hover: Option<(Entity, Instant)>,
@@ -2054,6 +2058,17 @@ impl App {
         }
     }
 
+    /// The directories the open tabs show — the set the watcher should be watching.
+    fn open_directory_paths(&self) -> FxHashSet<PathBuf> {
+        self.tab_model
+            .iter()
+            .filter_map(|entity| {
+                let tab = self.tab_model.data::<Tab>(entity)?;
+                tab.location.path_opt().cloned()
+            })
+            .collect()
+    }
+
     fn leave_unmounted_paths(&mut self, unmounted: &[PathBuf]) -> Task<Message> {
         let mut commands = Vec::new();
         {
@@ -2089,49 +2104,35 @@ impl App {
     }
 
     fn update_watcher(&mut self) -> Task<Message> {
-        if let Some((mut watcher, old_paths)) = self.watcher_opt.take() {
-            let new_paths: FxHashSet<_> = self
-                .tab_model
-                .iter()
-                .filter_map(|entity| {
-                    let tab = self.tab_model.data::<Tab>(entity)?;
-                    tab.location.path_opt().cloned()
-                })
-                .collect();
+        let Some((watcher, old_paths)) = self.watcher_opt.take() else {
+            // A watch update is already running off-thread; reconcile once it finishes.
+            self.watcher_update_pending = true;
+            return Task::none();
+        };
 
-            // Unwatch paths no longer used
-            for path in &old_paths {
-                if !new_paths.contains(path) {
-                    match watcher.unwatch(path) {
-                        Ok(()) => {
-                            log::debug!("unwatching {}", path.display());
-                        }
-                        Err(err) => {
-                            log::debug!("failed to unwatch {}: {}", path.display(), err);
-                        }
-                    }
+        let new_paths = self.open_directory_paths();
+
+        // watch()/unwatch() call inotify_add_watch, which resolves the path and blocks on a
+        // cold/slow mount; run them off-thread and restore the watcher in WatcherUpdated.
+        Task::future(async move {
+            let watcher = tokio::task::spawn_blocking(move || {
+                crate::watcher::reconcile(watcher, old_paths, new_paths)
+            })
+            .await;
+
+            match watcher {
+                Ok((watcher, new_paths)) => cosmic::action::app(Message::WatcherUpdated(
+                    WatcherWrapper {
+                        watcher_opt: Some(watcher),
+                    },
+                    new_paths,
+                )),
+                Err(err) => {
+                    log::warn!("failed to update watcher: {err}");
+                    cosmic::action::none()
                 }
             }
-
-            // Watch new paths
-            for path in &new_paths {
-                if !old_paths.contains(path) {
-                    match watcher.watch(path, notify::RecursiveMode::NonRecursive) {
-                        Ok(()) => {
-                            log::debug!("watching {}", path.display());
-                        }
-                        Err(err) => {
-                            log::debug!("failed to watch {}: {}", path.display(), err);
-                        }
-                    }
-                }
-            }
-
-            self.watcher_opt = Some((watcher, new_paths));
-        }
-
-        //TODO: should any of this run in a command?
-        Task::none()
+        })
     }
 
     fn network_drive(&self) -> Element<'_, Message> {
@@ -2661,6 +2662,7 @@ impl Application for App {
             surface_names: FxHashMap::default(),
             toasts: widget::toaster::Toasts::new(Message::CloseToast),
             watcher_opt: None,
+            watcher_update_pending: false,
             windows: FxHashMap::default(),
             nav_dnd_hover: None,
             tab_dnd_hover: None,
@@ -3859,6 +3861,16 @@ impl Application for App {
                     log::warn!("message did not contain notify watcher");
                 }
             },
+            Message::WatcherUpdated(mut watcher_wrapper, paths) => {
+                if let Some(watcher) = watcher_wrapper.watcher_opt.take() {
+                    let stale = paths != self.open_directory_paths();
+                    self.watcher_opt = Some((watcher, paths));
+                    if self.watcher_update_pending || stale {
+                        self.watcher_update_pending = false;
+                        return self.update_watcher();
+                    }
+                }
+            }
             Message::OpenTerminal(entity_opt) => {
                 if let Some(terminal) = self.mime_app_cache.terminal() {
                     let mut paths = Box::from([]);
