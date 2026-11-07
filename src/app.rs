@@ -564,6 +564,7 @@ pub enum Message {
     ToggleContextPage(ContextPage),
     ToggleFoldersFirst,
     ToggleShowHidden,
+    TrashStateRefreshed(widget::Id, bool),
     Undo(usize),
     UndoTrash(widget::ToastId, Arc<[PathBuf]>),
     UndoTrashStart(Vec<TrashItem>),
@@ -1752,6 +1753,21 @@ impl App {
         Task::batch(commands)
     }
 
+    fn refresh_trash_state() -> Task<Message> {
+        let request = Trash::begin_refresh();
+        Task::future(async move {
+            match tokio::task::spawn_blocking(Trash::is_empty).await {
+                Ok(is_empty) => {
+                    cosmic::action::app(Message::TrashStateRefreshed(request, is_empty))
+                }
+                Err(err) => {
+                    log::warn!("failed to read trash state: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
     fn rescan_recents(&mut self) -> Task<Message> {
         let needs_reload: Box<[_]> = self
             .tab_model
@@ -2700,7 +2716,12 @@ impl Application for App {
             layer_sizes: FxHashMap::default(),
         };
 
-        let mut commands = vec![app.update_config(), app.update(Message::CheckClipboard)];
+        let mut commands = vec![
+            app.update_config(),
+            app.update(Message::CheckClipboard),
+            // Compute the trash empty/full state off-thread so the nav icon never blocks init.
+            App::refresh_trash_state(),
+        ];
 
         // Resolving each launch location stats it (a file argument opens its parent with the
         // file selected), which blocks init on a slow mount; do it off-thread and open the
@@ -2877,7 +2898,7 @@ impl Application for App {
                 ));
             }
 
-            if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty() {
+            if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
                 items.push(cosmic::widget::menu::Item::Button(
                     fl!("empty-trash"),
                     None,
@@ -4417,7 +4438,18 @@ impl Application for App {
                 return self.rescan_recents();
             }
             Message::RescanTrash => {
-                // Update trash icon if empty/full
+                // Refresh the cached state off-thread (Message::TrashStateRefreshed repaints the icon)
+                // and rescan tabs.
+                return Task::batch([
+                    Self::refresh_trash_state(),
+                    self.rescan_trash(),
+                    self.update_desktop(),
+                ]);
+            }
+            Message::TrashStateRefreshed(request, is_empty) => {
+                if !Trash::finish_refresh(&request, is_empty) {
+                    return Task::none();
+                }
                 let maybe_entity = self.nav_model.iter().find(|&entity| {
                     self.nav_model
                         .data::<Location>(entity)
@@ -4427,8 +4459,6 @@ impl Application for App {
                     self.nav_model
                         .icon_set(entity, icon::icon(Trash::icon_symbolic(16)));
                 }
-
-                return Task::batch([self.rescan_trash(), self.update_desktop()]);
             }
             Message::Rename(entity_opt) => {
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
