@@ -567,7 +567,7 @@ pub enum Message {
     Undo(usize),
     UndoTrash(widget::ToastId, Arc<[PathBuf]>),
     UndoTrashStart(Vec<TrashItem>),
-    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>, FxHashSet<PathBuf>),
     WindowClose,
     WindowCloseRequested(window::Id),
     WindowMaximize(window::Id, bool),
@@ -2115,6 +2115,7 @@ impl App {
         // watch()/unwatch() call inotify_add_watch, which resolves the path and blocks on a
         // cold/slow mount; run them off-thread and restore the watcher in WatcherUpdated.
         Task::future(async move {
+            let requested = new_paths.clone();
             let watcher = tokio::task::spawn_blocking(move || {
                 crate::watcher::reconcile(watcher, old_paths, new_paths)
             })
@@ -2126,6 +2127,7 @@ impl App {
                         watcher_opt: Some(watcher),
                     },
                     new_paths,
+                    requested,
                 )),
                 Err(err) => {
                     log::warn!("failed to update watcher: {err}");
@@ -3861,9 +3863,9 @@ impl Application for App {
                     log::warn!("message did not contain notify watcher");
                 }
             },
-            Message::WatcherUpdated(mut watcher_wrapper, paths) => {
+            Message::WatcherUpdated(mut watcher_wrapper, paths, requested) => {
                 if let Some(watcher) = watcher_wrapper.watcher_opt.take() {
-                    let stale = paths != self.open_directory_paths();
+                    let stale = requested != self.open_directory_paths();
                     self.watcher_opt = Some((watcher, paths));
                     if self.watcher_update_pending || stale {
                         self.watcher_update_pending = false;
@@ -7931,6 +7933,32 @@ mod tests {
             .status()?;
         assert!(status.success());
         assert!(profile.path().join("drained").is_file());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_watch_does_not_resubmit_without_a_new_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("missing");
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        app.tab_model
+            .data_mut::<crate::tab::Tab>(entity)
+            .unwrap()
+            .location = crate::location::Location::Path(path);
+        let watcher = notify_debouncer_full::new_debouncer(
+            std::time::Duration::from_millis(100),
+            None,
+            |_events| {},
+        )
+        .unwrap();
+        app.watcher_opt = Some((watcher, Default::default()));
+        app.watcher_update_pending = false;
+        let result = task_result(app.update_watcher()).await;
+        let followup = app.update(result);
+        assert_eq!(followup.units(), 0);
+        assert!(app.watcher_opt.as_ref().unwrap().1.is_empty());
         Ok(())
     }
 
