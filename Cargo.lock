@@ -1402,6 +1402,7 @@ dependencies = [
  "paste",
  "png 0.18.1",
  "procfs",
+ "rayon",
  "recently-used-xbel",
  "regex",
  "rust-embed",
