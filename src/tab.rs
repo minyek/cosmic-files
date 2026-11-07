@@ -25,7 +25,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
@@ -596,6 +596,9 @@ impl fmt::Debug for SearchContextWrapper {
     }
 }
 
+/// Heading to sort by, ascending flag, and whether folders are grouped first.
+pub(crate) type SortOptions = (HeadingOptions, bool, bool);
+
 // TODO when creating items, pass <Arc<SelectedItems>> to each item
 // as a drag data, so that when dnd is initiated, they are all included
 pub struct Tab {
@@ -622,6 +625,7 @@ pub struct Tab {
     pub gallery: bool,
     pub(crate) parent_item_opt: Option<Box<Item>>,
     pub(crate) items_opt: Option<Vec<Item>>,
+    sort_cache: RefCell<Option<(SortOptions, Vec<usize>)>>,
     /// Directories whose child count could not be read, so it is not asked for again.
     children_count_failed: FxHashSet<PathBuf>,
     pub(crate) scans: crate::scan::ScanState,
@@ -728,6 +732,7 @@ impl Tab {
             gallery: false,
             parent_item_opt: None,
             items_opt: None,
+            sort_cache: RefCell::new(None),
             children_count_failed: FxHashSet::default(),
             scans: crate::scan::ScanState::default(),
             scrollable_id,
@@ -779,6 +784,7 @@ impl Tab {
                 }
             }
         }
+        self.sort_cache.get_mut().take();
         self.children_count_failed.clear();
         self.items_opt = Some(items);
         if let Some(i) = highlighted
@@ -811,6 +817,9 @@ impl Tab {
             .map(|refresh| (refresh.path.clone(), refresh))
             .collect();
         let mut complete = true;
+        let mut refreshed_any = false;
+        let mut type_changed = false;
+        let mut name_changed = false;
         for item in items {
             let Some(refresh) = item.path_opt().and_then(|path| wanted.remove(path)) else {
                 continue;
@@ -822,6 +831,8 @@ impl Tab {
                 complete = false;
                 continue;
             };
+            type_changed |= item.metadata.is_dir() != replacement.metadata.is_dir();
+            name_changed |= item.display_name != replacement.display_name;
             replacement.is_mount_point = item.is_mount_point;
             replacement.state.selected = item.state.selected;
             replacement.state.highlighted = item.state.highlighted;
@@ -834,6 +845,15 @@ impl Tab {
             *item = replacement;
             self.large_image_manager.invalidate(&refresh.path);
             self.children_count_failed.remove(&refresh.path);
+            refreshed_any = true;
+        }
+        if type_changed {
+            self.sort_cache.get_mut().take();
+        } else if refreshed_any {
+            self.resort_if_ordered_by(&[HeadingOptions::Size, HeadingOptions::Modified]);
+        }
+        if name_changed {
+            self.resort_if_ordered_by(&[HeadingOptions::Name]);
         }
         complete && wanted.is_empty()
     }
@@ -2694,6 +2714,7 @@ impl Tab {
                                 }
                             }
                         }
+                        self.resort_if_ordered_by(&[HeadingOptions::Size]);
                     }
                     None => {
                         self.children_count_failed.insert(path);
@@ -2821,7 +2842,7 @@ impl Tab {
         commands
     }
 
-    pub(crate) const fn sort_options(&self) -> (HeadingOptions, bool, bool) {
+    pub(crate) const fn sort_options(&self) -> SortOptions {
         match self.location {
             Location::Search(..) => (HeadingOptions::Modified, false, false),
             _ => (
@@ -2829,6 +2850,14 @@ impl Tab {
                 self.sort_direction,
                 self.config.folders_first,
             ),
+        }
+    }
+
+    /// Drops the cached sort order if the view is ordered by one of `changed`, the orderings
+    /// whose keys the caller has just altered.
+    fn resort_if_ordered_by(&mut self, changed: &[HeadingOptions]) {
+        if changed.contains(&self.sort_options().0) {
+            self.sort_cache.get_mut().take();
         }
     }
 
@@ -2843,15 +2872,42 @@ impl Tab {
                 .is_some_and(|path| !self.children_count_failed.contains(path))
     }
 
+    /// Sorted item indices, recomputed only when the item set or the sort options change.
+    ///
+    /// `view` runs on every frame and every layout pass, so collating thousands of names per
+    /// call would dominate scrolling; the order is stable between those events.
     fn column_sort(&self) -> Option<Vec<(usize, &Item)>> {
+        let items = self.items_opt.as_ref()?;
+        let sort_options = self.sort_options();
+        let mut cache = self.sort_cache.borrow_mut();
+        if !cache
+            .as_ref()
+            .is_some_and(|(cached, order)| *cached == sort_options && order.len() == items.len())
+        {
+            *cache = Some((sort_options, Self::sorted_indices(items, sort_options)));
+        }
+        let (_, order) = cache.as_ref()?;
+        Some(order.iter().map(|&i| (i, &items[i])).collect())
+    }
+
+    fn sorted_indices(
+        items: &[Item],
+        (sort_name, sort_direction, folders_first): SortOptions,
+    ) -> Vec<usize> {
         let check_reverse = |ord: Ordering, sort: bool| {
             if sort { ord } else { ord.reverse() }
         };
-        let mut items: Vec<_> = self.items_opt.as_ref()?.iter().enumerate().collect();
-        let (sort_name, sort_direction, folders_first) = self.sort_options();
+        fn sort_by(
+            items: &[Item],
+            order: &mut [usize],
+            compare: impl Fn(&Item, &Item) -> Ordering,
+        ) {
+            order.sort_by(|&a, &b| compare(&items[a], &items[b]));
+        }
+        let mut order: Vec<usize> = (0..items.len()).collect();
         match sort_name {
             HeadingOptions::Size => {
-                items.sort_by(|a, b| {
+                sort_by(items, &mut order, |a, b| {
                     // entries take precedence over size
                     let get_size = |x: &Item| match &x.metadata {
                         ItemMetadata::Path {
@@ -2884,8 +2940,8 @@ impl Tab {
                             }
                         }
                     };
-                    let (a_is_entry, a_size) = get_size(a.1);
-                    let (b_is_entry, b_size) = get_size(b.1);
+                    let (a_is_entry, a_size) = get_size(a);
+                    let (b_is_entry, b_size) = get_size(b);
 
                     //TODO: use folders_first?
                     match (a_is_entry, b_is_entry) {
@@ -2895,29 +2951,29 @@ impl Tab {
                     }
                 });
             }
-            HeadingOptions::Name => items.sort_by(|a, b| {
+            HeadingOptions::Name => sort_by(items, &mut order, |a, b| {
                 if folders_first {
-                    match (a.1.metadata.is_dir(), b.1.metadata.is_dir()) {
+                    match (a.metadata.is_dir(), b.metadata.is_dir()) {
                         (true, false) => Ordering::Less,
                         (false, true) => Ordering::Greater,
                         _ => check_reverse(
-                            LANGUAGE_SORTER.compare(&a.1.display_name, &b.1.display_name),
+                            LANGUAGE_SORTER.compare(&a.display_name, &b.display_name),
                             sort_direction,
                         ),
                     }
                 } else {
                     check_reverse(
-                        LANGUAGE_SORTER.compare(&a.1.display_name, &b.1.display_name),
+                        LANGUAGE_SORTER.compare(&a.display_name, &b.display_name),
                         sort_direction,
                     )
                 }
             }),
             HeadingOptions::Modified => {
-                items.sort_by(|a, b| {
-                    let a_modified = a.1.metadata.modified();
-                    let b_modified = b.1.metadata.modified();
+                sort_by(items, &mut order, |a, b| {
+                    let a_modified = a.metadata.modified();
+                    let b_modified = b.metadata.modified();
                     if folders_first {
-                        match (a.1.metadata.is_dir(), b.1.metadata.is_dir()) {
+                        match (a.metadata.is_dir(), b.metadata.is_dir()) {
                             (true, false) => Ordering::Less,
                             (false, true) => Ordering::Greater,
                             _ => check_reverse(a_modified.cmp(&b_modified), sort_direction),
@@ -2933,11 +2989,11 @@ impl Tab {
                     _ => None,
                 };
 
-                items.sort_by(|a, b| {
-                    let a_time_deleted = time_deleted(a.1);
-                    let b_time_deleted = time_deleted(b.1);
+                sort_by(items, &mut order, |a, b| {
+                    let a_time_deleted = time_deleted(a);
+                    let b_time_deleted = time_deleted(b);
                     if folders_first {
-                        match (a.1.metadata.is_dir(), b.1.metadata.is_dir()) {
+                        match (a.metadata.is_dir(), b.metadata.is_dir()) {
                             (true, false) => Ordering::Less,
                             (false, true) => Ordering::Greater,
                             _ => check_reverse(a_time_deleted.cmp(&b_time_deleted), sort_direction),
@@ -2948,7 +3004,7 @@ impl Tab {
                 });
             }
         }
-        Some(items)
+        order
     }
 
     fn dnd_dest<'a>(
@@ -5400,7 +5456,7 @@ mod tests {
 
     use cosmic::iced::{Size, Subscription};
 
-    use super::{EntryRefresh, HeadingOptions, Message, Tab, respond_to_scroll_direction};
+    use super::{EntryRefresh, HeadingOptions, Instant, Message, Tab, respond_to_scroll_direction};
     use crate::app::test_utils::{
         NAME_LEN, NUM_DIRS, NUM_FILES, NUM_HIDDEN, NUM_NESTED, assert_eq_tab_path, empty_fs,
         eq_path_item, filter_dirs, read_dir_sorted, simple_fs, tab_click_new,
@@ -5410,7 +5466,7 @@ mod tests {
         ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail, item_from_entry,
         item_from_path,
     };
-    use crate::location::Location;
+    use crate::location::{Location, SearchLocation};
     use crate::scan::scan_path;
 
     // Boilerplate for tab tests. Checks if simulated clicks selected items.
@@ -6074,6 +6130,151 @@ mod tests {
         tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
         tab.size_opt.set(Some(Size::new(800.0, 300.0)));
         Ok((dir, tab))
+    }
+
+    #[test]
+    fn capped_search_keeps_new_results_in_modified_order() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = test_tab(&dir);
+        tab.location = Location::Search(
+            SearchLocation::Path(dir.path().into()),
+            String::new(),
+            false,
+            Instant::now(),
+        );
+        tab.set_items(Vec::new());
+        let (sender, results_rx) = tokio::sync::mpsc::channel(super::MAX_SEARCH_RESULTS + 1);
+        tab.search_context = Some(super::SearchContext {
+            results_rx,
+            ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            last_modified_opt: std::sync::Arc::new(std::sync::RwLock::new(None)),
+        });
+        let make_item = |i: usize| -> io::Result<Item> {
+            let path = dir.path().join(format!("result{i:04}"));
+            let file = std::fs::File::create(&path)?;
+            file.set_times(std::fs::FileTimes::new().set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs((i / 2) as u64 + 1),
+            ))?;
+            Ok(item_from_path(path, IconSizes::default()).unwrap())
+        };
+        for i in 0..super::MAX_SEARCH_RESULTS {
+            sender.try_send(make_item(i)?).unwrap();
+        }
+        for _ in 0..super::MAX_SEARCH_RESULTS {
+            if tab.items_opt().unwrap().len() == super::MAX_SEARCH_RESULTS {
+                break;
+            }
+            tab.search_context
+                .as_ref()
+                .unwrap()
+                .ready
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            tab.update(Message::SearchReady(false), Modifiers::empty());
+        }
+        let before = tab.column_sort().unwrap();
+        assert_eq!(before.len(), super::MAX_SEARCH_RESULTS);
+        sender
+            .try_send(make_item(super::MAX_SEARCH_RESULTS)?)
+            .unwrap();
+        tab.update(Message::SearchReady(true), Modifiers::empty());
+        let after = tab.column_sort().unwrap();
+        assert_eq!(after.len(), super::MAX_SEARCH_RESULTS);
+        assert_eq!(after[0].1.name, "result0200");
+        assert!(
+            after
+                .windows(2)
+                .all(|pair| pair[0].1.metadata.modified() >= pair[1].1.metadata.modified())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sort_order_survives_the_cache() -> io::Result<()> {
+        let (_dir, mut tab) = tab_with_files(50)?;
+
+        let ascending: Vec<String> = tab
+            .column_sort()
+            .expect("tab should be populated")
+            .iter()
+            .map(|(_, item)| item.name.clone())
+            .collect();
+
+        tab.update(
+            Message::SetSort(HeadingOptions::Name, false),
+            Modifiers::empty(),
+        );
+        let descending: Vec<String> = tab
+            .column_sort()
+            .expect("tab should be populated")
+            .iter()
+            .map(|(_, item)| item.name.clone())
+            .collect();
+
+        assert_ne!(ascending, descending, "the cache outlived a sort change");
+        assert_eq!(
+            ascending,
+            descending.iter().rev().cloned().collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_metadata_refresh_only_discards_the_sort_order_that_reads_it() -> io::Result<()> {
+        let (dir, mut tab) = tab_with_files(4)?;
+        let path = dir.path().join("file00000.txt");
+
+        for (sort, discarded) in [
+            (HeadingOptions::Name, false),
+            (HeadingOptions::Size, true),
+            (HeadingOptions::Modified, true),
+        ] {
+            tab.update(Message::SetSort(sort, true), Modifiers::empty());
+            tab.column_sort().expect("tab should be populated");
+            assert!(
+                tab.refresh_entries(vec![refreshed_entry(&tab, &path)]),
+                "every refreshed entry is still listed"
+            );
+            assert_eq!(
+                tab.sort_cache.borrow().is_none(),
+                discarded,
+                "sorting by {sort:?} should{} rebuild the order for new metadata",
+                if discarded { "" } else { " not" }
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_child_count_only_discards_the_sort_order_that_reads_it() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir(dir.path().join("subdir"))?;
+        let mut tab = Tab::new(
+            Location::Path(dir.path().into()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+
+        let counted = Message::DirectoryChildren(
+            dir.path().join("subdir"),
+            Some(3),
+            entry_work_id(&tab, &dir.path().join("subdir")),
+        );
+        for (sort, discarded) in [(HeadingOptions::Name, false), (HeadingOptions::Size, true)] {
+            tab.update(Message::SetSort(sort, true), Modifiers::empty());
+            tab.column_sort().expect("tab should be populated");
+            tab.update(counted.clone(), Modifiers::empty());
+            assert_eq!(
+                tab.sort_cache.borrow().is_none(),
+                discarded,
+                "sorting by {sort:?} should{} rebuild the order for a child count",
+                if discarded { "" } else { " not" }
+            );
+        }
+        Ok(())
     }
 
     #[test]
