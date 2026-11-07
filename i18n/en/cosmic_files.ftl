@@ -372,6 +372,7 @@ edit = Edit
 cut = Cut
 copy = Copy
 copy-path = Copy path
+copy-to-clipboard = Copy to clipboard
 paste = Paste
 select-all = Select all
 
