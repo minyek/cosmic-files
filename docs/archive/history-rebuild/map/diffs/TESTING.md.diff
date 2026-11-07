@@ -1,0 +1,8 @@
+diff --git a/TESTING.md b/TESTING.md
+index cb9ead2..1680062 100644
+--- a/TESTING.md
++++ b/TESTING.md
+@@ -24 +24,2 @@ This document provides a regression testing checklist for COSMIC Files. The chec
+-- [ ] Shift right-click, and right-click followed by Shift, both show `Permanently delete` option.
++- [ ] Shift right-click, and right-click followed by Shift, both show `Delete permanently` option.
++- [ ] On a network drive, and inside a folder opened from the Trash, right-click and the menu bar show `Delete permanently`, with or without Shift, and the Delete key asks before deleting permanently.

@@ -1,0 +1,8 @@
+diff --git a/src/scan/mod.rs b/src/scan/mod.rs
+index 5a4a343..5fc92c7 100644
+--- a/src/scan/mod.rs
++++ b/src/scan/mod.rs
+@@ -5,0 +6 @@ mod search;
++mod state;
+@@ -11,0 +13 @@ pub use self::search::scan_search;
++pub(crate) use self::state::ScanState;

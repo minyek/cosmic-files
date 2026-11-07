@@ -1,0 +1,153 @@
+src_lib.rs.diff	1	1-2	28	core	drop unused fs import after canonicalize removal (-use paired with +use)
+src_lib.rs.diff	2	1-1	43,46	list	mod atomic_file (stage: 43,46; resolve_destination: 46)
+src_lib.rs.diff	3	1-1	13,25	list	mod navigation (PendingRequest fixture 13; resolve_edit_location 25)
+src_lib.rs.diff	4	1-2	32	list	mod persistence; mod recents
+src_lib.rs.diff	5	1-2		fork-only	pub(crate) mod trash -> pub mod trash: fork-only tooling, no upstream path should carry it
+src_lib.rs.diff	5	3-3	27	list	mod watcher
+src_lib.rs.diff	6	1-16	28	core	run(): join relative launch paths onto cwd instead of canonicalize
+src_persistence.rs.diff	1	1-2	32	core	flush fn header + recents barrier
+src_persistence.rs.diff	1	3-3	46	core	mime_app::barrier for default-app writer
+src_persistence.rs.diff	1	4-4	32,46	core	join! over recents and defaults
+src_persistence.rs.diff	1	5-5	32	core	recents spawn_blocking recv
+src_persistence.rs.diff	1	6-6	46	core	defaults future in join!
+src_persistence.rs.diff	1	7-7	32,46	core	close join!
+src_persistence.rs.diff	1	8-11	32	core	recents drain warn
+src_persistence.rs.diff	1	12-15	46	core	defaults drain warn
+src_persistence.rs.diff	1	16-16	32	core	close flush fn
+src_atomic_file.rs.diff	1	1-3	43,46	list	use io, use Path (shared by stage and resolve_destination)
+src_atomic_file.rs.diff	1	4-32	46	core	resolve_destination (desktop only; used by mime_app::write_default_at)
+src_atomic_file.rs.diff	1	33-33	43,46	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_atomic_file.rs.diff	1	34-47	43,46	fixture	stage(): staged temp file; used by compress (43) and write_default_at (46)
+src_navigation.rs.diff	1	1-2	25	list	use PathBuf (resolve_edit_location)
+src_navigation.rs.diff	1	3-4	13	list	use widget (PendingRequest)
+src_navigation.rs.diff	1	5-5	25	list	use Location (resolve_edit_location)
+src_navigation.rs.diff	1	6-6	13,25	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_navigation.rs.diff	1	7-34	13	fixture	PendingRequest request-id helper; used by 12,13,17,22,23,25,30,33 (app.rs, dialog.rs, trash)
+src_navigation.rs.diff	1	35-35	13,25	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_navigation.rs.diff	1	36-54	25	core	resolve_edit_location: Enter in location bar resolved off UI thread
+src_navigation.rs.diff	1	55-61	13	core	canonicalize Location::Path off UI thread (normalize no longer does); low confidence, could be 25
+src_navigation.rs.diff	1	62-71	25	core	resolve_edit_location: file redirect to parent
+src_navigation.rs.diff	1	72-72	13,25	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_navigation.rs.diff	1	73-76	13	list	tests mod header
+src_navigation.rs.diff	1	77-94	13	test	PendingRequest tests (latest request wins, invalidate)
+src_navigation.rs.diff	1	95-109	13	test	a_parent_after_a_symlink_resolves_against_its_target (calls resolve_edit_location from 25)
+src_watcher.rs.diff	1	1-6	27	core	uses
+src_watcher.rs.diff	1	7-10	27	core	reconcile signature params
+src_watcher.rs.diff	1	11-11	27,36	core	reconcile return type
+src_watcher.rs.diff	1	12-12	36	core	return registered set / registered init (27,36 share return type)
+src_watcher.rs.diff	1	13-17	27	core	catch_unwind and unwatch loop
+src_watcher.rs.diff	1	18-18	36	core	registered.remove on unwatch ok
+src_watcher.rs.diff	1	19-20	27	core	debug log
+src_watcher.rs.diff	1	21-21	36	core	WatchNotFound arm: the path is no longer registered (36)
+src_watcher.rs.diff	1	22-23	36	core	WatchNotFound arm: registered.remove
+src_watcher.rs.diff	1	24-34	27	core	unwatch error/watch loop
+src_watcher.rs.diff	1	35-35	36	core	registered.insert on watch ok
+src_watcher.rs.diff	1	36-46	27	core	watch error log; close loops; match reconciled
+src_watcher.rs.diff	1	47-47	27,36	core	Ok arm: 27 returns new_paths, 36 the registered set (variants.tsv)
+src_watcher.rs.diff	1	48-49	27	core	panic branch + error log
+src_watcher.rs.diff	1	50-50	27,36	core	panic arm returns an empty set
+src_watcher.rs.diff	1	51-53	27	core	close match/fn
+src_watcher.rs.diff	1	54-54	27	core	blank line
+src_watcher.rs.diff	1	55-115	27	test	PanicOnceWatcher + panicking_watch_preserves_the_watcher_for_a_later_request (asserts registered set from 36)
+src_watcher.rs.diff	1	116-135	36	test	failed_watch_can_be_retried_after_the_directory_appears
+src_watcher.rs.diff	1	136-136	27,36	list	close tests mod
+src_large_image.rs.diff	1	1-1	15	core	drop ImageReader import
+src_large_image.rs.diff	2	1-25	15	core	remove get_image_dimensions (dimensions now come from thumbnail work)
+src_large_image.rs.diff	3	1-3	39	core	drop generation field doc comment (field moved with next_generation)
+src_large_image.rs.diff	4	1-1	39	core	next_generation field
+src_large_image.rs.diff	5	1-5	39	core	decode_generations != Some(generation) check
+src_large_image.rs.diff	6	1-2	39	core	outdated decode log
+src_large_image.rs.diff	7	1-3	39	core	log args
+src_large_image.rs.diff	8	1-12	39	core	store_error_with_generation
+src_large_image.rs.diff	8	13-21	3,5	core	invalidate(path): called from Tab::set_items (5) and refresh_entries (3); low confidence on owner
+src_large_image.rs.diff	9	1-4	39	core	clear_cache clears display sizes, errors, orphan generations
+src_large_image.rs.diff	10	1-1	15	core	try_decode takes original_dimensions param
+src_large_image.rs.diff	11	1-5	15	core	use passed dimensions, no header re-read
+src_large_image.rs.diff	12	1-13	39	core	monotonic next_generation
+src_large_image.rs.diff	13	1-78	39	test	three tests (call try_decode with dimensions arg from 15)
+src_mime_icon.rs.diff	1	1-2	11	core	remove shared_mime_info field from cache
+src_mime_icon.rs.diff	2	1-4	11	core	SHARED_MIME_INFO static
+src_mime_icon.rs.diff	3	1-2	11	core	icon lookup via SHARED_MIME_INFO
+src_mime_icon.rs.diff	4	1-6	10	core	is_special_mime hoisted to module level
+src_mime_icon.rs.diff	4	7-7	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	4	8-14	49	core	is_placeholder_mime
+src_mime_icon.rs.diff	4	15-15	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	4	16-27	10	core	mime_from_file_name
+src_mime_icon.rs.diff	4	28-28	10,49	core	uncertain && !placeholder filter
+src_mime_icon.rs.diff	4	29-30	10	core	close fn
+src_mime_icon.rs.diff	5	1-1	11	core	drop MIME_ICON_CACHE lock in mime_for_path
+src_mime_icon.rs.diff	5	2-4	10	core	blank and comment
+src_mime_icon.rs.diff	5	5-6	10,49	core	name_may_decide_type: map_or(remote,..)
+src_mime_icon.rs.diff	5	7-10	10	core	return name-derived mime
+src_mime_icon.rs.diff	5	11-15	49	core	remote: mime_guess fallback
+src_mime_icon.rs.diff	5	16-17	10	core	close if
+src_mime_icon.rs.diff	6	1-4	11	core	guess builder from SHARED_MIME_INFO (+rename gb to guess_builder)
+src_mime_icon.rs.diff	7	1-2	11	core	rename gb to guess_builder, incidental to 11 edit; low confidence
+src_mime_icon.rs.diff	8	1-2	11	core	rename gb to guess_builder, incidental to 11 edit; low confidence
+src_mime_icon.rs.diff	9	1-2	11	core	rename gb to guess_builder, incidental to 11 edit; low confidence
+src_mime_icon.rs.diff	10	1-2	11	core	rename gb to guess_builder, incidental to 11 edit; low confidence
+src_mime_icon.rs.diff	11	1-6	10	core	nested is_special_mime removed (hoisted)
+src_mime_icon.rs.diff	12	1-3	11	core	parent_mime_types without lock
+src_mime_icon.rs.diff	13	1-1	11	core	cfg(unix) on is_mime_subclass_of
+src_mime_icon.rs.diff	14	1-3	11	core	is_mime_subclass_of without lock
+src_mime_icon.rs.diff	14	4-8	11	core	non-unix is_mime_subclass_of fallback; low confidence
+src_mime_icon.rs.diff	14	9-9	10,11,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	14	10-14	10,11,49	fixture	tests mod header and imports
+src_mime_icon.rs.diff	15	1-3	11	core	old lock+subclass lines
+src_mime_icon.rs.diff	15	4-5	10,11,49	fixture	use super::mime_for_path
+src_mime_icon.rs.diff	15	6-13	11	test	mime_queries_can_run_while_the_icon_cache_is_in_use
+src_mime_icon.rs.diff	15	14-14	11,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	15	15-22	49	test	remote_files_without_metadata_are_not_typed_as_empty
+src_mime_icon.rs.diff	15	23-23	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	15	24-35	10	test	an_empty_local_file_with_a_known_extension_keeps_its_named_type
+src_mime_icon.rs.diff	15	36-48	10	test	symlink_metadata_takes_precedence_over_a_file_extension
+src_mime_icon.rs.diff	15	49-49	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	15	50-63	49	test	remote_file_without_a_known_extension_is_not_typed_as_empty
+src_mime_icon.rs.diff	15	64-74	49	test	remote_file_with_a_known_extension_is_typed_from_its_name
+src_mime_icon.rs.diff	15	75-87	49	test	empty_remote_file_is_typed_as_empty
+src_mime_icon.rs.diff	15	88-88	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	15	89-99	10	test	an_unambiguous_name_outranks_the_file_contents
+src_mime_icon.rs.diff	15	100-100	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	15	101-112	49	test	a_local_name_that_decides_nothing_still_reads_the_contents
+src_mime_icon.rs.diff	15	113-113	10,49	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mime_icon.rs.diff	15	114-126	10	test	a_directory_named_like_a_file_is_typed_as_a_directory
+src_recents.rs.diff	1	1-1	37	list	use std::io::Write (initialize_history)
+src_recents.rs.diff	1	2-68	32	core	use paths, RecentsMutation, RecentsWriter, apply_recents_mutation head
+src_recents.rs.diff	1	69-71	37	core	initialize_history call in apply_recents_mutation
+src_recents.rs.diff	1	72-96	32	core	apply mutation match
+src_recents.rs.diff	1	97-97	32,37	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_recents.rs.diff	1	98-115	37	core	initialize_history (persist_noclobber)
+src_recents.rs.diff	1	116-116	32,37	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_recents.rs.diff	1	117-147	32	core	RECENTS_WRITER, record/barrier/clear/remove, tests header
+src_recents.rs.diff	1	148-148	32,37	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_recents.rs.diff	1	149-167	37	test	initializing_history_* tests
+src_recents.rs.diff	1	168-168	32,37	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_recents.rs.diff	1	169-246	32	test	barrier, ordering, failure tests
+src_mime_app.rs.diff	1	1-1	23	core	derive Clone, Debug on MimeAppCache (cache moves through MimeAppCacheLoaded)
+src_mime_app.rs.diff	2	1-3	24	core	default_terminal_id field
+src_mime_app.rs.diff	2	4-4	24,52	list	closing brace: closes the struct; the upstream brace after it then closes desktop_id (diff alignment)
+src_mime_app.rs.diff	2	5-8	52	core	desktop_id helper
+src_mime_app.rs.diff	3	1-6	23	core	MimeAppCache::empty
+src_mime_app.rs.diff	4	1-1	23	core	close struct literal in empty
+src_mime_app.rs.diff	4	2-2	24	core	default_terminal_id: None
+src_mime_app.rs.diff	4	3-7	23	core	close empty; new() uses empty()
+src_mime_app.rs.diff	5	1-3	11	core	use SHARED_MIME_INFO instead of locking MIME_ICON_CACHE
+src_mime_app.rs.diff	6	1-2	52	core	desktop_id in reload
+src_mime_app.rs.diff	7	1-2	24	core	reload resolves default terminal
+src_mime_app.rs.diff	8	1-2	24	core	query_default_terminal (associated fn)
+src_mime_app.rs.diff	9	1-2	52	core	desktop_id replaces replace(.desktop)
+src_mime_app.rs.diff	10	1-16	24	core	terminal() reads cached default_terminal_id
+src_mime_app.rs.diff	11	1-2	24	core	terminal.id == id
+src_mime_app.rs.diff	12	1-1	46	core	close impl after set_default removed
+src_mime_app.rs.diff	13	1-11	46	core	remove set_default stub; DefaultAppUpdate; 23 also mentions FIFO writer, low confidence
+src_mime_app.rs.diff	14	1-10	46	core	remove set_default head; DefaultAppWriter struct
+src_mime_app.rs.diff	15	1-28	46	core	remove inline read; DefaultAppWriter::new worker thread
+src_mime_app.rs.diff	16	1-4	46	core	writer constructor end
+src_mime_app.rs.diff	17	1-8	46	core	remove suffix push; submit
+src_mime_app.rs.diff	18	1-26	46	core	remove fs::write+reload; barrier, enqueue
+src_mime_app.rs.diff	19	1-18	46	core	DEFAULT_APP_WRITER, barrier()
+src_mime_app.rs.diff	20	1-48	46	core	queue_default, write_default_at (atomic via atomic_file)
+src_mime_app.rs.diff	21	1-2	52	list	use super::{desktop_id, exec_to_command}
+src_mime_app.rs.diff	21	3-46	24	fixture	terminal_cache helper + terminal tests
+src_mime_app.rs.diff	22	1-24	52	test	desktop_id tests
+src_mime_app.rs.diff	22	25-228	46	test	default write and writer queue tests

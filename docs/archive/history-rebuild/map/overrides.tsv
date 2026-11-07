@@ -1,0 +1,3 @@
+src_mime_icon.rs.diff	4	28-28	10	core	uncertain filter (#49 adds the placeholder check; variants.tsv)
+src_app.rs.diff	26	96-96	17	core	nav_context_items call of is_empty_cached (the call is 17s block)
+src_app.rs.diff	67	85-85	17	core	old is_empty() line removed with 17s rewrite (keep-variants.tsv for 12 alone)

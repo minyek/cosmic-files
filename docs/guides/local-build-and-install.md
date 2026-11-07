@@ -98,7 +98,9 @@ Run full gates through the resource-managed detached workflow required by the
 project's operating instructions. Dependencies must be available in the local
 cache for offline builds.
 
-For future updates, check branch contents as well as commit ancestry: the
-original improvement branches contain rebased copies, and the squash merge
-does not retain those commits as ancestors. Repeat the test matrix and release
-build after integrating new changes.
+`master` is upstream `e03001c` followed by one commit per fork issue (or per group
+of inseparable issues) and the
+fork's records commits (the 2026-11 history rebuild; the older squash history is
+on the tag `backup/master-pre-history-2026-11`). The old improvement branches
+are not ancestors of `master`, so compare branch contents, not ancestry. Repeat
+the test matrix and release build after integrating new changes.

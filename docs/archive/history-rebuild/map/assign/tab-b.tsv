@@ -1,0 +1,261 @@
+
+src_tab.rs.diff	73	1-10	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	74	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	75	1-4	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	76	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	77	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	78	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	79	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	80	1-6	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	81	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	82	1-6	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	83	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	84	1-2	6	core	sorted_indices: order vector instead of Vec<(usize,&Item)>
+src_tab.rs.diff	85	1-2	7	core	column capacity 4 for the above/below spacers
+src_tab.rs.diff	86	1-4	2	core	item.icon(..) draws the symlink badge (grid)
+src_tab.rs.diff	87	1-9	7	core	drop the per-row grid placeholder spacer
+src_tab.rs.diff	88	1-22	7	core	grid: one spacer for runs of off-screen rows, outside the grid
+src_tab.rs.diff	89	1-6	7	core	grid: rows_above spacer / insert_row restructure
+src_tab.rs.diff	90	1-4	7	core	grid: rows_below spacer
+src_tab.rs.diff	91	1-4	2	core	item.icon(..) badge (grid, drag/second site)
+src_tab.rs.diff	92	1-2	7	core	list: culled_height spacer, separator_height
+src_tab.rs.diff	93	1-6	7	core	list: culled_height spacer, separator_height
+src_tab.rs.diff	94	1-2	7	core	list: culled_height spacer, separator_height
+src_tab.rs.diff	95	1-20	7	core	list: culled_height spacer, separator_height
+src_tab.rs.diff	96	1-5	2	core	item.icon(..) badge (list/compact)
+src_tab.rs.diff	97	1-5	2	core	item.icon(..) badge (list/compact)
+src_tab.rs.diff	98	1-5	2	core	item.icon(..) badge (list/compact)
+src_tab.rs.diff	99	1-5	2	core	item.icon(..) badge (list/compact)
+src_tab.rs.diff	100	1-5	2	core	item.icon(..) badge (list/compact)
+src_tab.rs.diff	101	1-5	2	core	item.icon(..) badge (list/compact)
+src_tab.rs.diff	102	1-5	7	core	list: drop per-row placeholder, count/y bookkeeping moved
+src_tab.rs.diff	103	1-2	7	core	list: drop per-row placeholder, count/y bookkeeping moved
+src_tab.rs.diff	104	1-4	7	core	list: drop per-row placeholder, count/y bookkeeping moved
+src_tab.rs.diff	105	1-16	19	core	context_menu_snapshot.view(..) wraps menu::context_menu
+src_tab.rs.diff	106	1-2	19	core	on_open/on_close ContextMenuOpen
+src_tab.rs.diff	107	1-2	1	core	user_ids set
+src_tab.rs.diff	108	1-2	1	core	group_ids set
+src_tab.rs.diff	109	1-20	16	core	multi_preview_view: file_metadata() -> item.metadata / cached_metadata (no I/O)
+src_tab.rs.diff	109	21-24	1	core	per-item user_name lookup replaced by id collection
+src_tab.rs.diff	109	25-25	16	core	upstream ');' of user_name.insert; reads as #1's user_ids insert (keep-variants.tsv) until #16
+src_tab.rs.diff	109	26-26	16	core	mode_user line of old block
+src_tab.rs.diff	109	27-30	1	core	per-item group_name lookup replaced by id collection
+src_tab.rs.diff	109	31-31	16	core	upstream ');' of group_name.insert; reads as #1's group_ids insert (keep-variants.tsv) until #16
+src_tab.rs.diff	109	32-56	16	core	new metadata.is_dir/file_size/cached_metadata block
+src_tab.rs.diff	109	57-57	16	list	#1 user_ids insert, re-indented into #16 cached-metadata block
+src_tab.rs.diff	109	58-58	16	core	mode_user.insert
+src_tab.rs.diff	109	59-59	16	list	#1 group_ids insert, re-indented into #16 cached-metadata block
+src_tab.rs.diff	109	60-61	16	core	mode_group/mode_other inserts
+src_tab.rs.diff	110	1-9	1	core	distinct_names for user and group
+src_tab.rs.diff	111	1-2	4	core	subscription capacity 2*jobs+3 (children-count subscriptions)
+src_tab.rs.diff	112	1-5	4	core	thumbnails/children_counts counters; drop gvfs-only children block header
+src_tab.rs.diff	113	1-15	4	core	visible flag; drop GvfsPath-only children match
+src_tab.rs.diff	114	1-8	4	core	children_count_subscription push, bounded by jobs
+src_tab.rs.diff	114	9-9	4,5	core	item.state.work_id passed to children count subscription
+src_tab.rs.diff	114	10-10	4	core	closing of push
+src_tab.rs.diff	115	1-2	4	core	relocated loop body of the former second item loop, merged with children loop
+src_tab.rs.diff	116	1-2	4	core	relocated loop body of the former second item loop, merged with children loop
+src_tab.rs.diff	117	1-8	4	core	relocated loop body of the former second item loop, merged with children loop
+src_tab.rs.diff	118	1-26	4	core	old inline ChildrenWrapper subscription removed (now children_count_subscription)
+src_tab.rs.diff	118	27-29	8	core	thumbnail_is_displayed(item, preview) skips rows with no displayed thumbnail
+src_tab.rs.diff	119	1-37	4	core	old separate children loop/second item loop merged; item.metadata no longer cloned
+src_tab.rs.diff	120	1-4	4	core	thumbnails < jobs counter; path/metadata cloned now path is borrowed
+src_tab.rs.diff	121	1-1	5	core	work_id on Thumbnail subscription and message
+src_tab.rs.diff	122	1-1	5	core	work_id on Thumbnail subscription and message
+src_tab.rs.diff	123	1-1	5	core	work_id on Thumbnail subscription and message
+src_tab.rs.diff	124	1-1	5	core	work_id on Thumbnail subscription and message
+src_tab.rs.diff	125	1-2	5	core	work_id on Thumbnail subscription and message
+src_tab.rs.diff	126	1-1	4	core	thumbnails += 1
+src_tab.rs.diff	127	1-2	4	core	stop when both thumbnails and children_counts reach jobs
+src_tab.rs.diff	128	1-1	5	core	work_id on dir-size/checksum subscription wrapper (132: move closure captures work_id)
+src_tab.rs.diff	129	1-1	5	core	work_id on dir-size/checksum subscription wrapper (132: move closure captures work_id)
+src_tab.rs.diff	130	1-4	5	core	work_id on dir-size/checksum subscription wrapper (132: move closure captures work_id)
+src_tab.rs.diff	131	1-1	5	core	work_id on dir-size/checksum subscription wrapper (132: move closure captures work_id)
+src_tab.rs.diff	132	1-2	5	core	work_id on dir-size/checksum subscription wrapper (132: move closure captures work_id)
+src_tab.rs.diff	133	1-1	5	core	work_id in DirSize/Checksums message
+src_tab.rs.diff	134	1-1	5	core	work_id in DirSize/Checksums message
+src_tab.rs.diff	135	1-11	29	core	item_from_search_item built on the search worker
+src_tab.rs.diff	136	1-3	4	core	children_count_subscription
+src_tab.rs.diff	136	4-4	4,5	core	Wrapper.work_id
+src_tab.rs.diff	136	5-9	4	core	Wrapper hash
+src_tab.rs.diff	136	10-10	4,5	core	work_id hashed
+src_tab.rs.diff	136	11-13	4	core	Wrapper hash end
+src_tab.rs.diff	136	14-14	4,5	core	Wrapper { path, work_id }
+src_tab.rs.diff	136	15-15	4	core	path clone
+src_tab.rs.diff	136	16-16	4,5	core	work_id copy
+src_tab.rs.diff	136	17-35	4	core	spawn_blocking read_dir count; Option for unreadable folder
+src_tab.rs.diff	136	36-36	4,5	core	DirectoryChildren(path, children, work_id)
+src_tab.rs.diff	136	37-50	4	core	send and pending
+src_tab.rs.diff	137	1-4	3,5,13,15,48	list	test imports: BufWriter (write_test_png: 15,48), Path (13 folder_name test, 5 entry_work_id, 3 refreshed_entry)
+src_tab.rs.diff	138	1-8	3,5,6,7,13,18,25	list	test imports: Tree/AbsoluteOffset/Point/Rectangle/Size (7,5), Subscription (5), Command (13,25), EntryRefresh (3,5), HeadingOptions (6,4), Instant (18,6); ItemMetadata/ItemThumbnail/Location moved to crate::item
+src_tab.rs.diff	139	1-5	9	list	assert_eq_tab_path_contents import (tab_listing_matches_directory_contents), rewrap of neighbours
+src_tab.rs.diff	140	1-4	3,4,5,6,8,13,15,55	list	crate::item imports: ChecksumState/FileChecksums (5), DirSize (4,5), ItemThumbnail (5,8,15), TEXT_PREVIEW_MAX_BYTES (8), folder_name (13), item_from_entry (3,5), item_from_path (6,8,15), ItemMetadata (55,8)
+src_tab.rs.diff	140	5-5	3,4,5,6,15,18	list	test import of Location: first needed by the {3,4,5,15} tests (D4)
+src_tab.rs.diff	141	1-1	7	list	View import
+src_tab.rs.diff	141	2-3	16,48	list	gvfs item_from_trash_entry import
+src_tab.rs.diff	142	1-14	9	test	tab_listing_matches_directory_contents
+src_tab.rs.diff	143	1-3	6,9,15,35	fixture	test_tab
+src_tab.rs.diff	143	4-4	5,6,9,15,18,25,26,35	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	143	5-15	5,6,9,15,18,25,26,35	fixture	tab_at
+src_tab.rs.diff	143	16-36	9	test	an_entry_named_in_dot_hidden_is_marked_hidden
+src_tab.rs.diff	143	37-37	9,35	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	143	38-89	35	test	begin_rescan_if_idle_* and finish_rescan_* (ScanState via tab.scans)
+src_tab.rs.diff	143	90-90	16,35	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	143	91-113	16	test	cached_metadata_reflects_scan_without_restat
+src_tab.rs.diff	143	114-114	13,16	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	143	115-229	13	test	folder_name_*, normalize_*, tab_location_select_navigates_and_carries_selection
+src_tab.rs.diff	143	230-230	13,18	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	143	231-249	18	test	a_search_tab_cannot_say_whether_a_name_in_its_root_is_taken
+src_tab.rs.diff	143	250-250	18,26	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	143	251-274	26	test	selected_paths_report_their_directory_flag_without_restating
+src_tab.rs.diff	144	1-42	8	test	a_standalone_preview_item_carries_no_shaped_text, a_text_preview_is_capped_at_what_the_preview_can_show
+src_tab.rs.diff	145	1-11	15,48	fixture	write_test_png
+src_tab.rs.diff	145	12-80	15	test	cached_thumbnails_*, review_a_local_thumbnail_*, stale_thumbnail_dimensions_*
+src_tab.rs.diff	145	81-81	15,48	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	82-101	48	test	trash_item_reads_image_dimensions_from_the_trashed_file
+src_tab.rs.diff	145	102-102	3,4,5,6,7,15,48	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	103-120	3,4,5,6,7,15	fixture	tab_with_files
+src_tab.rs.diff	145	121-264	6	test	capped_search_keeps_new_results_in_modified_order, sort_order_survives_the_cache, a_metadata_refresh_*, a_child_count_*
+src_tab.rs.diff	145	265-265	6,8	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	266-314	8	test	a_text_preview_is_built_only_where_one_is_rendered
+src_tab.rs.diff	145	315-315	7,8	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	316-323	7	fixture	tree_len, list_view_tree
+src_tab.rs.diff	145	324-462	7	test	list/grid widget count and content height, scrolled_row_keeps_its_button_id, focusing_a_culled_row_*
+src_tab.rs.diff	145	463-463	4,7	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	464-551	4	test	scan_path_leaves_child_counts_*, size_ordering_*, directory_children_message_*
+src_tab.rs.diff	145	552-668	5	test	rescan_retries_a_failed_directory_size, a_same_size_rewrite_*, rescan_keeps/drops_the_thumbnail_*
+src_tab.rs.diff	145	669-669	3,5	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	670-715	3	test	refresh_entries_*
+src_tab.rs.diff	145	716-716	3,16	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	717-734	16	test	a_trashed_file_reports_its_size (file_size of trash entries; low confidence)
+src_tab.rs.diff	145	735-735	16,25	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	736-750	25	fixture	submitted_location
+src_tab.rs.diff	145	751-773	25	test	a_typed_uri_*, a_typed_path_*
+src_tab.rs.diff	145	774-774	4,5,6,25	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	775-783	4,5,6	fixture	entry_work_id
+src_tab.rs.diff	145	784-784	3,4,5,6	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	785-804	3,5,6	fixture	refreshed_entry
+src_tab.rs.diff	145	805-926	5	test	observed write, content refresh, stale entry results, later refresh request, recursive size
+src_tab.rs.diff	145	927-927	5,7	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	928-1028	7	test	virtual_rows_match_actual_layout_at_each_scroll_position
+src_tab.rs.diff	145	1029-1029	5,7	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	1030-1042	5	fixture	subscription_ids
+src_tab.rs.diff	145	1043-1126	5	test	rescans_restart_*, only_current_child_counts_*, a_current_checksum_result_is_accepted
+src_tab.rs.diff	145	1127-1127	5,15	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	1128-1139	15	test	external_thumbnail_without_image_dimensions_does_not_start_a_decode
+src_tab.rs.diff	145	1140-1140	1,15	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	1141-1166	1	test	owner_names_*
+src_tab.rs.diff	145	1167-1167	1,55	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	145	1168-1199	55	test	only_local_path_items_can_be_trashed
+src_tab.rs.diff	1	1-1	53	core	drop LanguageLoader import; Tab::update ExecEntryAction no longer calls current_language
+src_tab.rs.diff	2	1-2	4	list	FxHashSet import for children_count_failed
+src_tab.rs.diff	3	1-2	6	list	RefCell import for sort_cache
+src_tab.rs.diff	4	1-2	30	list	PreviewItem import; Preview of ancestor now built off-thread via PreviewPath
+src_tab.rs.diff	5	1-2	3,30	list	item_from_path dropped (#30); next_work_id added (#3 refresh_requests)
+src_tab.rs.diff	6	1-7	3	core	EntryRefresh struct
+src_tab.rs.diff	7	1-14	1	core	distinct_names helper
+src_tab.rs.diff	8	1-1	25	core	Command::EditLocationSubmit
+src_tab.rs.diff	9	1-2	53	core	Command::ExecEntryAction now takes the exec string
+src_tab.rs.diff	10	1-1	19	core	Command::ParseDesktopEntry
+src_tab.rs.diff	11	1-1	30	core	Command::PreviewPath
+src_tab.rs.diff	12	1-1	19	core	Message::ContextMenuOpen (MenuSnapshot keeps open menu stable)
+src_tab.rs.diff	13	1-1	19	core	Message::DesktopEntryParsed
+src_tab.rs.diff	14	1-2	53	core	Message::ExecEntryAction(snapshot id, index)
+src_tab.rs.diff	15	1-1	13	core	Message::LocationSelect (also used by #25 resolution result)
+src_tab.rs.diff	16	1-2	5	core	Message::Thumbnail carries work_id
+src_tab.rs.diff	17	1-1	5	core	Message::DirectorySize old line paired with work_id replacement
+src_tab.rs.diff	17	2-3	4	core	DirectoryChildren old gvfs-only variant replaced by general Option<usize> variant
+src_tab.rs.diff	17	4-5	5	core	Checksums old / DirectorySize new with work_id
+src_tab.rs.diff	17	6-6	4,5	core	DirectoryChildren(PathBuf, Option<usize>, u64): Option from #4, u64 work_id from #5
+src_tab.rs.diff	17	7-7	5	core	Message::Checksums work_id
+src_tab.rs.diff	18	1-1	39	core	Message::ImageDecodeFailed
+src_tab.rs.diff	19	1-49	5	core	ItemFingerprint, ItemCarryover (image_dimensions lines need #15, children count needs #4)
+src_tab.rs.diff	20	1-4	29	core	SearchContext results_rx carries built Items
+src_tab.rs.diff	21	1-3	6	core	SortOptions type alias
+src_tab.rs.diff	22	1-2	19	core	Tab fields context_menu_desktop_entry, context_menu_snapshot
+src_tab.rs.diff	23	1-1	6	core	Tab.sort_cache field
+src_tab.rs.diff	23	2-3	4	core	Tab.children_count_failed field
+src_tab.rs.diff	23	4-4	35	core	Tab.scans ScanState field
+src_tab.rs.diff	24	1-2	19	core	Tab::new init of desktop entry and menu snapshot
+src_tab.rs.diff	25	1-1	6	core	sort_cache init
+src_tab.rs.diff	25	2-2	4	core	children_count_failed init
+src_tab.rs.diff	25	3-3	35	core	scans init
+src_tab.rs.diff	26	1-4	61	core	removes Tab::items_opt_mut, a pub const fn with no caller in base (e03001c) or head; dead-code removal, fits no issue (boy-scout?)
+src_tab.rs.diff	27	1-1	5	core	set_items takes rescan carryover
+src_tab.rs.diff	28	1-13	5	core	set_items: carry results to unchanged items, invalidate large image of changed ones (selected check restructured)
+src_tab.rs.diff	29	1-1	6	core	set_items drops sort_cache
+src_tab.rs.diff	29	2-2	4	core	set_items clears children_count_failed
+src_tab.rs.diff	30	1-22	3	core	refresh_requests, refresh_entries head (work-id guarded re-stat of written children)
+src_tab.rs.diff	30	23-25	6	core	refreshed_any/type_changed/name_changed flags exist only for sort-cache invalidation
+src_tab.rs.diff	30	26-36	3	core	refresh_entries loop head and guards
+src_tab.rs.diff	30	37-38	6	core	type_changed/name_changed computation
+src_tab.rs.diff	30	39-48	3	core	refresh_entries state copy onto replacement
+src_tab.rs.diff	30	49-49	5	core	invalidate large image after refresh (observed write invalidates)
+src_tab.rs.diff	30	50-50	4	core	refresh forgets failed child count
+src_tab.rs.diff	30	51-51	6	core	refreshed_any = true
+src_tab.rs.diff	30	52-52	3	core	end of for loop
+src_tab.rs.diff	30	53-60	6	core	invalidate or resort sort cache after refresh
+src_tab.rs.diff	30	61-62	3	core	refresh_entries result, blank
+src_tab.rs.diff	30	63-63	3,5	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	30	64-80	5	core	take_rescan_carryover
+src_tab.rs.diff	31	1-15	18	core	lists_directory, find_entry_is_dir
+src_tab.rs.diff	31	16-16	18,26	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	31	17-27	26	core	selected_paths_with_dir
+src_tab.rs.diff	32	1-2	15	core	thumbnail original dims now Option inside ItemThumbnail::Image
+src_tab.rs.diff	33	1-5	15	core	tiling check on known dims
+src_tab.rs.diff	34	1-2	15	core	original_dimensions binding
+src_tab.rs.diff	35	1-6	15	core	try_decode takes original_dimensions
+src_tab.rs.diff	36	1-2	39	core	decode_large_image(path.clone()) so failure message can name path
+src_tab.rs.diff	37	1-2	39	core	failed decode sends ImageDecodeFailed(path, generation)
+src_tab.rs.diff	38	1-4	13	core	cd_selection local for LocationSelect
+src_tab.rs.diff	39	1-1	19	core	ContextMenuOpen handler
+src_tab.rs.diff	40	1-12	19	core	request ParseDesktopEntry when lone .desktop selected (lone_desktop_entry call also touches #51)
+src_tab.rs.diff	40	13-24	19	core	DesktopEntryParsed handler
+src_tab.rs.diff	41	1-18	30	core	ancestor preview via Command::PreviewPath
+src_tab.rs.diff	42	1-5	25	core	EditLocationSubmit on Enter (click path)
+src_tab.rs.diff	43	1-22	25	core	EditLocationSubmit with typed_uri
+src_tab.rs.diff	44	1-25	53	core	ExecEntryAction checks snapshot id and runs the carried exec (needs #19 desktop_entry_actions)
+src_tab.rs.diff	45	1-13	22	core	removal of favourite-file is_dir workaround; on_nav_select routes files to OpenFile
+src_tab.rs.diff	45	14-17	22	core	Message::Location always a directory
+src_tab.rs.diff	45	18-18	13	list	closing brace of the Location arm, needed only before the LocationSelect arm 13 inserts (upstream's brace closes the last arm)
+src_tab.rs.diff	45	19-24	13	core	Message::LocationSelect handler
+src_tab.rs.diff	46	1-2	26	core	comment: Open sender passes only files
+src_tab.rs.diff	47	1-6	26	core	drop is_dir stat in Message::Open
+src_tab.rs.diff	48	1-2	29	core	drain loop takes built Item
+src_tab.rs.diff	49	1-25	29	core	index from built Item (trash appends, others by modified)
+src_tab.rs.diff	50	1-3	29	core	no item_from_search_item inline
+src_tab.rs.diff	51	1-3	16	core	comment: read mode from cached metadata
+src_tab.rs.diff	52	1-2	16	core	file_metadata -> cached_metadata
+src_tab.rs.diff	53	1-2	5	core	Message::Thumbnail work_id param
+src_tab.rs.diff	54	1-4	5	core	Thumbnail applied only if work_id matches
+src_tab.rs.diff	54	5-7	15	core	Thumbnail records image_dimensions
+src_tab.rs.diff	55	1-7	39	core	ImageDecodeFailed handler
+src_tab.rs.diff	56	1-16	26	core	drop filtering by parent path, no read_dir
+src_tab.rs.diff	57	1-2	5	core	DirectorySize work_id param
+src_tab.rs.diff	58	1-1	5	core	DirectorySize work_id guard
+src_tab.rs.diff	59	1-4	5	core	DirectorySize work_id guard on item
+src_tab.rs.diff	60	1-8	4	core	old gvfs-only DirectoryChildren handler removed
+src_tab.rs.diff	60	9-9	4,5	core	DirectoryChildren(path, children, work_id)
+src_tab.rs.diff	60	10-18	5	core	stale-result guard by work_id
+src_tab.rs.diff	60	19-23	4	core	apply Some(count) via set_children_count
+src_tab.rs.diff	60	24-24	5	core	work_id match in loop
+src_tab.rs.diff	60	25-28	4	core	set_children_count loop
+src_tab.rs.diff	61	1-1	4	core	break moved
+src_tab.rs.diff	62	1-1	6	core	resort when ordered by size after child count
+src_tab.rs.diff	62	2-4	4	core	None arm records children_count_failed
+src_tab.rs.diff	63	1-2	5	core	Checksums work_id param
+src_tab.rs.diff	64	1-1	5	core	Checksums work_id guard
+src_tab.rs.diff	65	1-4	5	core	Checksums work_id guard on item
+src_tab.rs.diff	66	1-31	5	core	checksum start looks item up and takes its work_id
+src_tab.rs.diff	67	1-9	5	core	Checksums messages carry work_id
+src_tab.rs.diff	68	1-1	5	core	Checksums Err arm moved
+src_tab.rs.diff	69	1-37	13	core	cd block no longer stats; carries cd_selection (file redirect decided off-thread)
+src_tab.rs.diff	70	1-2	6	core	sort_options returns SortOptions
+src_tab.rs.diff	71	1-7	6	core	resort_if_ordered_by
+src_tab.rs.diff	71	8-8	4,6	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	71	9-18	4	core	fetches_children_count
+src_tab.rs.diff	71	19-19	4,8	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	71	20-27	8	core	thumbnail_is_displayed
+src_tab.rs.diff	71	28-28	6,8	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_tab.rs.diff	71	29-32	6	core	sorted_items doc comment
+src_tab.rs.diff	72	1-17	6	core	sorted_items cache body, sorted_indices signature

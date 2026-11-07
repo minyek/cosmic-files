@@ -1,0 +1,29 @@
+diff --git a/src/item/thumbnail.rs b/src/item/thumbnail.rs
+index 5a4a56b..a12bcf4 100644
+--- a/src/item/thumbnail.rs
++++ b/src/item/thumbnail.rs
+@@ -16,2 +16,4 @@ use crate::thumbnailer::thumbnailer;
+-/// Files larger than this get a truncated preview (first N bytes only).
+-const TEXT_PREVIEW_MAX_BYTES: usize = 256 * 1024; // 256 KiB
++/// Files larger than this get a truncated preview (first N bytes only). Shaping holds the
++/// process-wide font system and costs more than linear in the input, so this is sized for what
++/// the preview can show.
++pub(crate) const TEXT_PREVIEW_MAX_BYTES: usize = 16 * 1024; // 16 KiB
+@@ -19 +21,3 @@ const TEXT_PREVIEW_MAX_BYTES: usize = 256 * 1024; // 256 KiB
+-const TEXT_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MiB
++const TEXT_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MB
++
++const SVG_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MB
+@@ -57,7 +61,2 @@ impl ItemThumbnail {
+-                CachedThumbnail::Valid((thumbnail_path, size)) => {
+-                    // Check original image dimensions even when loading cached thumbnail
+-                    // This prevents trying to load huge images in preview mode
+-                    let original_dims = match image::image_dimensions(path) {
+-                        Ok((width, height)) => Some((width, height)),
+-                        Err(_) => size.map(|s| (s.pixel_size(), s.pixel_size())),
+-                    };
++                CachedThumbnail::Valid((thumbnail_path, _)) => {
++                    let original_dims = image::image_dimensions(path).ok();
+@@ -223 +222 @@ impl ItemThumbnail {
+-            && check_size("svg", 8 * 1000 * 1000)
++            && check_size("svg", SVG_PREVIEW_MAX_FILE_BYTES)

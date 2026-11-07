@@ -1,0 +1,6 @@
+diff --git a/i18n/en/cosmic_files.ftl b/i18n/en/cosmic_files.ftl
+index 4400c08..a8ccb39 100644
+--- a/i18n/en/cosmic_files.ftl
++++ b/i18n/en/cosmic_files.ftl
+@@ -374,0 +375 @@ copy-path = Copy path
++copy-to-clipboard = Copy to clipboard

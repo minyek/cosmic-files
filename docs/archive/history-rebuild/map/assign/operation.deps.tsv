@@ -1,0 +1,10 @@
+56	needs	34	build_replace_item's Err arm (mod.rs H4 body 14-15) is rewritten from Err(_) to Err(err) with {err}; the arm exists only once 34 adds it
+56	needs	42	rename_noreplace's map_err (mod.rs H4 body 60) is rewritten to format the JoinError; the call exists only once 42 adds it
+44	needs	43	finalization (mod.rs H12, H17) finishes writers over the staged file that 43 publishes; the finalization tests assert no staging file is left (H36 78-142)
+45	adjacent	43	TGZ/ZIP name handling (mod.rs H10, H11, H14-H16) edits loops that 43 rewrites to write into the staged file; neighbouring hunks, no call
+42	adjacent	44	test_faults.rs is created by whichever of 42 or 44 lands first; both extend Fault, run_child and the CHILD_DIRECTORY const
+57	needs	40	a_resumed_delete_carries_on (mod.rs H36 body 514) expects the trash step to fail on a missing path, which holds only once 40 propagates the inner trash::delete result; it also uses operation_delete, 40's fixture (H36 458-472)
+43	needs	other:atomic_file	crate::atomic_file::stage and persist_noclobber (mod.rs H8, H18) live in a module outside these diffs
+42	needs	other:i18n	already_exists_error uses fl!(folder-already-exists) and fl!(file-already-exists) (mod.rs H4 body 21-28); keys live in i18n files
+32	needs	other:recents	mod.rs H28 calls crate::recents::remove_recently_used
+34	needs	other:item	build_replace_item calls crate::item::item_from_path (mod.rs H4 body 1-20)

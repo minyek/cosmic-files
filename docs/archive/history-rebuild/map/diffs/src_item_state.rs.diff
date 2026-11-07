@@ -1,0 +1,32 @@
+diff --git a/src/item/state.rs b/src/item/state.rs
+index c3573d2..3a69eda 100644
+--- a/src/item/state.rs
++++ b/src/item/state.rs
+@@ -3,0 +4 @@ use std::cell::Cell;
++use std::sync::atomic;
+@@ -9,0 +11,3 @@ pub struct ItemState {
++    /// Identifies this item's background work (sizes, counts, thumbnails, checksums), so a result
++    /// computed for an entry a rescan has since replaced is not applied to the replacement.
++    pub(crate) work_id: u64,
+@@ -22 +26,2 @@ impl Default for ItemState {
+-            button_id: widget::Id::unique(),
++            button_id: next_button_id(),
++            work_id: next_work_id(),
+@@ -32,0 +38,17 @@ impl Default for ItemState {
++
++/// Identifies an item's button across widget-tree reconciliation.
++///
++/// Widget reconciliation reuses unnamed IDs by position. Named IDs preserve item identity
++/// as virtualized rows move.
++pub(crate) fn next_button_id() -> widget::Id {
++    static NEXT: atomic::AtomicU64 = atomic::AtomicU64::new(0);
++    widget::Id::new(format!(
++        "item-button-{}",
++        NEXT.fetch_add(1, atomic::Ordering::Relaxed)
++    ))
++}
++
++pub(crate) fn next_work_id() -> u64 {
++    static NEXT: atomic::AtomicU64 = atomic::AtomicU64::new(1);
++    NEXT.fetch_add(1, atomic::Ordering::Relaxed)
++}

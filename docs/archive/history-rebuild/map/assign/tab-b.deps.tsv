@@ -1,0 +1,16 @@
+5	needs	4	DirectoryChildren carries work_id and children_count_subscription hashes it; tests rescans_restart_child_counts_and_directory_size_work and only_current_child_counts_and_sizes_are_applied use the child-count subscription and message
+5	needs	3	refreshed_entry/EntryRefresh.work_id and refresh_requests in a_later_refresh_request_supersedes_earlier_results and an_observed_write_invalidates_equal_fingerprint_results
+6	needs	3	a_metadata_refresh_only_discards_the_sort_order_that_reads_it calls tab.refresh_entries via refreshed_entry
+6	needs	4	a_child_count_only_discards_the_sort_order_that_reads_it and size_ordering use DirectoryChildren/child counts (sort by size reads child counts)
+6	needs	5	a_child_count_only_discards... uses entry_work_id (item.state.work_id)
+4	needs	5	hunks 114/136: item.state.work_id passed to children_count_subscription and DirectoryChildren(path, Option, work_id); final form interleaves the two (circular: pick one owner for work_id plumbing)
+4	adjacent	8	hunk 118: thumbnail_is_displayed filter sits inside the loop merged by #4's thumbnails/children_counts counters
+16	needs	2	a_trashed_file_reports_its_size uses TrashItem::for_test (added with the trash symlink-badge tests)
+48	needs	2	trash_item_reads_image_dimensions_from_the_trashed_file uses TrashItem::for_test
+55	needs	2	only_local_path_items_can_be_trashed uses TrashItem::for_test
+55	needs	16	can_trash is tested on ItemMetadata; item.metadata.file_size()/cached_metadata used by the same pane code (weak)
+7	adjacent	2	item.icon(..) replacements (hunks 86, 91, 96-101) sit beside the #7 row/spacer rewrites in list_view and grid_view
+15	needs	48	write_test_png fixture shared with trash_item_reads_image_dimensions_from_the_trashed_file (fixture added by whichever lands first)
+25	needs	13	submitted_location drives Message::EditLocationSubmit returning Command on a Tab; same Command import as tab_location_select test
+13	adjacent	25	both use Command in test imports (list line)
+1	adjacent	16	multi_preview_view block: user_ids/group_ids lines interleaved with #16 cached_metadata lines in hunk 109

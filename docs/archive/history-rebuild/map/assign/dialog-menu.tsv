@@ -1,0 +1,233 @@
+src_menu.rs.diff	1	1-1	19	core	LanguageLoader import unused once parse removed
+src_menu.rs.diff	2	1-1	51	list	Path import for lone_desktop_entry
+src_menu.rs.diff	3	1-34	19	core	MenuSnapshot keeps open menu layout
+src_menu.rs.diff	3	35-35	19,51	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_menu.rs.diff	3	36-52	51	core	lone_desktop_entry: exactly one selected regular file
+src_menu.rs.diff	3	53-53	51,53	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_menu.rs.diff	3	54-58	53	core	DesktopAction{name,exec} immutable command
+src_menu.rs.diff	3	59-59	19,53	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_menu.rs.diff	3	60-61	19	core	DesktopEntryActions struct
+src_menu.rs.diff	3	62-62	53	core	snapshot id field
+src_menu.rs.diff	3	63-65	19	core	DesktopEntryActions actions
+src_menu.rs.diff	3	66-68	19	core	DesktopEntryActions::new
+src_menu.rs.diff	3	69-69	53	core	id from next_work_id
+src_menu.rs.diff	3	70-73	19	core	new end
+src_menu.rs.diff	3	74-88	19	core	from_entry (exec copied: also 53)
+src_menu.rs.diff	3	89-99	19	core	desktop_entry_actions cached lookup with work id
+src_menu.rs.diff	4	1-14	54	core	context_menu split into context_menu_items for tests
+src_menu.rs.diff	5	1-4	54,55	core	delete_item closure via delete_entry_of
+src_menu.rs.diff	6	1-1	19	core	selected_desktop_entry var removed
+src_menu.rs.diff	7	1-6	51	core	desktop-suffix match arm moved to lone_desktop_entry
+src_menu.rs.diff	8	1-12	19	core	inline load_desktop_file parse removed
+src_menu.rs.diff	8	13-13	19	core	desktop_actions from cache
+src_menu.rs.diff	9	1-2	12	core	Trash::is_empty_cached
+src_menu.rs.diff	10	1-2	19	core	launcher branch uses cached snapshot
+src_menu.rs.diff	11	1-8	19	core	actions from snapshot
+src_menu.rs.diff	11	9-9	53	core	ExecEntryAction(snapshot.id, i)
+src_menu.rs.diff	11	10-10	19	core	closing
+src_menu.rs.diff	12	1-2	19	core	unused snapshot without desktop feature
+src_menu.rs.diff	13	1-3	54	core	launcher delete via delete_item (Shift rule)
+src_menu.rs.diff	14	1-2	54	core	trash-folder entry via delete_item
+src_menu.rs.diff	15	1-9	54	core	children delete via delete_item
+src_menu.rs.diff	16	1-2	54	core	delete_item
+src_menu.rs.diff	17	1-6	54	core	key_binds mapping moved into context_menu
+src_menu.rs.diff	18	1-11	55	core	Deletion enum
+src_menu.rs.diff	18	12-30	55	core	deletion_of
+src_menu.rs.diff	18	31-38	55	core	delete_entry_of
+src_menu.rs.diff	18	39-39	54,55	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_menu.rs.diff	18	40-43	54	core	delete_menu_entry head
+src_menu.rs.diff	18	44-44	55	core	Deletion::Permanent arm
+src_menu.rs.diff	18	45-50	54	core	delete_menu_entry arms
+src_menu.rs.diff	18	51-51	54	core	blank
+src_menu.rs.diff	19	1-5	54	core	menu bar old delete mapping removed
+src_menu.rs.diff	19	6-6	54,55	core	menu bar uses delete_entry_of
+src_menu.rs.diff	20	1-2	54	core	menu bar delete_label/delete_action
+src_menu.rs.diff	21	1-1	19,51,53,54,55	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_menu.rs.diff	21	2-3	19,51,53,54,55	fixture	tests module open
+src_menu.rs.diff	21	4-15	19,51,53,54,55	list	test imports
+src_menu.rs.diff	21	16-28	19,51,53,54,55	fixture	selected_items helper
+src_menu.rs.diff	21	29-79	51	test	lone_desktop_entry tests
+src_menu.rs.diff	21	80-83	19,53,54	fixture	desktop_tab
+src_menu.rs.diff	21	84-87	19,53,54,55	fixture	path_tab
+src_menu.rs.diff	21	88-94	19,53,54,55	fixture	tab_showing
+src_menu.rs.diff	21	95-108	19,53,54,55	fixture	tab_at
+src_menu.rs.diff	21	109-120	19,53	fixture	actions helper
+src_menu.rs.diff	21	121-130	19	fixture	action_names helper
+src_menu.rs.diff	21	131-165	53	test	a_desktop_action_keeps_the_command_shown_in_its_menu
+src_menu.rs.diff	21	166-190	53	test	an_obsolete_menu_cannot_run_a_new_snapshots_action
+src_menu.rs.diff	21	191-229	19	test	an_open_menu_keeps_its_layout
+src_menu.rs.diff	21	230-264	19	test	pending/failed parses, valid entry without actions
+src_menu.rs.diff	21	265-276	51	test	socket named .desktop
+src_menu.rs.diff	21	277-321	19	test	obsolete parse cannot erase actions; replacement item
+src_menu.rs.diff	21	322-333	54,55	fixture	deletes_permanently helper
+src_menu.rs.diff	21	334-347	54,55	fixture	delete_entries helper
+src_menu.rs.diff	21	348-360	54	fixture	assert_shift_offers_permanent_delete
+src_menu.rs.diff	21	361-385	54,55	test	delete_menu_entry_label_matches_its_action (54 base, 55 adds Permanent)
+src_menu.rs.diff	21	386-445	55	test	deletion_of_a_selection
+src_menu.rs.diff	21	446-470	54	test	shift offers permanent delete (launcher, ordinary file)
+src_menu.rs.diff	21	471-501	55	test	the_delete_entry_follows_the_tabs_selection
+src_menu.rs.diff	21	502-519	54	test	a_trashed_folders_child_is_deleted_permanently
+src_menu.rs.diff	21	520-536	54,55	fixture	trashed_item (TrashItem::for_test)
+src_menu.rs.diff	21	537-551	54	test	the_trash_offers_its_delete_from_trash_entry
+src_menu.rs.diff	21	552-552	19,51,53,54,55	fixture	closing brace
+src_dialog.rs.diff	1	1-1	32	core	drop update_recently_used import (recents worker)
+src_dialog.rs.diff	2	1-2	18,47	list	Path import: existing_entry_in_dir (18), FolderCreated parent (47)
+src_dialog.rs.diff	3	1-2	33	list	item imports: ItemMetadata/folder_icon_symbolic no longer used after picker metadata/favourite stat removal
+src_dialog.rs.diff	4	1-12	33	core	Dialog::new no canonicalize
+src_dialog.rs.diff	5	1-4	32	core	result published only once completed (after persistence flush)
+src_dialog.rs.diff	6	1-1	47	core	NewFolder variant replaced by multi-line form with error
+src_dialog.rs.diff	6	2-2	33	core	Replace variant replaced by form with request/path
+src_dialog.rs.diff	6	3-8	47	core	NewFolder.error
+src_dialog.rs.diff	6	9-13	33	core	Replace{request,filename,path}
+src_dialog.rs.diff	7	1-6	47	core	Message::FolderCreated
+src_dialog.rs.diff	8	1-4	25	core	Message::NavigationResolved
+src_dialog.rs.diff	9	1-1	27	core	Message::WatcherUpdated
+src_dialog.rs.diff	10	1-1	32	core	Message::PersistenceFlushed
+src_dialog.rs.diff	11	1-6	33	core	Message::SaveChecked
+src_dialog.rs.diff	12	1-9	35	core	TabRescan request id, TabRescanFailed
+src_dialog.rs.diff	13	1-1	25,47	list	App.navigation PendingRequest field (EditLocationSubmit, FolderCreated)
+src_dialog.rs.diff	13	2-2	33	core	App.save_request field
+src_dialog.rs.diff	14	1-1	32	core	App.completed field
+src_dialog.rs.diff	15	1-1	27	core	App.watcher_update_pending field
+src_dialog.rs.diff	16	1-6	32	core	App::close drains persistence
+src_dialog.rs.diff	16	7-7	32,33	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	16	8-13	33	core	invalidate_save
+src_dialog.rs.diff	16	14-36	33	core	check_save spawn_blocking stat
+src_dialog.rs.diff	16	37-37	18,33	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	16	38-49	18	core	existing_entry_in_dir reads scanned listing
+src_dialog.rs.diff	17	1-3	35	core	rescan_tab takes scans.begin request
+src_dialog.rs.diff	18	1-1	35	core	request in TabRescan
+src_dialog.rs.diff	19	1-2	35	core	TabRescanFailed on failure
+src_dialog.rs.diff	20	1-8	35	core	rescan_tab_if_idle
+src_dialog.rs.diff	21	1-1	25,47	core	navigation.invalidate in picker
+src_dialog.rs.diff	21	2-2	33	core	invalidate_save
+src_dialog.rs.diff	22	1-12	33	core	favourites use folder icon, no is_dir stat
+src_dialog.rs.diff	23	1-3	27	core	watched_paths split from update_watcher
+src_dialog.rs.diff	23	4-4	27,33	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	23	5-11	33	core	leave_unmounted_paths (picker follows main window unmount; LOW confidence issue)
+src_dialog.rs.diff	23	12-12	33	core	leave_unmounted_paths invalidates pending navigation
+src_dialog.rs.diff	23	13-13	33	core	leave_unmounted_paths invalidates save check
+src_dialog.rs.diff	23	14-18	33	core	leave_unmounted_paths goes home (LOW confidence issue)
+src_dialog.rs.diff	23	19-19	33	core	realigned diff: brace or blank, owner of its neighbour
+src_dialog.rs.diff	24	1-12	27	core	realigned diff: owner of every old copy of this line
+src_dialog.rs.diff	24	13-13	27	core	realigned diff: brace or blank, owner of its neighbour
+src_dialog.rs.diff	24	14-15	27	core	realigned diff: owner of every old copy of this line
+src_dialog.rs.diff	24	16-18	27	core	realigned diff: brace or blank, owner of its neighbour
+src_dialog.rs.diff	24	19-20	27	core	realigned diff: owner of every old copy of this line
+src_dialog.rs.diff	24	21-32	27	core	watch loop moved to watcher::reconcile
+src_dialog.rs.diff	24	33-38	27	core	update_watcher spawn_blocking reconcile, WatcherUpdated (paths = registered only, also 36)
+src_dialog.rs.diff	24	39-39	36	core	requested set for the stale check (36)
+src_dialog.rs.diff	24	40-49	27	core	update_watcher spawn_blocking reconcile, WatcherUpdated (paths = registered only, also 36)
+src_dialog.rs.diff	24	50-50	36	core	requested set for the stale check (36)
+src_dialog.rs.diff	24	51-54	27	core	update_watcher spawn_blocking reconcile, WatcherUpdated (paths = registered only, also 36)
+src_dialog.rs.diff	25	1-7	27	core	update_watcher spawn_blocking reconcile, WatcherUpdated (paths = registered only, also 36)
+src_dialog.rs.diff	26	1-1	25,47	list	navigation init
+src_dialog.rs.diff	26	2-2	33	list	save_request init
+src_dialog.rs.diff	27	1-1	32	list	completed init
+src_dialog.rs.diff	28	1-1	27	list	watcher_update_pending init
+src_dialog.rs.diff	29	1-6	47	core	NewFolder pattern with error
+src_dialog.rs.diff	30	1-5	18	core	NewFolder dialog reads existing_entry_in_dir instead of stat
+src_dialog.rs.diff	31	1-4	18	core	NewFolder dialog reads existing_entry_in_dir instead of stat
+src_dialog.rs.diff	32	1-1	18	core	NewFolder dialog reads existing_entry_in_dir instead of stat
+src_dialog.rs.diff	33	1-10	18	core	NewFolder dialog reads existing_entry_in_dir instead of stat
+src_dialog.rs.diff	34	1-1	18	core	NewFolder dialog reads existing_entry_in_dir instead of stat
+src_dialog.rs.diff	35	1-5	47	core	show failed-create error in dialog
+src_dialog.rs.diff	36	1-1	47	core	error: None on reopen
+src_dialog.rs.diff	37	1-2	33	core	Replace pattern
+src_dialog.rs.diff	38	1-3	32	core	on_close_requested returns Message::Cancel
+src_dialog.rs.diff	39	1-5	32	core	ignore messages once completed or result pending
+src_dialog.rs.diff	40	1-6	32	core	PersistenceFlushed handler closes window
+src_dialog.rs.diff	41	1-1	25,47	core	Cancel invalidates navigation
+src_dialog.rs.diff	41	2-2	33	core	Cancel invalidates save
+src_dialog.rs.diff	42	1-2	32	core	Cancel closes via self.close()
+src_dialog.rs.diff	43	1-1	33	core	pop_front of Replace page
+src_dialog.rs.diff	43	2-7	33	core	invalidate save when Replace page dismissed
+src_dialog.rs.diff	44	1-2	47	core	NewFolder pattern
+src_dialog.rs.diff	44	3-3	33	core	invalidate_save on new folder
+src_dialog.rs.diff	44	4-5	47	core	navigation.begin and location for FolderCreated
+src_dialog.rs.diff	45	1-31	47	core	create_dir off UI thread then FolderCreated (could also be 33; LOW confidence)
+src_dialog.rs.diff	46	1-6	33	core	Replace confirm re-checks save via check_save
+src_dialog.rs.diff	47	1-1	33	core	invalidate_save
+src_dialog.rs.diff	48	1-37	47	core	FolderCreated handler
+src_dialog.rs.diff	49	1-1	33	core	unmounted holds PathBuf (pairs with leave_unmounted_paths; LOW)
+src_dialog.rs.diff	49	2-2	33	core	removed comment of unmount handling (LOW)
+src_dialog.rs.diff	50	1-11	33	core	unmount handling replaced by leave_unmounted_paths (LOW)
+src_dialog.rs.diff	51	1-1	25,47	core	navigation.invalidate
+src_dialog.rs.diff	51	2-2	33	core	invalidate_save
+src_dialog.rs.diff	52	1-1	47	core	NewFolder error: None
+src_dialog.rs.diff	53	1-50	33	core	no fs::metadata on watch events
+src_dialog.rs.diff	54	1-2	35	core	rescan_tab_if_idle on NotifyEvents
+src_dialog.rs.diff	55	1-3	27	core	realigned diff: owner of every old copy of this line
+src_dialog.rs.diff	55	4-4	27	core	restores the watcher (27's form in a4a0c806)
+src_dialog.rs.diff	55	5-7	27	core	realigned diff: owner of every old copy of this line
+src_dialog.rs.diff	55	8-10	27	core	realigned diff: brace or blank, owner of its neighbour
+src_dialog.rs.diff	56	1-7	33	core	Open path gathering replaced by selected_paths_with_dir cached metadata
+src_dialog.rs.diff	56	8-15	32	core	update_recently_used call removed from Open
+src_dialog.rs.diff	56	16-16	33	core	closing brace of removed Open loop
+src_dialog.rs.diff	56	17-18	33	core	realigned diff: brace or blank, owner of its neighbour
+src_dialog.rs.diff	56	19-19	33	core	Open uses selected_paths_with_dir
+src_dialog.rs.diff	57	1-10	33	core	Open decides dir-vs-file from cached metadata
+src_dialog.rs.diff	58	1-1	33	core	result_opt Open
+src_dialog.rs.diff	58	2-2	32	core	window::close replaced by close()
+src_dialog.rs.diff	58	3-8	32	core	record_recently_used
+src_dialog.rs.diff	58	9-11	33	core	Open result mapped from (path,is_dir)
+src_dialog.rs.diff	58	12-12	32	core	close drains persistence
+src_dialog.rs.diff	59	1-2	32	core	Cancel closes via close()
+src_dialog.rs.diff	60	1-14	33	core	Save uses check_save, no inline is_dir/exists
+src_dialog.rs.diff	61	1-35	33	core	SaveChecked handler
+src_dialog.rs.diff	61	36-36	33	core	return self.close() inside the SaveChecked arm 33 adds (uses 32s close)
+src_dialog.rs.diff	61	37-38	33	core	SaveChecked end
+src_dialog.rs.diff	62	1-12	25	core	NavigationResolved handler
+src_dialog.rs.diff	63	1-5	25,33	core	typed location edit invalidates pending navigation and save check
+src_dialog.rs.diff	63	6-6	33	core	invalidate_save is 33s; 25 only invalidates navigation
+src_dialog.rs.diff	63	7-7	25,33	core	typed location edit invalidates pending navigation and save check
+src_dialog.rs.diff	64	1-7	33	core	Filename edit invalidates stale Replace confirmation
+src_dialog.rs.diff	65	1-1	25,47	core	navigation.invalidate
+src_dialog.rs.diff	65	2-2	33	core	invalidate_save
+src_dialog.rs.diff	66	1-1	25	core	Command::EditLocationSubmit arm
+src_dialog.rs.diff	66	2-2	33	core	invalidate_save
+src_dialog.rs.diff	66	3-16	25	core	EditLocationSubmit resolves off UI thread
+src_dialog.rs.diff	67	1-11	35	core	TabRescan/TabRescanFailed use scans.finish
+src_dialog.rs.diff	68	1-9	35	core	focus task restructured to thread rescan_pending
+src_dialog.rs.diff	69	1-17	35	core	run pending follow-up rescan
+src_dialog.rs.diff	70	1-1	25,27,32,33,35,36,47	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	2-11	32,33,35,36,47,25,27	fixture	tests module header and imports
+src_dialog.rs.diff	70	12-12	32,33,35,36,47,25,27	fixture	blank
+src_dialog.rs.diff	70	13-32	32,33,35,36,47,25,27	fixture	save_dialog helper
+src_dialog.rs.diff	70	33-33	32,33,35,36,47,25,27	fixture	blank
+src_dialog.rs.diff	70	34-41	32,33,35,36,47,25,27	fixture	task_result helper
+src_dialog.rs.diff	70	42-42	32,33,35,36,47,25,27	fixture	blank
+src_dialog.rs.diff	70	43-218	32	test	picker_completion: save/cancel/close wait for queued recents
+src_dialog.rs.diff	70	219-219	32,36	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	220-240	36	test	a_failed_watch_does_not_resubmit_without_a_new_request
+src_dialog.rs.diff	70	241-241	32,36	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	242-255	32	test	a_picker_result_waits_for_persistence_before_closing
+src_dialog.rs.diff	70	256-256	32,33	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	257-271	33	test	a_picker_leaves_unmounted_parent_paths (LOW)
+src_dialog.rs.diff	70	272-272	33	test	blank
+src_dialog.rs.diff	70	273-284	33	test	save_navigation_intent_invalidates_an_earlier_save_check
+src_dialog.rs.diff	70	285-285	33	test	blank
+src_dialog.rs.diff	70	286-325	33	test	save-check staleness tests (edit back, repeated, survive)
+src_dialog.rs.diff	70	326-326	33,35	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	327-339	35	test	old picker scan cannot replace newer listing
+src_dialog.rs.diff	70	340-340	35	test	blank
+src_dialog.rs.diff	70	341-356	35	test	direct scan cannot release newer watcher scan
+src_dialog.rs.diff	70	357-357	35	test	blank
+src_dialog.rs.diff	70	358-370	35	test	failed scan releases only its own request
+src_dialog.rs.diff	70	371-371	33,35	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	372-482	33	test	save defers to stat; SaveChecked cases
+src_dialog.rs.diff	70	483-483	33,47	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	484-507	47	test	failed folder creation reports in dialog
+src_dialog.rs.diff	70	508-508	47	test	blank
+src_dialog.rs.diff	70	509-527	47	test	created folder opens
+src_dialog.rs.diff	70	528-574	33	test	stale SaveChecked ignored cases
+src_dialog.rs.diff	70	575-575	25,33	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	576-600	25	test	submitting a picker location
+src_dialog.rs.diff	70	601-601	25	test	blank
+src_dialog.rs.diff	70	602-618	25	test	older navigation cannot replace newer
+src_dialog.rs.diff	70	619-619	25,33	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	620-638	33	test	confirming replacement cannot switch name
+src_dialog.rs.diff	70	639-680	27	test	picker watch updates reconcile during worker
+src_dialog.rs.diff	70	681-681	27,47	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_dialog.rs.diff	70	682-718	47	test	created folder stale navigation; failed creation after cancel
+src_dialog.rs.diff	70	719-719	32,33,35,36,47,25,27	fixture	closing brace of tests mod

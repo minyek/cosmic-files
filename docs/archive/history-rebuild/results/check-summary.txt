@@ -1,0 +1,50 @@
+01 bc5523bf OK  tests=47 missing-named=0 Look up each owner and group once per frame in the multi-sel
+02 dff28fb5 OK  tests=47 missing-named=0 Build search results in the search worker
+03 1076b396 OK  tests=60 missing-named=0 Run at most one rescan per folder, with one queued follow-up
+04 5cf5c631 OK  tests=89 missing-named=0 Rescan only what changed and keep computed item state
+05 70763e12 OK  tests=93 missing-named=0 Cache the sort order and rebuild it only when its inputs cha
+06 1e2d9f7a OK  tests=96 missing-named=0 Clear the gallery's per-image state together
+07 b16ba1e5 OK  tests=103 missing-named=0 Show a badge on symlinked folders in list and grid views
+08 82fffa0b OK  tests=104 missing-named=0 Read the dimensions of a trashed image from the trashed copy
+09 8fd5a2ce OK  tests=112 missing-named=0 Build list and grid rows only for the visible range
+10 b1f2ee56 OK  tests=115 missing-named=0 Build text previews only where one is displayed
+11 0b1be915 OK  tests=117 missing-named=0 Show a large folder's entries while it is still being scanne
+12 66ae9e51 OK  tests=118 missing-named=0 Draw icons without waiting on a slow file read
+13 c990d616 OK  tests=127 missing-named=0 Type files from their names first, and never type unknown na
+14 cb30e203 OK  tests=133 missing-named=0 Offer the launcher menu only for a single .desktop file
+15 05724391 OK  tests=140 missing-named=0 Parse a .desktop file once per context menu and run the acti
+16 7f7ad730 OK  tests=140 missing-named=0 Classify deletes off the UI thread
+17 b41bc80f OK  tests=150 missing-named=0 Make every Delete permanently menu entry delete permanently
+18 66d4f51a OK  tests=151 missing-named=0 Resolve launch locations off the UI thread
+19 705db6d7 OK  tests=159 missing-named=0 Stage compressed archives and keep an existing archive
+20 988c02db OK  tests=160 missing-named=0 Reuse scanned metadata instead of statting items again
+21 5edfd453 OK  tests=178 missing-named=0 Resolve navigation and typed locations off the UI thread
+22 d7662902 OK  tests=180 missing-named=0 Sniff the types of opened files off the UI thread
+23 1ce61f85 OK  tests=182 missing-named=0 Check network favourites off the UI thread
+24 29a1acb1 OK  tests=217 missing-named=0 Record recents, defaults and picker results off the UI threa
+25 36bd820d OK  tests=219 missing-named=0 Update the file watcher off the UI thread
+26 10dc7455 OK  tests=222 missing-named=0 Watch a folder again after its watch failed
+27 d252ced6 OK  tests=222 missing-named=0 Parse a .desktop file off the UI thread when launching it
+28 5f7f1262 OK  tests=223 missing-named=0 Stop the New, Rename and Compress dialogs statting on every 
+29 1b12e478 OK  tests=227 missing-named=0 Show an error when New folder fails in the file picker
+30 e2b52972 OK  tests=230 missing-named=0 Check the Trash state off the UI thread
+31 dad4b3e3 OK  tests=232 missing-named=0 Read cached metadata in the properties pane
+32 5003a24a OK  tests=236 missing-named=0 Stop the sidebar context menu statting its entry on every fr
+33 b60e5ffb OK  tests=238 missing-named=0 Write pasted clipboard data off the UI thread without a name
+34 625760fb OK  tests=239 missing-named=0 Build and save the Open-with application cache off the UI th
+35 656cd6c0 OK  tests=242 missing-named=0 Keep a .desktop segment inside a default terminal id
+36 d151bd98 OK  tests=246 missing-named=0 Cache the default terminal instead of asking xdg-mime each t
+37 7d6da344 OK  tests=250 missing-named=0 Build the item for sidebar Open with and Preview off the UI 
+38 ecd611b7 OK  tests=254 missing-named=0 Cap the operation history
+39 de41da54 OK  tests=255 missing-named=0 Test that a failed move to Trash is reported
+40 60376c03 OK  tests=268 missing-named=0 Fix pausing, resuming and cancelling file operations
+41 364affaa OK  tests=270 missing-named=0 Report a failure while finishing an archive
+42 7e96a3f1 OK  tests=270 missing-named=0 Build the overwrite dialog's items off the async runtime
+43 9576a693 OK  tests=277 missing-named=0 Refuse to rename over a file that appeared under the new nam
+44 00eb6ecd OK  tests=280 missing-named=0 Update compio so an idle runtime is not counted as IO wait
+45 fdaafbd5 OK  tests=284 missing-named=0 Make the Failed operations text selectable and copyable
+46 6891318f OK  tests=286 missing-named=0 Include file names that are not valid UTF-8 in archives
+47 e8ad24d0 OK  tests=291 missing-named=0 Type files in GVFS URI listings as files
+48 a5705966 OK  tests=291 missing-named=0 Name the SVG preview size limit
+49 f9bf7e12 OK  tests=291 missing-named=0 Log rather than panic when the notification task fails to ru
+50 72cd5aff OK  tests=291 missing-named=0 Remove the unused Tab::items_opt_mut

@@ -1,0 +1,17 @@
+diff --git a/src/trash/fallback.rs b/src/trash/fallback.rs
+index ce3637a..5169261 100644
+--- a/src/trash/fallback.rs
++++ b/src/trash/fallback.rs
+@@ -18,0 +19,12 @@ pub struct TrashItem {
++#[cfg(test)]
++impl TrashItem {
++    /// An entry for the trashed copy at `trashed`, deleted from `original_path`.
++    pub(crate) fn for_test(trashed: PathBuf, original_path: PathBuf, _size: TrashItemSize) -> Self {
++        Self {
++            name: trashed.file_name().unwrap_or_default().to_owned(),
++            original_path,
++            time_deleted: None,
++        }
++    }
++}
++

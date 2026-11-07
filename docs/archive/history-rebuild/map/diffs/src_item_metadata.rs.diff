@@ -1,0 +1,44 @@
+diff --git a/src/item/metadata.rs b/src/item/metadata.rs
+index b8fffb0..be41b98 100644
+--- a/src/item/metadata.rs
++++ b/src/item/metadata.rs
+@@ -3,0 +4 @@ use std::time::{Duration, SystemTime};
++use super::can_trash;
+@@ -31,0 +33,10 @@ impl ItemMetadata {
++    /// Whether deleting the item can move it to the Trash. A trash entry is already there.
++    pub fn can_trash(&self) -> bool {
++        match self {
++            Self::Path { metadata, .. } => can_trash(metadata),
++            Self::Trash { .. } | Self::SimpleDir { .. } | Self::SimpleFile { .. } => false,
++            #[cfg(feature = "gvfs")]
++            Self::GvfsPath { .. } => false,
++        }
++    }
++
+@@ -69,0 +81,26 @@ impl ItemMetadata {
++    /// A directory whose child count the scan deliberately left unread.
++    pub(crate) fn children_count_pending(&self) -> bool {
++        match self {
++            Self::Path {
++                metadata,
++                children_opt,
++            } => metadata.is_dir() && children_opt.is_none(),
++            #[cfg(feature = "gvfs")]
++            Self::GvfsPath {
++                children_opt,
++                is_dir,
++                ..
++            } => *is_dir && children_opt.is_none(),
++            _ => false,
++        }
++    }
++
++    pub(crate) fn set_children_count(&mut self, children: usize) {
++        match self {
++            Self::Path { children_opt, .. } => *children_opt = Some(children),
++            #[cfg(feature = "gvfs")]
++            Self::GvfsPath { children_opt, .. } => *children_opt = Some(children),
++            _ => {}
++        }
++    }
++

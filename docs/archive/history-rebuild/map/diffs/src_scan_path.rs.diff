@@ -1,0 +1,40 @@
+diff --git a/src/scan/path.rs b/src/scan/path.rs
+index adc97ea..4e599e6 100644
+--- a/src/scan/path.rs
++++ b/src/scan/path.rs
+@@ -9,0 +10 @@ use crate::trash::item_from_trash_child;
++use rayon::prelude::*;
+@@ -45,0 +47 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
++                gio::FILE_ATTRIBUTE_STANDARD_IS_SYMLINK.as_str(),
+@@ -83 +85 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
+-                items = entries
++                let dir_entries: Vec<fs::DirEntry> = entries
+@@ -85 +87 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
+-                        let entry = entry_res
++                        entry_res
+@@ -93 +95,12 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
+-                            .ok()?;
++                            .ok()
++                    })
++                    .collect();
++
++                if let Some(hidden_file) = dir_entries
++                    .iter()
++                    .find(|entry| entry.file_name().to_str() == Some(".hidden"))
++                    .map(fs::DirEntry::path)
++                    .filter(|path| path.is_file())
++                {
++                    hidden_files = parse_hidden_file(&hidden_file);
++                }
+@@ -94,0 +108,6 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
++                // Each entry's metadata read and MIME sniff is an independent syscall; run
++                // them concurrently so a large or slow-mount directory doesn't serialize
++                // every entry's I/O behind the last one.
++                items = dir_entries
++                    .into_par_iter()
++                    .filter_map(|entry| {
+@@ -109,4 +127,0 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
+-                        if name == ".hidden" && path.is_file() {
+-                            hidden_files = parse_hidden_file(&path);
+-                        }
+-

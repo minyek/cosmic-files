@@ -1,0 +1,11 @@
+diff --git a/src/item/fs_kind.rs b/src/item/fs_kind.rs
+index 0aa7103..191311f 100644
+--- a/src/item/fs_kind.rs
++++ b/src/item/fs_kind.rs
+@@ -4,0 +5,6 @@ use std::sync::LazyLock;
++/// Whether deleting the file with this metadata moves it to the Trash. This app trashes files
++/// on local filesystems only and deletes the rest permanently, after asking.
++pub fn can_trash(metadata: &Metadata) -> bool {
++    FsKind::new(metadata) == FsKind::Local
++}
++

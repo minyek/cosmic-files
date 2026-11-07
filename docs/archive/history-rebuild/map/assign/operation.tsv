@@ -1,0 +1,124 @@
+src_operation_controller.rs.diff	1	1-3	57	core	Controller::wait_for signature
+src_operation_controller.rs.diff	2	1-10	57	core	wait_for: Notified created before the state read
+src_operation_controller.rs.diff	3	1-3	57	core	wait_for: await the pre-created Notified
+src_operation_controller.rs.diff	4	1-11	57	core	check() via wait_for
+src_operation_controller.rs.diff	5	1-2	57	core	pause doc comment
+src_operation_controller.rs.diff	6	1-2	57	core	pause via transition(Running->Paused)
+src_operation_controller.rs.diff	7	1-9	57	core	until_paused via wait_for
+src_operation_controller.rs.diff	8	1-12	57	core	until_unpaused via wait_for
+src_operation_controller.rs.diff	9	1-2	57	core	unpause doc comment
+src_operation_controller.rs.diff	10	1-19	57	core	unpause via transition; new transition() compare-and-swap
+src_operation_controller.rs.diff	11	1-114	57	test	controller::tests module
+src_operation_recursive.rs.diff	1	1-2	57	core	gio_file_copy: pause_rx no longer mut
+src_operation_recursive.rs.diff	2	1-4	57	core	copy_fut no longer fused/mut
+src_operation_recursive.rs.diff	3	1-2	57	core	progress_fut plain async block
+src_operation_recursive.rs.diff	4	1-2	57	core	progress_fut closing
+src_operation_recursive.rs.diff	5	1-20	57	core	glib loop replaced by run_pausable
+src_operation_recursive.rs.diff	6	1-1	57	core	glib_loop2.quit() after run_pausable
+src_operation_recursive.rs.diff	7	1-3	57	core	comment: cancel or failure ends the paused copy
+src_operation_recursive.rs.diff	8	1-2	57	core	gio copy waits with check() instead of until_unpaused
+src_operation_recursive.rs.diff	9	1-12	57	core	gio copy ends with the cancel; closing braces
+src_operation_recursive.rs.diff	9	13-40	57	core	run_pausable (drops the watch read guard before waiting; ends on closed channel)
+src_operation_recursive.rs.diff	10	1-68	57	test	recursive::tests: run_pausable tests
+src_operation_test_faults.rs.diff	1	1-3	42,44	list	imports
+src_operation_test_faults.rs.diff	1	4-5	42,44	list	imports (Command, Path, CommandExt)
+src_operation_test_faults.rs.diff	1	6-6	42,44	fixture	CHILD_DIRECTORY env name
+src_operation_test_faults.rs.diff	1	7-8	42	fixture	RENAME_ERRNO env name
+src_operation_test_faults.rs.diff	1	9-10	42,44	fixture	enum Fault open
+src_operation_test_faults.rs.diff	1	11-11	44	fixture	Fault::FileSizeLimit
+src_operation_test_faults.rs.diff	1	12-13	42	fixture	Fault::RenameError
+src_operation_test_faults.rs.diff	1	14-29	42,44	fixture	Fault close, child_directory, run_child start
+src_operation_test_faults.rs.diff	1	30-33	42	fixture	run_child: pass rename errno
+src_operation_test_faults.rs.diff	1	34-36	42,44	fixture	run_child: pre_exec
+src_operation_test_faults.rs.diff	1	37-52	44	fixture	FileSizeLimit fault (SIGXFSZ ignore, RLIMIT_FSIZE 0)
+src_operation_test_faults.rs.diff	1	53-54	42	fixture	RenameError arm
+src_operation_test_faults.rs.diff	1	55-72	42,44	fixture	run_child tail: run and assert the child
+src_operation_test_faults.rs.diff	1	73-114	42	fixture	install_rename_fault (seccomp filter)
+src_operation_test_faults.rs.diff	1	115-133	42	fixture	assert_rename_fault
+
+src_operation_mod.rs.diff	1	1-1	56	core	use compio::runtime::JoinError (0.19 API; 0.18 tasks fail with Box<dyn Any>)
+src_operation_mod.rs.diff	2	1-1	34	core	drop item_from_path import; handle_replace now calls build_replace_item
+src_operation_mod.rs.diff	3	1-3	42,44	list	#[cfg(all(test,unix))] mod test_faults; used by rename fault test (42) and finalization fault tests (44)
+src_operation_mod.rs.diff	4	1-13	34	core	build_replace_item (spawn_blocking item_from_path)
+src_operation_mod.rs.diff	4	14-15	34,56	core	Err arm of build_replace_item: 0.18 form is Err(_) + fixed message; 0.19 form logs the JoinError
+src_operation_mod.rs.diff	4	16-19	34	core	build_replace_item tail
+src_operation_mod.rs.diff	4	20-20	34,42	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	4	21-42	42	core	already_exists_error + rename_noreplace (renameat2 RENAME_NOREPLACE)
+src_operation_mod.rs.diff	4	44-53	42	core	already_exists_error + rename_noreplace (renameat2 RENAME_NOREPLACE)
+src_operation_mod.rs.diff	4	55-55	42	core	already_exists_error + rename_noreplace (renameat2 RENAME_NOREPLACE)
+src_operation_mod.rs.diff	4	62-63	42	core	already_exists_error + rename_noreplace (renameat2 RENAME_NOREPLACE)
+src_operation_mod.rs.diff	4	65-74	42	core	rename_noreplace remainder (EEXIST mapping, non-linux Unsupported)
+src_operation_mod.rs.diff	5	1-8	34	core	handle_replace item_from via build_replace_item
+src_operation_mod.rs.diff	6	1-9	34	core	handle_replace item_to via build_replace_item
+src_operation_mod.rs.diff	7	1-2	56	core	copy_or_move map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	8	1-2	43	core	Compress: crate::atomic_file::stage(&to)
+src_operation_mod.rs.diff	9	1-12	43	core	Compress TGZ writes into the staged file (BufWriter over staged.as_file_mut)
+src_operation_mod.rs.diff	9	15-16	43	core	Compress TGZ writes into the staged file (BufWriter over staged.as_file_mut)
+src_operation_mod.rs.diff	10	1-2	45	core	TGZ: relative_path no longer filtered by to_str()
+src_operation_mod.rs.diff	11	1-13	45	core	TGZ appends with the raw relative path instead of skipping non-UTF-8 names
+src_operation_mod.rs.diff	12	1-4	44	core	TGZ finalize: into_inner, GzEncoder::finish, flush with errors propagated
+src_operation_mod.rs.diff	13	1-6	43	core	Compress ZIP writes into the staged file
+src_operation_mod.rs.diff	14	1-2	45	core	ZIP: relative_path no longer filtered by to_str()
+src_operation_mod.rs.diff	15	3-3	45	core	ZIP: non-UTF-8 name fails the operation (ok_or_else)
+src_operation_mod.rs.diff	23	1-2	44	core	ZIP finish error propagated, then flush
+src_operation_mod.rs.diff	24	4-6	43	core	Compress: sync_all, cancel check, persist_noclobber
+src_operation_mod.rs.diff	24	9-10	43	core	Compress: sync_all, cancel check, persist_noclobber
+src_operation_mod.rs.diff	25	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	26	1-6	57	core	Delete loop: remove futures::executor::block_on of controller.check()
+src_operation_mod.rs.diff	26	7-12	57	core	Delete loop: await controller.check() (plus comment)
+src_operation_mod.rs.diff	27	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	28	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	29	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	30	1-2	56	core	map_err(wrap_compio_spawn_error)?? -> operation_error_from_join
+src_operation_mod.rs.diff	31	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	32	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	33	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	34	1-2	32	core	remove_recently_used via crate::recents
+src_operation_mod.rs.diff	35	1-2	42	core	Rename uses rename_noreplace
+src_operation_mod.rs.diff	36	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	37	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	38	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	39	1-2	56	core	map_err(wrap_compio_spawn_error) -> operation_error_from_join
+src_operation_mod.rs.diff	40	1-31	56	core	wrap_compio_spawn_error replaced by operation_error_from_join(JoinError)
+src_operation_mod.rs.diff	41	1-5	56	test	test imports: JoinError, OperationErrorType, operation_error_from_join
+src_operation_mod.rs.diff	42	1-28	43	test	compress_existing_target helper
+src_operation_mod.rs.diff	42	29-38	43	test	compress_preserves_an_existing_zip/tgz
+src_operation_mod.rs.diff	42	39-67	43	test	compress_missing_source helper
+src_operation_mod.rs.diff	42	68-76	43	test	failed_zip/tgz_leaves_no_destination
+src_operation_mod.rs.diff	42	77-77	43,44	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	42	78-122	44	test	compress_finalization_failure helper (uses test_faults)
+src_operation_mod.rs.diff	42	123-141	44	test	zip/tgz_finalization_failure_* tests
+src_operation_mod.rs.diff	42	142-142	43,44	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	42	143-173	43	test	compress_cancelled helper
+src_operation_mod.rs.diff	42	174-183	43	test	cancelled_zip/tgz_leaves_no_destination
+src_operation_mod.rs.diff	42	184-209	43	test	compressed_fixture helper
+src_operation_mod.rs.diff	42	210-239	43	test	published_zip/tgz_is_readable
+src_operation_mod.rs.diff	42	240-240	43,45	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	42	241-273	45	test	compress_non_utf8_source helper
+src_operation_mod.rs.diff	42	274-302	45	test	tgz_preserves/zip_rejects non-UTF-8 tests
+src_operation_mod.rs.diff	42	303-303	42,45	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	42	304-339	42	test	rename_preserves_* destination tests
+src_operation_mod.rs.diff	42	340-353	42	fixture	operation_rename helper used by the rename tests (42 only)
+src_operation_mod.rs.diff	42	354-456	42	test	rename_* tests incl. fails_closed (uses test_faults)
+src_operation_mod.rs.diff	42	457-457	40,42,57	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	42	458-472	40,57	fixture	operation_delete helper used by delete_surfaces_error_when_trash_fails (40) and a_resumed_delete_carries_on (57)
+src_operation_mod.rs.diff	42	473-538	57	test	spawn_paused_delete, a_paused_delete_leaves_the_runtime_free, a_resumed_delete_carries_on
+src_operation_mod.rs.diff	42	539-539	40,57	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_operation_mod.rs.diff	42	540-557	40	test	delete_surfaces_error_when_trash_fails
+src_operation_mod.rs.diff	43	1-35	56	test	operation_error_from_join tests (panic payload kept, other panic, cancel)
+src_operation_mod.rs.diff	4	43-43	42	core	rename_noreplace: EEXIST mapped inside the blocking task (review fix)
+src_operation_mod.rs.diff	4	54-54	42	core	rename_noreplace: EEXIST mapped inside the blocking task (review fix)
+src_operation_mod.rs.diff	4	56-61	42	core	rename_noreplace: EEXIST mapped inside the blocking task (review fix)
+src_operation_mod.rs.diff	4	64-64	42,56	core	rename_noreplace spawn_blocking map_err (0.18 vs 0.19 form)
+src_operation_mod.rs.diff	9	13-14	43	core	Compress TGZ GzEncoder::new args re-wrapped
+src_operation_mod.rs.diff	15	1-2	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	15	4-16	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	16	1-5	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	17	1-20	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	18	1-10	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	19	1-10	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	20	1-40	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	21	1-15	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	22	1-4	45	core	ZIP: loop body dedented once the to_str() if-let is gone (rustfmt)
+src_operation_mod.rs.diff	24	1-3	43	core	Compress: sync_all and persist_noclobber re-wrapped
+src_operation_mod.rs.diff	24	7-8	43	core	Compress: sync_all and persist_noclobber re-wrapped

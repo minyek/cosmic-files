@@ -69,7 +69,7 @@ Background work no longer piles up, applies stale results or grows without bound
 
 File operations no longer overwrite or truncate files unexpectedly, and they report what actually happened.
 
-- Move to Trash reports an error when the file could not be trashed, instead of success. ([#40](https://github.com/minyek/cosmic-files/issues/40))
+- A test pins that a move to Trash that fails is reported as an error, not as success. ([#40](https://github.com/minyek/cosmic-files/issues/40))
 - Rename refuses to replace a file that appeared under the new name. ([#42](https://github.com/minyek/cosmic-files/issues/42))
 - Compress never overwrites an existing file, and a failed or cancelled compress leaves no partial archive. ([#43](https://github.com/minyek/cosmic-files/issues/43))
 - A compress that fails while finishing the archive reports the error. ([#44](https://github.com/minyek/cosmic-files/issues/44))
@@ -88,6 +88,9 @@ File operations no longer overwrite or truncate files unexpectedly, and they rep
 - Default terminal ids keep a .desktop segment in the middle of the name. ([#52](https://github.com/minyek/cosmic-files/issues/52))
 - A launcher action always runs the command its menu showed. ([#53](https://github.com/minyek/cosmic-files/issues/53))
 - An idle cosmic-files is no longer counted as waiting on IO on Linux 6.15 and later, so it no longer makes its login session report IO pressure. ([#56](https://github.com/minyek/cosmic-files/issues/56))
+- The SVG preview's 8 MB size limit has a name of its own, next to the text preview's. ([#59](https://github.com/minyek/cosmic-files/issues/59))
+- A notification task that fails to run is logged instead of crashing the app. ([#60](https://github.com/minyek/cosmic-files/issues/60))
+- An unused tab helper is removed. ([#61](https://github.com/minyek/cosmic-files/issues/61))
 
 ### New features and improvements
 

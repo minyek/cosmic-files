@@ -1,0 +1,202 @@
+diff --git a/src/operation/controller.rs b/src/operation/controller.rs
+index 691316c..7a652f6 100644
+--- a/src/operation/controller.rs
++++ b/src/operation/controller.rs
+@@ -43 +43,2 @@ impl Controller {
+-    pub async fn check(&self) -> Result<(), ControllerState> {
++    /// Waits until `ready` returns a value for the current state, and returns that value.
++    async fn wait_for<T>(&self, mut ready: impl FnMut(ControllerState) -> Option<T>) -> T {
+@@ -45,5 +46,5 @@ impl Controller {
+-            match self.state() {
+-                ControllerState::Cancelled => return Err(ControllerState::Cancelled),
+-                ControllerState::Failed => return Err(ControllerState::Failed),
+-                ControllerState::Paused => (),
+-                ControllerState::Running => return Ok(()),
++            // Created before the state is read: it receives every notify_waiters() after this
++            // point, so a change between the read and the wait still wakes it.
++            let notified = self.inner.notify.notified();
++            if let Some(value) = ready(self.state()) {
++                return value;
+@@ -51,2 +52 @@ impl Controller {
+-
+-            self.inner.notify.notified().await;
++            notified.await;
+@@ -55,0 +56,11 @@ impl Controller {
++    /// Waits while paused; then `Ok` when running, or the state that ended the operation.
++    pub async fn check(&self) -> Result<(), ControllerState> {
++        self.wait_for(|state| match state {
++            ControllerState::Cancelled => Some(Err(ControllerState::Cancelled)),
++            ControllerState::Failed => Some(Err(ControllerState::Failed)),
++            ControllerState::Paused => None,
++            ControllerState::Running => Some(Ok(())),
++        })
++        .await
++    }
++
+@@ -93,0 +105,2 @@ impl Controller {
++    /// Pauses a running operation. Any other state is left alone, so a cancel or failure is
++    /// never turned back into a pause that a resume would restart.
+@@ -95 +108 @@ impl Controller {
+-        self.set_state(ControllerState::Paused);
++        self.transition(ControllerState::Running, ControllerState::Paused);
+@@ -102,7 +115,2 @@ impl Controller {
+-        loop {
+-            if matches!(self.state(), ControllerState::Paused) {
+-                return;
+-            }
+-
+-            self.inner.notify.notified().await;
+-        }
++        self.wait_for(|state| (state == ControllerState::Paused).then_some(()))
++            .await;
+@@ -115,10 +123,2 @@ impl Controller {
+-        loop {
+-            if !matches!(
+-                self.state(),
+-                ControllerState::Paused | ControllerState::Cancelled | ControllerState::Failed
+-            ) {
+-                return;
+-            }
+-
+-            self.inner.notify.notified().await;
+-        }
++        self.wait_for(|state| (state == ControllerState::Running).then_some(()))
++            .await;
+@@ -126,0 +127,2 @@ impl Controller {
++    /// Resumes a paused operation. Any other state is left alone, so a cancel or failure that
++    /// races a resume is never undone.
+@@ -128,2 +130,17 @@ impl Controller {
+-        if !self.is_cancelled() | !self.is_failed() {
+-            self.set_state(ControllerState::Running);
++        self.transition(ControllerState::Paused, ControllerState::Running);
++    }
++
++    /// Moves the state from `from` to `to`, waking waiters, only if it is still `from`.
++    fn transition(&self, from: ControllerState, to: ControllerState) {
++        let changed = self
++            .inner
++            .state
++            .compare_exchange(
++                from.into(),
++                to.into(),
++                atomic::Ordering::Relaxed,
++                atomic::Ordering::Relaxed,
++            )
++            .is_ok();
++        if changed {
++            self.inner.notify.notify_waiters();
+@@ -150,0 +168,114 @@ impl Drop for Controller {
++
++#[cfg(test)]
++mod tests {
++    use std::future::Future;
++    use std::pin::{Pin, pin};
++    use std::task::{Context, Poll};
++
++    use cosmic::iced::futures::task::noop_waker;
++
++    use super::{Controller, ControllerState};
++
++    /// Polls `future` once, without an executor, so a test can tell "woken and done" from
++    /// "still waiting" without a clock.
++    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
++        let waker = noop_waker();
++        future.poll(&mut Context::from_waker(&waker))
++    }
++
++    // The cancel button stays offered next to Pause until the task sees the cancel, so pausing
++    // must not turn a cancelled operation back into a paused one that a resume would restart.
++    #[test]
++    fn pausing_a_cancelled_operation_keeps_it_cancelled() {
++        let controller = Controller::default();
++        controller.cancel();
++        controller.pause();
++        assert_eq!(controller.state(), ControllerState::Cancelled);
++    }
++
++    #[test]
++    fn pausing_a_failed_operation_keeps_it_failed() {
++        let controller = Controller::default();
++        controller.set_state(ControllerState::Failed);
++        controller.pause();
++        assert_eq!(controller.state(), ControllerState::Failed);
++    }
++
++    // A resume wakes an operation already waiting on its pause.
++    #[test]
++    fn a_resume_wakes_a_waiting_check() {
++        let controller = Controller::default();
++        controller.pause();
++        let mut check = pin!(controller.check());
++        assert!(poll_once(check.as_mut()).is_pending());
++
++        controller.unpause();
++
++        assert_eq!(poll_once(check.as_mut()), Poll::Ready(Ok(())));
++    }
++
++    // A state change made after the wait reads the state but before it starts waiting still
++    // ends the wait: the predicate below resumes the controller on its first call, which lands
++    // exactly in that gap.
++    #[test]
++    fn a_change_between_reading_the_state_and_waiting_is_not_lost() {
++        let controller = Controller::default();
++        controller.pause();
++        let resumer = controller.clone();
++        let mut calls = 0;
++        let mut wait = pin!(controller.wait_for(|state| {
++            calls += 1;
++            if calls == 1 {
++                resumer.unpause();
++                return None;
++            }
++            (state == ControllerState::Running).then_some(())
++        }));
++
++        assert_eq!(poll_once(wait.as_mut()), Poll::Ready(()));
++    }
++
++    // A cancelled or failed operation stops waiting for a resume, so a paused copy that is
++    // then cancelled ends instead of waiting for ever.
++    #[test]
++    fn a_cancel_ends_a_wait_for_resume() {
++        let controller = Controller::default();
++        controller.pause();
++        let mut wait = pin!(controller.check());
++        assert!(poll_once(wait.as_mut()).is_pending());
++
++        controller.cancel();
++
++        assert_eq!(
++            poll_once(wait.as_mut()),
++            Poll::Ready(Err(ControllerState::Cancelled))
++        );
++    }
++
++    // "Resume all" unpauses every pending operation, including one the user just cancelled
++    // that has not yet seen the cancel; it must stay cancelled.
++    #[test]
++    fn unpausing_a_cancelled_operation_keeps_it_cancelled() {
++        let controller = Controller::default();
++        controller.pause();
++        controller.cancel();
++        controller.unpause();
++        assert_eq!(controller.state(), ControllerState::Cancelled);
++    }
++
++    #[test]
++    fn unpausing_a_failed_operation_keeps_it_failed() {
++        let controller = Controller::default();
++        controller.set_state(ControllerState::Failed);
++        controller.unpause();
++        assert_eq!(controller.state(), ControllerState::Failed);
++    }
++
++    #[test]
++    fn unpausing_a_paused_operation_resumes_it() {
++        let controller = Controller::default();
++        controller.pause();
++        controller.unpause();
++        assert_eq!(controller.state(), ControllerState::Running);
++    }
++}

@@ -1,0 +1,103 @@
+Cargo.toml.diff	1	1-1	9	core	rayon = "1"
+Cargo.toml.diff	2	1-2	56	core	compio 0.18 -> 0.19
+TESTING.md.diff	1	1-2	54	core	checklist wording Permanently delete -> Delete permanently
+TESTING.md.diff	1	3-3	55	core	checklist line for network drive and trashed folder children
+i18n_en_cosmic_files.ftl.diff	1	1-1	41	core	copy-to-clipboard key
+res_icons_emblem-symbolic-link.svg.diff	1	1-4	2	core	badge icon
+src_item_fs_kind.rs.diff	1	1-6	55	core	can_trash(metadata)
+src_item_metadata.rs.diff	1	1-1	55	core	use super::can_trash
+src_item_metadata.rs.diff	2	1-10	55	core	ItemMetadata::can_trash
+src_item_metadata.rs.diff	3	1-26	4	core	children_count_pending, set_children_count
+src_item_mod.rs.diff	1	1-1	2	core	use stack! for the badge overlay in Item::icon
+src_item_mod.rs.diff	2	1-1	5	core	use SystemTime for ItemFingerprint
+src_item_mod.rs.diff	3	1-2	55	core	pub use fs_kind::can_trash (FsKind was already exported)
+src_item_mod.rs.diff	4	1-1	3,19	list	pub(crate) use next_work_id; users: tab.rs refresh_requests (3), menu.rs DesktopEntryActions id (19); defined by 5
+src_item_mod.rs.diff	5	1-2	8	test	TEXT_PREVIEW_MAX_BYTES re-export under cfg(test) for the cap test
+src_item_mod.rs.diff	6	1-11	13	core	folder_name no longer stats the path
+src_item_mod.rs.diff	7	1-1	4	core	drops the TODO about counting children in the background, next to the removed count (item_from_entry); gvfs item still counts; low confidence
+src_item_mod.rs.diff	8	1-1	2	core	item_from_gvfs_info is_symlink_dir
+src_item_mod.rs.diff	9	1-6	2	core	item_from_entry: read link metadata, follow to target
+src_item_mod.rs.diff	10	1-19	4	core	item_from_entry no longer counts children; dir_size if-expression
+src_item_mod.rs.diff	11	1-1	2	core	item_from_entry is_symlink_dir
+src_item_mod.rs.diff	12	1-4	4	core	children_opt: None with comment
+src_item_mod.rs.diff	13	1-3	5	core	ItemFingerprint type
+src_item_mod.rs.diff	14	1-1	2	core	Item.is_symlink_dir field
+src_item_mod.rs.diff	15	1-3	5	core	Item::fingerprint
+src_item_mod.rs.diff	15	4-4	2,5	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_item_mod.rs.diff	15	5-31	2	core	Item::icon with symlink badge overlay
+src_item_mod.rs.diff	16	1-5	16	core	file_metadata -> cached_metadata (no I/O)
+src_item_mod.rs.diff	17	1-18	16	core	drop GvfsPath fs::metadata arm; dir_size_text helper
+src_item_mod.rs.diff	18	1-22	16	core	details pane: is_dir from cached ItemMetadata, uses dir_size_text
+src_item_mod.rs.diff	19	1-10	16	core	details pane: file size from metadata.file_size() (also gives trash items a size)
+src_item_mod.rs.diff	20	1-4	16	rewrap	dedent after the metadata if-let is removed
+src_item_mod.rs.diff	21	1-10	16	core	cached_metadata taken once; created time from cache
+src_item_mod.rs.diff	22	1-12	16	core	created time from cached_metadata; modified time from ItemMetadata
+src_item_mod.rs.diff	23	1-12	16	core	modified time from ItemMetadata
+src_item_mod.rs.diff	24	1-9	16	core	accessed time from cached_metadata
+src_item_mod.rs.diff	25	1-6	16	core	permissions block gated on cached_metadata (let-chain)
+src_item_mod.rs.diff	26	1-23	16	rewrap	permission controls dedented one level; no content change (git diff -w), owner/group/other blocks reorder only as diff alignment
+src_item_mod.rs.diff	27	1-40	16	rewrap	permission controls dedented one level; no content change (git diff -w), owner/group/other blocks reorder only as diff alignment
+src_item_mod.rs.diff	28	1-11	16	rewrap	permission controls dedented one level; no content change (git diff -w), owner/group/other blocks reorder only as diff alignment
+src_item_mod.rs.diff	29	1-2	16	rewrap	permission controls dedented one level; no content change (git diff -w), owner/group/other blocks reorder only as diff alignment
+src_item_mod.rs.diff	30	1-4	16	rewrap	permission controls dedented one level; no content change (git diff -w), owner/group/other blocks reorder only as diff alignment
+src_item_mod.rs.diff	31	1-19	16	rewrap	permission controls dedented one level; no content change (git diff -w), owner/group/other blocks reorder only as diff alignment
+src_item_mod.rs.diff	32	1-5	15	core	image dimensions from Item.image_dimensions, not image_dimensions(path) per frame
+src_item_mod.rs.diff	33	1-3	16	core	checksum/size block gated on !metadata.is_dir() instead of file_metadata()
+src_item_mod.rs.diff	34	1-11	26	core	preview Open button decided from cached metadata
+src_item_state.rs.diff	1	1-1	5,7	list	use std::sync::atomic: next_work_id (5), next_button_id (7)
+src_item_state.rs.diff	2	1-3	5	core	ItemState.work_id field
+src_item_state.rs.diff	3	1-2	7	core	button_id: next_button_id() replaces widget::Id::unique()
+src_item_state.rs.diff	3	3-3	5	core	work_id: next_work_id() in Default
+src_item_state.rs.diff	4	1-12	7	core	next_button_id (stable named ids)
+src_item_state.rs.diff	4	13-13	5,7	list	blank line between the two helpers
+src_item_state.rs.diff	4	14-17	5	core	next_work_id
+src_item_thumbnail.rs.diff	1	1-6	8	core	TEXT_PREVIEW_MAX_BYTES 256 KiB -> 16 KiB, pub(crate) for tests
+src_item_thumbnail.rs.diff	2	1-4	59	core	TEXT_PREVIEW_MAX_FILE_BYTES comment 8 MiB->8 MB plus new SVG_PREVIEW_MAX_FILE_BYTES const; no issue names it. Arrived with old commit 9351ef6 (trashed-size fix). Nearest: #8 (same size-cap block) but not claimed
+src_item_thumbnail.rs.diff	3	1-9	15	core	cached-thumbnail branch: original dims from image_dimensions(path).ok(), no invented size (cached_thumbnails_do_not_invent_original_dimensions)
+src_item_thumbnail.rs.diff	4	1-2	59	core	check_size("svg", SVG_PREVIEW_MAX_FILE_BYTES): use of the unassigned const; moves with H2
+src_location.rs.diff	1	1-3	13	core	use fmt, Path
+src_location.rs.diff	2	1-1	13	core	drop use fs
+src_location.rs.diff	3	1-6	13	core	lexically_normalize
+src_location.rs.diff	4	1-16	13	core	normalize without canonicalize/is_dir
+src_mounter_gvfs.rs.diff	1	1-1	50	core	request standard::content-type
+src_mounter_gvfs.rs.diff	2	1-1	2	core	request standard::is-symlink
+src_mounter_gvfs.rs.diff	3	1-11	50	core	mime_for_file_info
+src_mounter_gvfs.rs.diff	3	12-12	50	core	blank
+src_mounter_gvfs.rs.diff	4	1-3	50	core	network_scan mime from mime_for_file_info
+src_mounter_gvfs.rs.diff	5	1-1	2	core	network_scan is_symlink_dir
+src_mounter_gvfs.rs.diff	6	1-4	2,50	list	cfg(test) mod tests header and use super::*
+src_mounter_gvfs.rs.diff	6	5-19	50	fixture	file_info helper (used by the 50 tests only)
+src_mounter_gvfs.rs.diff	6	20-62	50	test	mime_for_file_info tests
+src_mounter_gvfs.rs.diff	6	63-63	2,50	list	blank line before an item; applied with either neighbour (rustfmt collapses doubles)
+src_mounter_gvfs.rs.diff	6	64-78	2	test	symlink_folder_badges_are_loaded_by_gio_directory_listings
+src_mounter_gvfs.rs.diff	6	79-79	2,50	list	closing brace of tests mod
+src_scan_desktop.rs.diff	1	1-1	2	core	is_symlink_dir: false on desktop entries
+src_scan_mod.rs.diff	1	1-1	35	core	mod state
+src_scan_mod.rs.diff	2	1-1	35	core	pub(crate) use ScanState
+src_scan_path.rs.diff	1	1-1	9	core	use rayon::prelude::*
+src_scan_path.rs.diff	2	1-1	2	core	gio scan_path requests standard::is-symlink
+src_scan_path.rs.diff	3	1-2	9	core	collect entries, read .hidden first, into_par_iter
+src_scan_path.rs.diff	4	1-2	9	core	collect entries, read .hidden first, into_par_iter
+src_scan_path.rs.diff	5	1-13	9	core	collect entries, read .hidden first, into_par_iter
+src_scan_path.rs.diff	6	1-6	9	core	collect entries, read .hidden first, into_par_iter
+src_scan_path.rs.diff	7	1-4	9	core	collect entries, read .hidden first, into_par_iter
+src_scan_state.rs.diff	1	1-33	35	core	ScanState: begin, defer_if_running, finish
+src_scan_state.rs.diff	1	34-70	35	test	scan::tests (an_old_completion..., bursts_request_only_one_followup, a_new_scan_covers...)
+src_trash_fallback.rs.diff	1	1-12	54,55	fixture	TrashItem::for_test; users: trash/gvfs test (2), tab test (48), menu/app/tab tests (54,55)
+src_trash_gvfs.rs.diff	1	1-14	2,48,54,55	fixture	TrashItem::for_test (gvfs backend); users as in fallback.rs
+src_trash_gvfs.rs.diff	2	1-3	48	core	image_dimensions of the original path removed
+src_trash_gvfs.rs.diff	2	4-4	2,48	core	trashed_path_opt (#2 uses it for is_symlink_dir, #48 for image_dimensions)
+src_trash_gvfs.rs.diff	2	5-8	48	core	image_dimensions read from the trashed copy
+src_trash_gvfs.rs.diff	2	9-10	2	core	is_symlink_dir of a trash entry from the stored path
+src_trash_gvfs.rs.diff	3	1-1	2	core	is_symlink_dir field in the trash Item
+src_trash_gvfs.rs.diff	4	1-38	2	test	trashed_symlink_folder_badges_use_the_stored_path
+src_trash_mod.rs.diff	1	1-1	12	core	use LazyLock, Mutex
+src_trash_mod.rs.diff	2	1-31	12	core	TrashState, TRASH_STATE
+src_trash_mod.rs.diff	3	1-1	12	core	doc: backend query is for background threads
+src_trash_mod.rs.diff	4	1-21	12	core	is_empty_cached, begin_refresh, finish_refresh
+src_trash_mod.rs.diff	5	1-2	12	core	icon reads is_empty_cached
+src_trash_mod.rs.diff	6	1-2	12	core	icon_symbolic reads is_empty_cached
+src_trash_mod.rs.diff	7	1-89	12	test	trash::tests (the_icon_reads_the_cache..., review_an_old_trash_result..., a_superseded_trash_result...)
+tests_drag_selection.rs.diff	1	1-220	7	test	drag selection over culled rows (grid and list)
+tests_symlink_badges.rs.diff	1	1-99	2	fixture	render_item, with_test_icon, folder_and_symlink; used by the 2 tests of this file only
+tests_symlink_badges.rs.diff	1	100-251	2	test	six symlink badge tests

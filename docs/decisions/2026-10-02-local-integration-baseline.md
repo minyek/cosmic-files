@@ -1,5 +1,10 @@
 # Baseline for local integration
 
+> **Superseded (2026-11).** The history rebuild replaced the combined-improvement squash `66dac3f`
+> with one commit per issue on top of upstream `e03001c`; see
+> [the history rebuild](../archive/history-rebuild/history-rebuild-spec.md). The old history is on
+> the tag `backup/master-pre-history-2026-11`.
+
 Use `b326e48` as the parent of the combined-improvement squash. It preserves the
 twelve upstream commits already included in the tested combined branch. The old
 main tip, `06278ee`, is its ancestor, so main can advance by fast-forward after
