@@ -1,6 +1,7 @@
 #[cfg(feature = "desktop")]
 use cosmic::desktop::fde::{DesktopEntry, get_languages_from_env};
 use cosmic::iced::advanced::text;
+use cosmic::iced::widget::stack;
 use cosmic::iced::{Alignment, ContentFit, Length};
 use cosmic::{Element, cosmic_theme, theme, widget};
 use mime_guess::{Mime, mime};
@@ -319,6 +320,7 @@ pub fn item_from_gvfs_info(path: PathBuf, file_info: gio::FileInfo, sizes: IconS
         name: file_name.into(),
         display_name,
         is_mount_point: false,
+        is_symlink_dir: is_dir && file_info.is_symlink(),
         metadata: ItemMetadata::GvfsPath {
             mtime,
             size_opt,
@@ -357,6 +359,12 @@ pub fn item_from_entry(
     metadata: fs::Metadata,
     sizes: IconSizes,
 ) -> Item {
+    let is_symlink = metadata.is_symlink();
+    let metadata = if is_symlink {
+        fs::metadata(&path).unwrap_or(metadata)
+    } else {
+        metadata
+    };
     let mut is_desktop = false;
     let mut is_gvfs = false;
 
@@ -427,6 +435,7 @@ pub fn item_from_entry(
         name,
         display_name,
         is_mount_point: false,
+        is_symlink_dir: metadata.is_dir() && (is_symlink || path.is_symlink()),
         metadata: ItemMetadata::Path {
             metadata,
             // Counting children costs one directory read per entry, almost all of them off
@@ -486,6 +495,7 @@ pub(crate) type ItemFingerprint = (Option<SystemTime>, Option<u64>);
 pub struct Item {
     pub name: String,
     pub is_mount_point: bool,
+    pub is_symlink_dir: bool,
     pub display_name: String,
     pub metadata: ItemMetadata,
     pub hidden: bool,
@@ -503,6 +513,33 @@ pub struct Item {
 impl Item {
     pub(crate) fn fingerprint(&self) -> ItemFingerprint {
         (self.metadata.modified(), self.metadata.file_size())
+    }
+
+    pub(crate) fn icon(
+        &self,
+        handle: &widget::icon::Handle,
+        size: u16,
+    ) -> Element<'static, Message> {
+        let icon = widget::icon::icon(handle.clone())
+            .content_fit(ContentFit::Contain)
+            .size(size);
+        if !self.is_symlink_dir {
+            return icon.into();
+        }
+
+        static SYMLINK_BADGE: LazyLock<widget::icon::Handle> = LazyLock::new(|| {
+            widget::icon::from_svg_bytes(
+                include_bytes!("../../res/icons/emblem-symbolic-link.svg").as_slice(),
+            )
+        });
+        let badge = widget::icon::icon(SYMLINK_BADGE.clone()).size((size / 3).max(8).min(size));
+        stack![
+            icon,
+            widget::container(badge)
+                .align_left(Length::Fixed(f32::from(size)))
+                .align_bottom(Length::Fixed(f32::from(size)))
+        ]
+        .into()
     }
 
     pub(crate) fn display_name(name: &str) -> String {

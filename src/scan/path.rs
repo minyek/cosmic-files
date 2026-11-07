@@ -43,6 +43,7 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
                 gio::FILE_ATTRIBUTE_STANDARD_SIZE.as_str(),
                 gio::FILE_ATTRIBUTE_STANDARD_TYPE.as_str(),
                 gio::FILE_ATTRIBUTE_STANDARD_NAME.as_str(),
+                gio::FILE_ATTRIBUTE_STANDARD_IS_SYMLINK.as_str(),
             ]
             .join(",");
 

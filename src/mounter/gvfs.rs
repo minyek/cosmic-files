@@ -26,6 +26,7 @@ standard::type,\
 standard::size,\
 standard::icon,\
 standard::is-hidden,\
+standard::is-symlink,\
 time::modified";
 
 fn resolve_uri(uri: &str) -> (String, gio::File) {
@@ -228,6 +229,7 @@ fn network_scan(uri: &str, sizes: IconSizes) -> Result<Vec<Item>, String> {
         items.push(Item {
             name,
             is_mount_point: false,
+            is_symlink_dir: metadata.is_dir() && info.is_symlink(),
             display_name,
             metadata,
             hidden,
@@ -801,5 +803,26 @@ impl Mounter for Gvfs {
                 )
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_folder_badges_are_loaded_by_gio_directory_listings() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("folder")).unwrap();
+        std::os::unix::fs::symlink("folder", directory.path().join("link")).unwrap();
+        let uri = url::Url::from_directory_path(directory.path()).unwrap();
+        let mut items = network_scan(uri.as_str(), IconSizes::default()).unwrap();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        let badges: Vec<_> = items
+            .iter()
+            .map(|item| (item.name.as_str(), item.is_symlink_dir))
+            .collect();
+        assert_eq!(badges, [("folder", false), ("link", true)]);
     }
 }

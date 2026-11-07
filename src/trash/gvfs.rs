@@ -22,6 +22,20 @@ pub struct TrashItem {
     pub time_deleted: Option<SystemTime>,
 }
 
+#[cfg(test)]
+impl TrashItem {
+    /// An entry for the trashed copy at `trashed`, deleted from `original_path`.
+    pub(crate) fn for_test(trashed: PathBuf, original_path: PathBuf, size: TrashItemSize) -> Self {
+        Self {
+            name: trashed.file_name().unwrap_or_default().to_owned(),
+            file: gio::File::for_path(trashed),
+            original_path,
+            size,
+            time_deleted: None,
+        }
+    }
+}
+
 const SCAN_ATTRIBUTES: &str = "standard::name,\
 standard::display-name,\
 standard::type,\
@@ -125,11 +139,15 @@ pub fn item_from_trash_entry(entry: TrashItem, size: TrashItemSize, sizes: IconS
     let image_dimensions = (mime.type_() == mime::IMAGE)
         .then(|| image::image_dimensions(&entry.original_path).ok())
         .flatten();
+    let trashed_path_opt = location_opt.as_ref().and_then(Location::path_opt);
+    let is_symlink_dir = matches!(size, TrashItemSize::Entries(_))
+        && trashed_path_opt.is_some_and(|path| path.is_symlink());
 
     Item {
         name,
         display_name,
         is_mount_point: false,
+        is_symlink_dir,
         metadata: ItemMetadata::Trash { size, entry },
         hidden: false,
         location_opt,
@@ -357,5 +375,43 @@ impl TrashExt for Trash {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+    use std::os::unix::fs::symlink;
+
+    use tempfile::TempDir;
+
+    use super::{TrashItem, item_from_trash_entry};
+    use crate::config::IconSizes;
+    use crate::trash::TrashItemSize;
+
+    #[test]
+    fn trashed_symlink_folder_badges_use_the_stored_path() -> io::Result<()> {
+        let directory = TempDir::new()?;
+        let stored = directory.path().join("files");
+        let original = directory.path().join("original");
+        std::fs::create_dir_all(stored.join("folder"))?;
+        std::fs::create_dir_all(original.join("folder"))?;
+        symlink("folder", stored.join("link"))?;
+        symlink("folder", original.join("link"))?;
+
+        for (stored_name, original_name, expected) in
+            [("link", "folder", true), ("folder", "link", false)]
+        {
+            let size = TrashItemSize::Entries(0);
+            let entry =
+                TrashItem::for_test(stored.join(stored_name), original.join(original_name), size);
+            let item = item_from_trash_entry(entry, size, IconSizes::default());
+            assert_eq!(
+                item.is_symlink_dir, expected,
+                "incorrect badge for stored {stored_name}"
+            );
+            assert_eq!(item.path_opt(), Some(&stored.join(stored_name)));
+        }
+        Ok(())
     }
 }
