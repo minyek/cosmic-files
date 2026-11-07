@@ -1873,6 +1873,20 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Whether `name` already exists in `dir`, with its directory flag, read from the
+    /// already-scanned listing of a tab showing `dir`: the dialog builders run in `view` every
+    /// frame and must not block on a slow/network mount. `None` means absent, or that no open
+    /// tab is showing `dir`; the create/rename operation remains the authoritative collision
+    /// guard.
+    fn existing_entry_in_dir(&self, dir: &Path, name: &str) -> Option<bool> {
+        self.tab_model.iter().find_map(|entity| {
+            let tab = self.tab_model.data::<Tab>(entity)?;
+            tab.lists_directory(dir)
+                .then(|| tab.find_entry_is_dir(name))
+                .flatten()
+        })
+    }
+
     fn set_cut(&mut self, entity_opt: Option<Entity>) {
         let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
         if let Some(tab) = self.tab_model.data_mut::<Tab>(entity) {
@@ -5919,8 +5933,7 @@ impl Application for App {
                 } else {
                     let extension = archive_type.extension();
                     let name = format!("{name}{extension}");
-                    let path = to.join(&name);
-                    if path.exists() {
+                    if self.existing_entry_in_dir(to, &name).is_some() {
                         dialog =
                             dialog.tertiary_action(widget::text::body(fl!("file-already-exists")));
                         None
@@ -6246,21 +6259,24 @@ impl Application for App {
                     dialog = dialog.tertiary_action(widget::text::body(fl!("name-no-slashes")));
                     None
                 } else {
-                    let path = parent.join(name);
-                    if path.exists() {
-                        if path.is_dir() {
+                    match self.existing_entry_in_dir(parent, name) {
+                        Some(true) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("folder-already-exists")));
-                        } else {
+                            None
+                        }
+                        Some(false) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("file-already-exists")));
+                            None
                         }
-                        None
-                    } else {
-                        if name.starts_with('.') {
-                            dialog = dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                        None => {
+                            if name.starts_with('.') {
+                                dialog =
+                                    dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                            }
+                            Some(Message::DialogComplete)
                         }
-                        Some(Message::DialogComplete)
                     }
                 };
 
@@ -6551,20 +6567,28 @@ impl Application for App {
                     None
                 } else {
                     let path = parent.join(name);
-                    if *from != path && path.exists() {
-                        if path.is_dir() {
+                    // Skip the collision check when renaming to the same path (a no-op rename).
+                    let existing = (*from != path)
+                        .then(|| self.existing_entry_in_dir(parent, name))
+                        .flatten();
+                    match existing {
+                        Some(true) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("folder-already-exists")));
-                        } else {
+                            None
+                        }
+                        Some(false) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("file-already-exists")));
+                            None
                         }
-                        None
-                    } else {
-                        if name.starts_with('.') {
-                            dialog = dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                        None => {
+                            if name.starts_with('.') {
+                                dialog =
+                                    dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                            }
+                            Some(Message::DialogComplete)
                         }
-                        Some(Message::DialogComplete)
                     }
                 };
 
