@@ -7593,7 +7593,9 @@ impl Application for App {
                                         }
                                     })
                                     .await
-                                    .unwrap();
+                                    .unwrap_or_else(|err| {
+                                        log::warn!("failed to run the notification task: {err}");
+                                    });
 
                                     std::future::pending().await
                                 },
