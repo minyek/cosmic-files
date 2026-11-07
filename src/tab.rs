@@ -2542,10 +2542,13 @@ impl Tab {
                     for item in self.items_opt().map_or(Vec::new(), |items| {
                         items.iter().filter(|item| item.state.selected).collect()
                     }) {
+                        // Read the mode from cached metadata only; a gvfs item would need a
+                        // blocking network stat (and chmod over the network would not apply
+                        // anyway), so such items are skipped rather than stat-ed here.
                         #[cfg(unix)]
                         if let (Some(path), Some(mode)) = (
                             item.path_opt(),
-                            item.file_metadata().map(|metadata| metadata.mode()),
+                            item.cached_metadata().map(|metadata| metadata.mode()),
                         ) {
                             permissions.push((path.clone(), set_mode_part(mode, shift, bits)));
                         }
@@ -4685,32 +4688,33 @@ impl Tab {
         for item in selected_items.iter() {
             *mime_type_counts.entry(item.mime.to_string()).or_insert(0) += 1;
 
-            if let Some(metadata) = item.file_metadata() {
-                if metadata.is_dir() {
-                    match &item.dir_size {
-                        DirSize::Calculating(_) => {
-                            calculating_dir_size = true;
-                        }
-                        DirSize::Directory(size) => {
-                            total_size = total_size.saturating_add(*size);
-                        }
-                        DirSize::NotDirectory => (),
-                        DirSize::Error(err) => {
-                            dir_size_error = Some(err.clone());
-                        }
-                    };
-                } else {
-                    total_size = total_size.saturating_add(metadata.len());
-                }
-                #[cfg(unix)]
-                {
-                    let mode = metadata.mode();
-                    user_ids.insert(metadata.uid());
-                    mode_user.insert(get_mode_part(mode, MODE_SHIFT_USER));
-                    group_ids.insert(metadata.gid());
-                    mode_group.insert(get_mode_part(mode, MODE_SHIFT_GROUP));
-                    mode_other.insert(get_mode_part(mode, MODE_SHIFT_OTHER));
-                }
+            if item.metadata.is_dir() {
+                match &item.dir_size {
+                    DirSize::Calculating(_) => {
+                        calculating_dir_size = true;
+                    }
+                    DirSize::Directory(size) => {
+                        total_size = total_size.saturating_add(*size);
+                    }
+                    DirSize::NotDirectory => (),
+                    DirSize::Error(err) => {
+                        dir_size_error = Some(err.clone());
+                    }
+                };
+            } else if let Some(size) = item.metadata.file_size() {
+                total_size = total_size.saturating_add(size);
+            }
+
+            // Ownership and permissions need full metadata, which only a local path caches: a
+            // network item would have to be stat-ed here, on the GUI thread, every frame.
+            #[cfg(unix)]
+            if let Some(metadata) = item.cached_metadata() {
+                let mode = metadata.mode();
+                user_ids.insert(metadata.uid());
+                mode_user.insert(get_mode_part(mode, MODE_SHIFT_USER));
+                group_ids.insert(metadata.gid());
+                mode_group.insert(get_mode_part(mode, MODE_SHIFT_GROUP));
+                mode_other.insert(get_mode_part(mode, MODE_SHIFT_OTHER));
             }
         }
         let mut mime_types: Vec<(String, u64)> = mime_type_counts.into_iter().collect();
@@ -5766,6 +5770,30 @@ mod tests {
         assert!(!tab.scans.defer_if_running());
         let next = tab.scans.begin();
         assert_eq!(tab.scans.finish(next), Some(false));
+
+        Ok(())
+    }
+
+    #[test]
+    fn cached_metadata_reflects_scan_without_restat() -> io::Result<()> {
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let path = fs.path().to_owned();
+        let items = scan_path(&path, IconSizes::default());
+        assert!(!items.is_empty());
+
+        for item in &items {
+            let cached = item.cached_metadata();
+            assert!(cached.is_some(), "local scanned item should cache metadata");
+            assert_eq!(cached.unwrap().is_dir(), item.metadata.is_dir());
+        }
+
+        drop(fs);
+        for item in &items {
+            if let Some(item_path) = item.path_opt() {
+                assert!(!item_path.exists());
+            }
+            assert!(item.cached_metadata().is_some());
+        }
 
         Ok(())
     }
@@ -7045,6 +7073,25 @@ mod tests {
             "a vanished entry should ask the caller for a rescan"
         );
         Ok(())
+    }
+
+    // Trash entries exist only with the gvfs trash backend.
+    #[cfg(feature = "gvfs")]
+    #[test]
+    fn a_trashed_file_reports_its_size() {
+        let size = crate::trash::TrashItemSize::Bytes(1234);
+        let item = item_from_trash_entry(
+            crate::trash::TrashItem::for_test(
+                PathBuf::from("/trash/files/report.pdf"),
+                PathBuf::from("/home/user/documents/report.pdf"),
+                size,
+            ),
+            size,
+            IconSizes::default(),
+        );
+
+        assert!(!item.metadata.is_dir());
+        assert_eq!(item.metadata.file_size(), Some(1234));
     }
 
     /// Submit `typed` through the location bar and return what the off-thread resolver is

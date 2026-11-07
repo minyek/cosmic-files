@@ -579,15 +579,24 @@ impl Item {
         self.mime.type_() == mime::IMAGE || self.mime.type_() == mime::TEXT
     }
 
-    pub fn file_metadata(&self) -> Option<Metadata> {
+    /// Full metadata available without filesystem I/O, so it is safe to read on the GUI thread.
+    /// Only a local path caches it; every other kind of item returns `None` and is rendered from
+    /// the cached [`ItemMetadata`] fields.
+    pub fn cached_metadata(&self) -> Option<Metadata> {
         match &self.metadata {
             ItemMetadata::Path { metadata, .. } => Some(metadata.clone()),
-            #[cfg(feature = "gvfs")]
-            ItemMetadata::GvfsPath { .. } => self.path_opt().and_then(|p| fs::metadata(p).ok()),
-            _ => {
-                //TODO: other metadata types
-                None
-            }
+            _ => None,
+        }
+    }
+
+    /// Human-readable size text for a directory item, from the cached dir-size calculation
+    /// (empty when there is nothing to show).
+    fn dir_size_text(&self) -> String {
+        match &self.dir_size {
+            DirSize::Calculating(_) => fl!("calculating"),
+            DirSize::Directory(size) => format_size(*size),
+            DirSize::NotDirectory => String::new(),
+            DirSize::Error(err) => err.clone(),
         }
     }
 
@@ -694,117 +703,109 @@ impl Item {
             }
         }
 
-        if let Some(metadata) = self.file_metadata() {
-            if metadata.is_dir() {
-                if let Some(children) = self.metadata.children_count() {
-                    details = details.push(widget::text::body(fl!("items", items = children)));
-                }
-                let size = match &self.dir_size {
-                    DirSize::Calculating(_) => fl!("calculating"),
-                    DirSize::Directory(size) => format_size(*size),
-                    DirSize::NotDirectory => String::new(),
-                    DirSize::Error(err) => err.clone(),
-                };
-                if !size.is_empty() {
-                    details = details.push(widget::text::body(fl!("item-size", size = size)));
-                }
-            } else {
-                details = details.push(widget::text::body(fl!(
-                    "item-size",
-                    size = format_size(metadata.len())
-                )));
+        if self.metadata.is_dir() {
+            if let Some(children) = self.metadata.children_count() {
+                details = details.push(widget::text::body(fl!("items", items = children)));
             }
-
-            let date_time_formatter = date_time_formatter(military_time);
-            let time_formatter = time_formatter(military_time);
-
-            if let Ok(time) = metadata.created() {
-                details = details.push(widget::selectable_text::body(fl!(
-                    "item-created",
-                    created = format_time(time, &date_time_formatter, &time_formatter).to_string()
-                )));
+            let size = self.dir_size_text();
+            if !size.is_empty() {
+                details = details.push(widget::text::body(fl!("item-size", size = size)));
             }
+        } else if let Some(size) = self.metadata.file_size() {
+            details = details.push(widget::text::body(fl!(
+                "item-size",
+                size = format_size(size)
+            )));
+        }
 
-            if let Ok(time) = metadata.modified() {
-                details = details.push(widget::selectable_text::body(fl!(
-                    "item-modified",
-                    modified = format_time(time, &date_time_formatter, &time_formatter).to_string()
-                )));
-            }
+        let date_time_formatter = date_time_formatter(military_time);
+        let time_formatter = time_formatter(military_time);
 
-            if let Ok(time) = metadata.accessed() {
-                details = details.push(widget::selectable_text::body(fl!(
-                    "item-accessed",
-                    accessed = format_time(time, &date_time_formatter, &time_formatter).to_string()
-                )));
-            }
+        // Creation and access times, and the permission controls below, need full metadata, which
+        // only a local path caches: any other item would have to be stat-ed here, on the GUI
+        // thread, every frame the preview is shown.
+        let cached_metadata = self.cached_metadata();
 
-            #[cfg(unix)]
-            if let Some(path) = self.path_opt() {
-                use std::os::unix::fs::MetadataExt;
+        if let Some(time) = cached_metadata.as_ref().and_then(|m| m.created().ok()) {
+            details = details.push(widget::selectable_text::body(fl!(
+                "item-created",
+                created = format_time(time, &date_time_formatter, &time_formatter).to_string()
+            )));
+        }
 
-                let mode = metadata.mode();
+        if let Some(time) = self.metadata.modified() {
+            details = details.push(widget::selectable_text::body(fl!(
+                "item-modified",
+                modified = format_time(time, &date_time_formatter, &time_formatter).to_string()
+            )));
+        }
 
-                let user_name = uzers::get_user_by_uid(metadata.uid())
-                    .and_then(|user| user.name().to_str().map(ToOwned::to_owned))
-                    .unwrap_or_default();
-                let user_path = path.clone();
-                settings.push(
-                    widget::settings::item::builder(user_name)
-                        .description(fl!("owner"))
-                        .control(widget::dropdown(
-                            Cow::Borrowed(MODE_NAMES.as_slice()),
-                            Some(get_mode_part(mode, MODE_SHIFT_USER).try_into().unwrap()),
-                            move |selected| {
-                                Message::SetPermissions(
-                                    user_path.clone(),
-                                    set_mode_part(
-                                        mode,
-                                        MODE_SHIFT_USER,
-                                        selected.try_into().unwrap(),
-                                    ),
-                                )
-                            },
-                        )),
-                );
+        if let Some(time) = cached_metadata.as_ref().and_then(|m| m.accessed().ok()) {
+            details = details.push(widget::selectable_text::body(fl!(
+                "item-accessed",
+                accessed = format_time(time, &date_time_formatter, &time_formatter).to_string()
+            )));
+        }
 
-                let group_name = uzers::get_group_by_gid(metadata.gid())
-                    .and_then(|group| group.name().to_str().map(ToOwned::to_owned))
-                    .unwrap_or_default();
-                let group_path = path.clone();
-                settings.push(
-                    widget::settings::item::builder(group_name)
-                        .description(fl!("group"))
-                        .control(widget::dropdown(
-                            Cow::Borrowed(MODE_NAMES.as_slice()),
-                            Some(get_mode_part(mode, MODE_SHIFT_GROUP).try_into().unwrap()),
-                            move |selected| {
-                                Message::SetPermissions(
-                                    group_path.clone(),
-                                    set_mode_part(
-                                        mode,
-                                        MODE_SHIFT_GROUP,
-                                        selected.try_into().unwrap(),
-                                    ),
-                                )
-                            },
-                        )),
-                );
+        #[cfg(unix)]
+        if let Some(metadata) = cached_metadata.as_ref()
+            && let Some(path) = self.path_opt()
+        {
+            use std::os::unix::fs::MetadataExt;
 
-                let other_path = path.clone();
-                settings.push(widget::settings::item::builder(fl!("other")).control(
-                    widget::dropdown(
+            let mode = metadata.mode();
+
+            let user_name = uzers::get_user_by_uid(metadata.uid())
+                .and_then(|user| user.name().to_str().map(ToOwned::to_owned))
+                .unwrap_or_default();
+            let user_path = path.clone();
+            settings.push(
+                widget::settings::item::builder(user_name)
+                    .description(fl!("owner"))
+                    .control(widget::dropdown(
                         Cow::Borrowed(MODE_NAMES.as_slice()),
-                        Some(get_mode_part(mode, MODE_SHIFT_OTHER).try_into().unwrap()),
+                        Some(get_mode_part(mode, MODE_SHIFT_USER).try_into().unwrap()),
                         move |selected| {
                             Message::SetPermissions(
-                                other_path.clone(),
-                                set_mode_part(mode, MODE_SHIFT_OTHER, selected.try_into().unwrap()),
+                                user_path.clone(),
+                                set_mode_part(mode, MODE_SHIFT_USER, selected.try_into().unwrap()),
                             )
                         },
-                    ),
-                ));
-            }
+                    )),
+            );
+
+            let group_name = uzers::get_group_by_gid(metadata.gid())
+                .and_then(|group| group.name().to_str().map(ToOwned::to_owned))
+                .unwrap_or_default();
+            let group_path = path.clone();
+            settings.push(
+                widget::settings::item::builder(group_name)
+                    .description(fl!("group"))
+                    .control(widget::dropdown(
+                        Cow::Borrowed(MODE_NAMES.as_slice()),
+                        Some(get_mode_part(mode, MODE_SHIFT_GROUP).try_into().unwrap()),
+                        move |selected| {
+                            Message::SetPermissions(
+                                group_path.clone(),
+                                set_mode_part(mode, MODE_SHIFT_GROUP, selected.try_into().unwrap()),
+                            )
+                        },
+                    )),
+            );
+
+            let other_path = path.clone();
+            settings.push(
+                widget::settings::item::builder(fl!("other")).control(widget::dropdown(
+                    Cow::Borrowed(MODE_NAMES.as_slice()),
+                    Some(get_mode_part(mode, MODE_SHIFT_OTHER).try_into().unwrap()),
+                    move |selected| {
+                        Message::SetPermissions(
+                            other_path.clone(),
+                            set_mode_part(mode, MODE_SHIFT_OTHER, selected.try_into().unwrap()),
+                        )
+                    },
+                )),
+            );
         }
 
         if let Some((width, height)) = self.image_dimensions {
@@ -812,8 +813,7 @@ impl Item {
         }
         column = column.push(details);
 
-        if let Some(metadata) = self.file_metadata()
-            && !metadata.is_dir()
+        if !self.metadata.is_dir()
             && let Some(path) = self.path_opt()
         {
             let control: Element<'_, Message> = match &self.state.checksums {
