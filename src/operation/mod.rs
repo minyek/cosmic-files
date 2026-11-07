@@ -712,18 +712,16 @@ impl Operation {
                             }
                         }
 
+                        let mut staged = crate::atomic_file::stage(&to)
+                            .map_err(|e| OperationError::from_err(e, &controller))?;
                         match archive_type {
                             ArchiveType::Tgz => {
-                                let mut archive = fs::File::create(&to)
-                                    .map(io::BufWriter::new)
-                                    .map(|w| {
-                                        flate2::write::GzEncoder::new(
-                                            w,
-                                            flate2::Compression::default(),
-                                        )
-                                    })
-                                    .map(tar::Builder::new)
-                                    .map_err(|e| OperationError::from_err(e, &controller))?;
+                                let writer = io::BufWriter::new(staged.as_file_mut());
+                                let encoder = flate2::write::GzEncoder::new(
+                                    writer,
+                                    flate2::Compression::default(),
+                                );
+                                let mut archive = tar::Builder::new(encoder);
 
                                 let total_paths = paths.len();
                                 for (i, path) in paths.iter().enumerate() {
@@ -754,10 +752,8 @@ impl Operation {
                                     .map_err(|e| OperationError::from_err(e, &controller))?;
                             }
                             ArchiveType::Zip => {
-                                let mut archive = fs::File::create(&to)
-                                    .map(io::BufWriter::new)
-                                    .map(zip::ZipWriter::new)
-                                    .map_err(|e| OperationError::from_err(e, &controller))?;
+                                let writer = io::BufWriter::new(staged.as_file_mut());
+                                let mut archive = zip::ZipWriter::new(writer);
 
                                 let total_paths = paths.len();
                                 let mut buffer = vec![0; 4 * 1024 * 1024];
@@ -856,6 +852,16 @@ impl Operation {
                                     .map_err(|e| OperationError::from_err(e, &controller))?;
                             }
                         }
+
+                        staged
+                            .as_file()
+                            .sync_all()
+                            .map_err(|e| OperationError::from_err(e, &controller))?;
+                        futures::executor::block_on(controller.check())
+                            .map_err(|e| OperationError::from_state(e, &controller))?;
+                        staged
+                            .persist_noclobber(&to)
+                            .map_err(|e| OperationError::from_err(e.error, &controller))?;
 
                         Ok(op_sel)
                     },
@@ -1303,6 +1309,181 @@ mod tests {
         };
 
         future::join(handle_messages, handle_copy).await.1
+    }
+
+    async fn compress_existing_target(archive_type: crate::app::ArchiveType) -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        fs::write(&source, b"source")?;
+        fs::write(&target, b"existing archive")?;
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source.clone()],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        let result = future::join(run, drain).await.0;
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target)?, b"existing archive");
+        assert_eq!(fs::read(&source)?, b"source");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn compress_preserves_an_existing_zip() -> io::Result<()> {
+        compress_existing_target(crate::app::ArchiveType::Zip).await
+    }
+
+    #[test(compio::test)]
+    async fn compress_preserves_an_existing_tgz() -> io::Result<()> {
+        compress_existing_target(crate::app::ArchiveType::Tgz).await
+    }
+
+    async fn compress_missing_source(archive_type: crate::app::ArchiveType) -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        fs::write(&source, b"source")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source, dir.path().join("missing.txt")],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        assert!(future::join(run, drain).await.0.is_err());
+        assert!(
+            !target.exists(),
+            "failed compression published a partial archive"
+        );
+        assert_eq!(fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn failed_zip_leaves_no_destination() -> io::Result<()> {
+        compress_missing_source(crate::app::ArchiveType::Zip).await
+    }
+
+    #[test(compio::test)]
+    async fn failed_tgz_leaves_no_destination() -> io::Result<()> {
+        compress_missing_source(crate::app::ArchiveType::Tgz).await
+    }
+
+    async fn compress_cancelled(archive_type: crate::app::ArchiveType) -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        fs::write(&source, b"source")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let controller = Controller::default();
+        controller.cancel();
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), controller)
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        assert!(future::join(run, drain).await.0.is_err());
+        assert!(
+            !target.exists(),
+            "cancelled compression published an archive"
+        );
+        assert_eq!(fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn cancelled_zip_leaves_no_destination() -> io::Result<()> {
+        compress_cancelled(crate::app::ArchiveType::Zip).await
+    }
+
+    #[test(compio::test)]
+    async fn cancelled_tgz_leaves_no_destination() -> io::Result<()> {
+        compress_cancelled(crate::app::ArchiveType::Tgz).await
+    }
+
+    async fn compressed_fixture(
+        archive_type: crate::app::ArchiveType,
+    ) -> io::Result<(tempfile::TempDir, PathBuf)> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source.txt");
+        fs::write(&source, b"source payload")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        assert!(future::join(run, drain).await.0.is_ok());
+        Ok((dir, target))
+    }
+
+    #[test(compio::test)]
+    async fn published_zip_is_readable() -> io::Result<()> {
+        use std::io::Read;
+
+        let (_dir, target) = compressed_fixture(crate::app::ArchiveType::Zip).await?;
+        let mut archive = zip::ZipArchive::new(File::open(target)?)?;
+        assert_eq!(archive.len(), 1);
+        let mut payload = Vec::new();
+        archive.by_name("source.txt")?.read_to_end(&mut payload)?;
+        assert_eq!(payload, b"source payload");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn published_tgz_is_readable() -> io::Result<()> {
+        use std::io::Read;
+
+        let (_dir, target) = compressed_fixture(crate::app::ArchiveType::Tgz).await?;
+        let mut decoded = Vec::new();
+        flate2::read::GzDecoder::new(File::open(target)?).read_to_end(&mut decoded)?;
+        let mut archive = tar::Archive::new(io::Cursor::new(decoded));
+        let mut entries = archive.entries()?;
+        let mut entry = entries.next().unwrap()?;
+        assert_eq!(entry.path()?.as_ref(), std::path::Path::new("source.txt"));
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload)?;
+        assert_eq!(payload, b"source payload");
+        assert!(entries.next().is_none());
+        Ok(())
     }
 
     #[test(compio::test)]

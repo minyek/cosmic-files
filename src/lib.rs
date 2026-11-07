@@ -15,6 +15,7 @@ use crate::location::Location;
 
 pub mod app;
 mod archive;
+mod atomic_file;
 pub mod channel;
 pub mod clipboard;
 pub mod config;
