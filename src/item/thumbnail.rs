@@ -13,8 +13,10 @@ use crate::thumbnail_cacher::{CachedThumbnail, ThumbnailCacher, ThumbnailSize};
 use crate::thumbnailer::thumbnailer;
 
 /// Maximum bytes of text to pass to the editor for preview; caps shaping work to avoid blocking.
-/// Files larger than this get a truncated preview (first N bytes only).
-const TEXT_PREVIEW_MAX_BYTES: usize = 256 * 1024; // 256 KiB
+/// Files larger than this get a truncated preview (first N bytes only). Shaping holds the
+/// process-wide font system and costs more than linear in the input, so this is sized for what
+/// the preview can show.
+pub(crate) const TEXT_PREVIEW_MAX_BYTES: usize = 16 * 1024; // 16 KiB
 /// Maximum file size (bytes) to attempt text preview; files larger than this are skipped entirely.
 const TEXT_PREVIEW_MAX_FILE_BYTES: u64 = 8 * 1000 * 1000; // 8 MiB
 
