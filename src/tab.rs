@@ -299,6 +299,20 @@ fn tab_complete(path: &Path) -> Result<Vec<(String, PathBuf)>, Box<dyn Error>> {
     Ok(completions)
 }
 
+/// Names for a set of owner or group ids. An id that does not resolve becomes the empty string.
+#[cfg(unix)]
+fn distinct_names(
+    ids: impl IntoIterator<Item = u32>,
+    mut lookup: impl FnMut(u32) -> Option<String>,
+) -> BTreeSet<String> {
+    // Each lookup reads the NSS databases, so resolve every distinct id only once.
+    let distinct_ids: BTreeSet<u32> = ids.into_iter().collect();
+    distinct_ids
+        .into_iter()
+        .map(|id| lookup(id).unwrap_or_default())
+        .collect()
+}
+
 #[cfg(feature = "desktop")]
 pub fn parse_desktop_file(path: &Path) -> (Option<String>, Option<String>) {
     let locales = get_languages_from_env();
@@ -4379,9 +4393,9 @@ impl Tab {
 
         let mut total_size: u64 = 0;
         let mut mime_type_counts: BTreeMap<String, u64> = BTreeMap::new();
-        let mut user_name: BTreeSet<String> = BTreeSet::new();
+        let mut user_ids: BTreeSet<u32> = BTreeSet::new();
         let mut mode_user: BTreeSet<u32> = BTreeSet::new();
-        let mut group_name: BTreeSet<String> = BTreeSet::new();
+        let mut group_ids: BTreeSet<u32> = BTreeSet::new();
         let mut mode_group: BTreeSet<u32> = BTreeSet::new();
         let mut mode_other: BTreeSet<u32> = BTreeSet::new();
         let mut calculating_dir_size = false;
@@ -4410,17 +4424,9 @@ impl Tab {
                 #[cfg(unix)]
                 {
                     let mode = metadata.mode();
-                    user_name.insert(
-                        uzers::get_user_by_uid(metadata.uid())
-                            .and_then(|user| user.name().to_str().map(ToOwned::to_owned))
-                            .unwrap_or_default(),
-                    );
+                    user_ids.insert(metadata.uid());
                     mode_user.insert(get_mode_part(mode, MODE_SHIFT_USER));
-                    group_name.insert(
-                        uzers::get_group_by_gid(metadata.gid())
-                            .and_then(|group| group.name().to_str().map(ToOwned::to_owned))
-                            .unwrap_or_default(),
-                    );
+                    group_ids.insert(metadata.gid());
                     mode_group.insert(get_mode_part(mode, MODE_SHIFT_GROUP));
                     mode_other.insert(get_mode_part(mode, MODE_SHIFT_OTHER));
                 }
@@ -4516,6 +4522,15 @@ impl Tab {
                 }
                 title.join(", ")
             }
+
+            let user_name = distinct_names(user_ids, |uid| {
+                uzers::get_user_by_uid(uid)
+                    .and_then(|user| user.name().to_str().map(ToOwned::to_owned))
+            });
+            let group_name = distinct_names(group_ids, |gid| {
+                uzers::get_group_by_gid(gid)
+                    .and_then(|group| group.name().to_str().map(ToOwned::to_owned))
+            });
 
             let mode_part_user = selected_mode_part(mode_user);
             settings.push(
@@ -5696,5 +5711,32 @@ mod tests {
             ),
         }
         Ok(())
+    }
+
+    // The properties pane renders every frame, and each name lookup reads the NSS databases, so
+    // resolving owners must cost one lookup per distinct id however many items share it.
+    #[cfg(unix)]
+    #[test]
+    fn owner_names_resolve_once_per_distinct_id() {
+        // 1,000 items spread over 3 ids, repeated and interleaved.
+        let ids = (0..1000u32).map(|i| i % 3);
+        let mut calls = 0;
+        let names = super::distinct_names(ids, |id| {
+            calls += 1;
+            Some(format!("user{id}"))
+        });
+        assert_eq!(calls, 3);
+        assert_eq!(names.len(), 3);
+    }
+
+    // An id with no passwd or group entry still shows as an empty name, as it did per item.
+    #[cfg(unix)]
+    #[test]
+    fn owner_names_keep_unresolvable_ids_as_empty() {
+        let names = super::distinct_names([1, 2, 2], |id| (id == 1).then(|| "root".to_string()));
+        assert_eq!(
+            names.into_iter().collect::<Vec<_>>(),
+            vec![String::new(), "root".to_string()]
+        );
     }
 }
