@@ -1486,6 +1486,39 @@ mod tests {
         Ok(())
     }
 
+    async fn operation_delete(paths: Vec<PathBuf>) -> Result<OperationSelection, OperationError> {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let handle_delete = async move {
+            Operation::Delete { paths }
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+
+        // Drain progress messages so the bounded channel never blocks the operation.
+        let handle_messages = async move { while rx.next().await.is_some() {} };
+
+        future::join(handle_messages, handle_delete).await.1
+    }
+
+    #[test(compio::test)]
+    async fn delete_surfaces_error_when_trash_fails() -> io::Result<()> {
+        // `trash::delete` fails on a path that does not exist, and that failure has to reach
+        // the caller: reporting success would show the delete as done with nothing trashed.
+        let fs = empty_fs()?;
+        let missing = fs.path().join("does-not-exist");
+        assert!(!missing.exists());
+
+        let result = operation_delete(vec![missing]).await;
+
+        assert!(
+            result.is_err(),
+            "Delete of a nonexistent path should surface an error, not report success"
+        );
+
+        Ok(())
+    }
+
     #[test(compio::test)]
     async fn copy_file_to_same_location() -> io::Result<()> {
         let fs = simple_fs(NUM_FILES, 0, 1, 0, NAME_LEN)?;
