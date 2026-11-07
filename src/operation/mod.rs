@@ -51,6 +51,60 @@ async fn build_replace_item(path: PathBuf) -> Option<Box<crate::item::Item>> {
     }
 }
 
+fn already_exists_error(to: &Path) -> io::Error {
+    let message = if to.is_dir() {
+        fl!("folder-already-exists")
+    } else {
+        fl!("file-already-exists")
+    };
+    io::Error::new(io::ErrorKind::AlreadyExists, message)
+}
+
+async fn rename_noreplace(from: PathBuf, to: PathBuf) -> io::Result<()> {
+    if from == to {
+        // Confirming the dialog with the name unchanged renames a path onto itself.
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let from_c = CString::new(from.as_os_str().as_bytes())?;
+        let to_c = CString::new(to.as_os_str().as_bytes())?;
+        compio::runtime::spawn_blocking(move || {
+            let rc = unsafe {
+                libc::renameat2(
+                    libc::AT_FDCWD,
+                    from_c.as_ptr(),
+                    libc::AT_FDCWD,
+                    to_c.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            if rc == 0 {
+                return Ok(());
+            }
+            let err = io::Error::last_os_error();
+            // Telling a file from a folder stats the target, so it stays off the async runtime.
+            Err(match err.raw_os_error() {
+                Some(libc::EEXIST | libc::ENOTEMPTY) => already_exists_error(&to),
+                _ => err,
+            })
+        })
+        .await
+        .map_err(|_| io::Error::other("compio runtime spawn failed while renaming"))?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "renaming without replacing an existing file is not supported on this platform",
+        ))
+    }
+}
+
 async fn handle_replace(
     msg_tx: Arc<TokioMutex<Sender<Message>>>,
     file_from: PathBuf,
@@ -1145,7 +1199,7 @@ impl Operation {
                         .check()
                         .await
                         .map_err(|s| OperationError::from_state(s, &controller))?;
-                    compio::fs::rename(&from, &to)
+                    rename_noreplace(from.clone(), to.clone())
                         .await
                         .map_err(|e| OperationError::from_err(e, &controller))?;
                     Result::<_, OperationError>::Ok(OperationSelection {
@@ -1565,6 +1619,160 @@ mod tests {
         entry.read_to_end(&mut payload)?;
         assert_eq!(payload, b"source payload");
         assert!(entries.next().is_none());
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_preserves_an_empty_destination_directory() -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        fs::create_dir(&source)?;
+        fs::create_dir(&target)?;
+        assert!(
+            operation_rename(source.clone(), target.clone())
+                .await
+                .is_err()
+        );
+        assert!(source.is_dir());
+        assert!(target.is_dir());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn rename_preserves_a_dangling_destination_symlink() -> io::Result<()> {
+        let dir = empty_fs()?;
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        let missing = dir.path().join("missing");
+        fs::write(&source, b"source")?;
+        std::os::unix::fs::symlink(&missing, &target)?;
+        assert!(
+            operation_rename(source.clone(), target.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(fs::read(&source)?, b"source");
+        assert_eq!(fs::read_link(&target)?, missing);
+        Ok(())
+    }
+
+    async fn operation_rename(
+        from: PathBuf,
+        to: PathBuf,
+    ) -> Result<OperationSelection, OperationError> {
+        let (tx, mut rx) = mpsc::channel(4);
+        let handle_rename = async move {
+            Operation::Rename { from, to }
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let handle_messages = async move { while rx.next().await.is_some() {} };
+        future::join(handle_messages, handle_rename).await.1
+    }
+
+    #[test(compio::test)]
+    async fn rename_refuses_to_replace_an_existing_file() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let from = fs.path().join("draft.txt");
+        let to = fs.path().join("report.txt");
+        fs::write(&from, b"draft")?;
+        fs::write(&to, b"report")?;
+
+        operation_rename(from.clone(), to.clone())
+            .await
+            .expect_err("Renaming onto an existing file should fail");
+
+        assert_eq!(fs::read(&from)?, b"draft", "Source should be untouched");
+        assert_eq!(fs::read(&to)?, b"report", "Target should be untouched");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_refuses_to_replace_an_existing_folder() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let from = fs.path().join("drafts");
+        let to = fs.path().join("reports");
+        fs::create_dir(&from)?;
+        fs::create_dir(&to)?;
+        fs::write(to.join("kept.txt"), b"kept")?;
+
+        operation_rename(from.clone(), to.clone())
+            .await
+            .expect_err("Renaming onto an existing folder should fail");
+
+        assert!(from.exists(), "Source should be untouched");
+        assert_eq!(fs::read(to.join("kept.txt"))?, b"kept");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_onto_itself_succeeds_and_changes_nothing() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let path = fs.path().join("draft.txt");
+        fs::write(&path, b"draft")?;
+
+        operation_rename(path.clone(), path.clone())
+            .await
+            .expect("Confirming an unchanged name should be a no-op");
+
+        assert_eq!(fs::read(&path)?, b"draft");
+        Ok(())
+    }
+
+    #[test(compio::test)]
+    async fn rename_moves_when_the_target_is_free() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let from = fs.path().join("draft.txt");
+        let to = fs.path().join("report.txt");
+        fs::write(&from, b"draft")?;
+
+        operation_rename(from.clone(), to.clone())
+            .await
+            .expect("Renaming to a free name should succeed");
+
+        assert!(!from.exists(), "Source should be gone");
+        assert_eq!(fs::read(&to)?, b"draft");
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test(compio::test)]
+    async fn rename_fails_closed_when_atomic_rename_is_unsupported() -> io::Result<()> {
+        if let Some(dir) = super::test_faults::child_directory() {
+            super::test_faults::assert_rename_fault();
+            operation_rename(dir.join("source"), dir.join("target"))
+                .await
+                .expect_err("unsupported atomic rename should fail closed");
+            return Ok(());
+        }
+
+        for errno in [libc::ENOSYS, libc::EINVAL, libc::EOPNOTSUPP] {
+            for target_exists in [false, true] {
+                let dir = empty_fs()?;
+                let source = dir.path().join("source");
+                let target = dir.path().join("target");
+                fs::write(&source, b"source")?;
+                if target_exists {
+                    fs::write(&target, b"target")?;
+                }
+                super::test_faults::run_child(
+                    "rename_fails_closed_when_atomic_rename_is_unsupported",
+                    dir.path(),
+                    super::test_faults::Fault::RenameError(errno),
+                )?;
+                assert_eq!(fs::read(&source)?, b"source");
+                if target_exists {
+                    assert_eq!(fs::read(&target)?, b"target");
+                } else {
+                    assert!(
+                        !target.exists(),
+                        "unsupported rename published a destination"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
