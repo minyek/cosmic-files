@@ -5485,8 +5485,9 @@ mod tests {
 
     use super::{EntryRefresh, HeadingOptions, Instant, Message, Tab, respond_to_scroll_direction};
     use crate::app::test_utils::{
-        NAME_LEN, NUM_DIRS, NUM_FILES, NUM_HIDDEN, NUM_NESTED, assert_eq_tab_path, empty_fs,
-        eq_path_item, filter_dirs, read_dir_sorted, simple_fs, tab_click_new,
+        NAME_LEN, NUM_DIRS, NUM_FILES, NUM_HIDDEN, NUM_NESTED, assert_eq_tab_path,
+        assert_eq_tab_path_contents, empty_fs, eq_path_item, filter_dirs, read_dir_sorted,
+        simple_fs, tab_click_new,
     };
     use crate::config::{IconSizes, TabConfig, ThumbCfg};
     use crate::item::{
@@ -5606,6 +5607,20 @@ mod tests {
     }
 
     #[test]
+    fn tab_listing_matches_directory_contents() -> io::Result<()> {
+        let fs = simple_fs(NUM_FILES, NUM_HIDDEN, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let path = fs.path();
+
+        let mut tab = test_tab(&fs);
+        tab.set_items(scan_path(&path.to_owned(), IconSizes::default()));
+
+        // Pins name, path, directory-ness, hidden flag and position for every entry, so a
+        // scan that dropped, duplicated or reordered entries fails here.
+        assert_eq_tab_path_contents(&tab, path);
+        Ok(())
+    }
+
+    #[test]
     fn scan_path_returns_empty_vec_for_invalid_path() -> io::Result<()> {
         let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
         let path = fs.path();
@@ -5649,6 +5664,28 @@ mod tests {
             widget::Id::unique(),
             None,
         )
+    }
+
+    #[test]
+    fn an_entry_named_in_dot_hidden_is_marked_hidden() -> io::Result<()> {
+        let fs = TempDir::new()?;
+        let dir = fs.path().to_owned();
+        fs::write(dir.join(".hidden"), "secret.txt\n")?;
+        fs::write(dir.join("secret.txt"), b"x")?;
+        fs::write(dir.join("public.txt"), b"x")?;
+
+        let items = scan_path(&dir, IconSizes::default());
+
+        let hidden = |name: &str| {
+            items
+                .iter()
+                .find(|item| item.name == name)
+                .unwrap_or_else(|| panic!("{name} should be listed"))
+                .hidden
+        };
+        assert!(hidden("secret.txt"));
+        assert!(!hidden("public.txt"));
+        Ok(())
     }
 
     #[test]

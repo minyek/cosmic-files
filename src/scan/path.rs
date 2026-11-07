@@ -7,6 +7,7 @@ use crate::config::IconSizes;
 use crate::item::{self, FsKind, Item};
 use crate::localize::LANGUAGE_SORTER;
 use crate::trash::item_from_trash_child;
+use rayon::prelude::*;
 
 // parse .hidden file and return files path
 pub fn parse_hidden_file(path: &PathBuf) -> Box<[String]> {
@@ -81,9 +82,9 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
         match fs::read_dir(tab_path) {
             Ok(entries) => {
                 let trash = crate::trash::is_trash_path(tab_path);
-                items = entries
+                let dir_entries: Vec<fs::DirEntry> = entries
                     .filter_map(|entry_res| {
-                        let entry = entry_res
+                        entry_res
                             .inspect_err(|err| {
                                 log::warn!(
                                     "failed to read entry in {}: {}",
@@ -91,8 +92,25 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
                                     err
                                 )
                             })
-                            .ok()?;
+                            .ok()
+                    })
+                    .collect();
 
+                if let Some(hidden_file) = dir_entries
+                    .iter()
+                    .find(|entry| entry.file_name().to_str() == Some(".hidden"))
+                    .map(fs::DirEntry::path)
+                    .filter(|path| path.is_file())
+                {
+                    hidden_files = parse_hidden_file(&hidden_file);
+                }
+
+                // Each entry's metadata read and MIME sniff is an independent syscall; run
+                // them concurrently so a large or slow-mount directory doesn't serialize
+                // every entry's I/O behind the last one.
+                items = dir_entries
+                    .into_par_iter()
+                    .filter_map(|entry| {
                         let path = entry.path();
 
                         let name = entry
@@ -106,10 +124,6 @@ pub fn scan_path(tab_path: &PathBuf, sizes: IconSizes) -> Vec<Item> {
                                 )
                             })
                             .ok()?;
-
-                        if name == ".hidden" && path.is_file() {
-                            hidden_files = parse_hidden_file(&path);
-                        }
 
                         let metadata = fs::metadata(&path)
                             .inspect_err(|err| {
