@@ -67,7 +67,7 @@ use crate::config::{
     TimeConfig, TypeToSearch,
 };
 use crate::dialog::{Dialog, DialogKind, DialogMessage, DialogResult, DialogSettings};
-use crate::item::{Item, ItemMetadata, item_from_path};
+use crate::item::{Item, ItemMetadata};
 use crate::key_bind::key_binds;
 use crate::localize::LANGUAGE_SORTER;
 use crate::location::{Location, SearchLocation};
@@ -489,6 +489,7 @@ pub enum Message {
     NavBarContext(Entity),
     NavContextInfoLoaded(Entity, widget::Id, NavContextInfo),
     NavMenuAction(NavMenuAction),
+    NavMenuOpenWith(PathBuf, Box<crate::item::Item>),
     NavSelectChecked {
         entity: Entity,
         tab_entity: Entity,
@@ -557,6 +558,7 @@ pub enum Message {
     PendingPauseAll(bool),
     PermanentlyDelete(Option<Entity>),
     Preview(Option<Entity>),
+    PreviewReady(widget::Id, Option<Entity>, Box<crate::item::Item>),
     ReloadMimeAppCache,
     ReorderTab(ReorderEvent),
     RescanRecents,
@@ -872,6 +874,7 @@ pub struct App {
     nav_context_info: Option<(segmented_button::Entity, NavContextInfo)>,
     nav_context_request: crate::navigation::PendingRequest,
     navigation: crate::navigation::PendingRequest,
+    preview_request: crate::navigation::PendingRequest,
     mime_cache_request: crate::navigation::PendingRequest,
     nav_model: segmented_button::SingleSelectModel,
     tab_model: segmented_button::Model<segmented_button::SingleSelect>,
@@ -1424,6 +1427,7 @@ impl App {
     ) -> (Entity, Task<Message>) {
         if activate {
             self.navigation.invalidate();
+            self.preview_request.invalidate();
         }
         let mut tab = Tab::new(
             location.clone(),
@@ -1935,6 +1939,33 @@ impl App {
         })
     }
 
+    /// Build the [`crate::item::Item`] for `path` off the GUI thread and hand it to `to_message`.
+    /// `item_from_path` does an `fs::metadata` plus a `read_dir`/gvfs stat, which blocks on a
+    /// dead or slow mount.
+    fn item_from_path_task(
+        path: PathBuf,
+        to_message: impl FnOnce(PathBuf, Box<crate::item::Item>) -> Message + Send + 'static,
+    ) -> Task<Message> {
+        Task::future(async move {
+            match tokio::task::spawn_blocking(move || {
+                let item = crate::item::item_from_path(&path, IconSizes::default());
+                (path, item)
+            })
+            .await
+            {
+                Ok((path, Ok(item))) => cosmic::action::app(to_message(path, Box::new(item))),
+                Ok((path, Err(err))) => {
+                    log::warn!("failed to get item from path {}: {}", path.display(), err);
+                    cosmic::action::none()
+                }
+                Err(err) => {
+                    log::warn!("failed to get item from path: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
     fn write_pasted_file(
         to: PathBuf,
         base_name: String,
@@ -1995,6 +2026,7 @@ impl App {
         selection_paths: Option<Vec<PathBuf>>,
     ) -> Task<Message> {
         self.navigation.invalidate();
+        self.preview_request.invalidate();
         let mut title_location_opt = None;
         if let Some(tab) = self.tab_model.data_mut::<Tab>(tab) {
             let location_opt = match term_opt {
@@ -2852,6 +2884,7 @@ impl Application for App {
             nav_context_info: None,
             nav_context_request: crate::navigation::PendingRequest::default(),
             navigation: crate::navigation::PendingRequest::default(),
+            preview_request: crate::navigation::PendingRequest::default(),
             mime_cache_request: crate::navigation::PendingRequest::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
             tab_model: segmented_button::ModelBuilder::default().build(),
@@ -3102,6 +3135,7 @@ impl Application for App {
         // Usually, the Escape key (for example) closes menus and panes one by one instead
         // of closing everything on one press
         if self.core.window.show_context {
+            self.preview_request.invalidate();
             self.set_show_context(false);
             return cosmic::task::message(cosmic::action::app(Message::SetShowDetails(false)));
         }
@@ -4449,6 +4483,7 @@ impl Application for App {
                 }
             }
             Message::Preview(entity_opt) => {
+                self.preview_request.invalidate();
                 match self.mode {
                     Mode::App => {
                         let show_details = !self.config.show_details;
@@ -4644,6 +4679,7 @@ impl Application for App {
                 return self.search_set_active(Some(input));
             }
             Message::SetShowDetails(show_details) => {
+                self.preview_request.invalidate();
                 config_set!(show_details, show_details);
                 return self.update_config();
             }
@@ -4659,6 +4695,7 @@ impl Application for App {
                 return self.update_config();
             }
             Message::TabActivate(entity) => {
+                self.preview_request.invalidate();
                 self.navigation.invalidate();
                 let mut tasks = vec![];
 
@@ -4712,6 +4749,7 @@ impl Application for App {
                 }
             }
             Message::TabClose(entity_opt) => {
+                self.preview_request.invalidate();
                 self.navigation.invalidate();
                 let mut tasks = Vec::with_capacity(2);
 
@@ -4809,6 +4847,7 @@ impl Application for App {
                             }
                         }
                         tab::Command::ChangeLocation(tab_title, tab_path, selection_paths) => {
+                            self.preview_request.invalidate();
                             self.navigation.invalidate();
                             self.activate_nav_model_location(&tab_path);
 
@@ -4948,8 +4987,17 @@ impl Application for App {
                             }
                         }
                         tab::Command::Preview(kind) => {
+                            self.preview_request.invalidate();
                             self.context_page = ContextPage::Preview(Some(entity), kind);
                             self.set_show_context(true);
+                        }
+                        tab::Command::PreviewPath(path) => {
+                            let request = self.preview_request.begin();
+                            // A breadcrumb ancestor can live on a slow mount, so build its item
+                            // off-thread and show it in Message::PreviewReady.
+                            commands.push(Self::item_from_path_task(path, move |_, item| {
+                                Message::PreviewReady(request, Some(entity), item)
+                            }));
                         }
                         tab::Command::SetOpenWith(mime, id) => {
                             self.mime_cache_request.invalidate();
@@ -5156,6 +5204,7 @@ impl Application for App {
                 return self.update_config();
             }
             Message::ToggleContextPage(context_page) => {
+                self.preview_request.invalidate();
                 //TODO: ensure context menus are closed
                 if self.context_page == context_page
                     || matches!(self.context_page, ContextPage::Preview(_, _))
@@ -5556,6 +5605,29 @@ impl Application for App {
                     tab::Message::Location(location),
                 ));
             }
+            Message::NavMenuOpenWith(path, item) => {
+                return self.push_dialog(
+                    DialogPage::OpenWith {
+                        path,
+                        mime: item.mime,
+                        selected: 0,
+                        store_opt: "x-scheme-handler/mime"
+                            .parse::<mime_guess::Mime>()
+                            .ok()
+                            .and_then(|mime| self.mime_app_cache.get(&mime).first().cloned()),
+                        search_app_name: String::new(),
+                    },
+                    None,
+                );
+            }
+            Message::PreviewReady(request, entity_opt, item) => {
+                if !self.preview_request.finish(&request) {
+                    return Task::none();
+                }
+                self.context_page =
+                    ContextPage::Preview(entity_opt, PreviewKind::Custom(PreviewItem(item)));
+                self.set_show_context(true);
+            }
             Message::NavMenuAction(action) => match action {
                 NavMenuAction::ClearRecents => Self::clear_recently_used(),
                 NavMenuAction::EmptyTrash => {
@@ -5579,32 +5651,7 @@ impl Application for App {
                         .and_then(Location::path_opt)
                         .cloned()
                     {
-                        match item_from_path(&path, IconSizes::default()) {
-                            Ok(item) => {
-                                return self.push_dialog(
-                                    DialogPage::OpenWith {
-                                        path,
-                                        mime: item.mime,
-                                        selected: 0,
-                                        store_opt: "x-scheme-handler/mime"
-                                            .parse::<mime_guess::Mime>()
-                                            .ok()
-                                            .and_then(|mime| {
-                                                self.mime_app_cache.get(&mime).first().cloned()
-                                            }),
-                                        search_app_name: String::new(),
-                                    },
-                                    None,
-                                );
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "failed to get item for path {}: {}",
-                                    path.display(),
-                                    err
-                                );
-                            }
-                        }
+                        return Self::item_from_path_task(path, Message::NavMenuOpenWith);
                     }
                 }
                 NavMenuAction::RunContextAction(entity, action) => {
@@ -5697,23 +5744,14 @@ impl Application for App {
                         .nav_model
                         .data::<Location>(entity)
                         .and_then(Location::path_opt)
+                        .cloned()
                     {
-                        match item_from_path(path, IconSizes::default()) {
-                            Ok(item) => {
-                                self.context_page = ContextPage::Preview(
-                                    None,
-                                    PreviewKind::Custom(PreviewItem(Box::new(item))),
-                                );
-                                self.set_show_context(true);
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "failed to get item from path {}: {}",
-                                    path.display(),
-                                    err
-                                );
-                            }
-                        }
+                        // A dead or slow network favorite would freeze the GUI, so build its
+                        // item off-thread and show it in Message::PreviewReady.
+                        let request = self.preview_request.begin();
+                        return Self::item_from_path_task(path, move |_, item| {
+                            Message::PreviewReady(request, None, item)
+                        });
                     }
                 }
 
@@ -8440,6 +8478,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_current_preview_result_opens_its_item() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let item =
+            crate::item::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(matches!(
+            app.context_page,
+            super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
+        ));
+        assert!(app.core.window.show_context);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_preview_result_cannot_reopen_dismissed_details() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let _ = app.update(super::Message::SetShowDetails(false));
+        let item =
+            crate::item::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(!app.core.window.show_context);
+        assert!(!matches!(
+            app.context_page,
+            super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_preview_result_cannot_replace_newer_context() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let _ = app.update(super::Message::ToggleContextPage(
+            super::ContextPage::Settings,
+        ));
+        let item =
+            crate::item::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(matches!(app.context_page, super::ContextPage::Settings));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn opening_a_new_tab_invalidates_pending_navigation() -> std::io::Result<()> {
         use cosmic::Application;
         let dir = tempfile::TempDir::new()?;
@@ -8527,6 +8616,22 @@ mod tests {
             crate::mime_app::MimeAppCache::empty(),
         ));
         assert!(!app.mime_cache_request.is_current(&current));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn searching_invalidates_a_pending_preview() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.preview_request.begin();
+        let _ = app.update(super::Message::SearchInput("report".into()));
+        let item =
+            crate::item::item_from_path(dir.path(), crate::config::IconSizes::default()).unwrap();
+        let _ = app.update(super::Message::PreviewReady(request, None, Box::new(item)));
+        assert!(!matches!(
+            app.context_page,
+            super::ContextPage::Preview(_, super::PreviewKind::Custom(_))
+        ));
         Ok(())
     }
 
