@@ -433,6 +433,8 @@ enum DialogPage {
     NewFolder {
         parent: PathBuf,
         name: String,
+        /// A create that already failed, shown until the name is edited.
+        error: Option<String>,
     },
     Replace {
         request: widget::Id,
@@ -466,6 +468,12 @@ enum Message {
     Escape,
     Filename(String),
     Filter(usize),
+    FolderCreated {
+        request: widget::Id,
+        location: Location,
+        path: PathBuf,
+        result: Result<(), String>,
+    },
     Key(Modifiers, Key, Physical, Option<SmolStr>),
     ModifiersChanged(Modifiers),
     MounterItems(MounterKey, MounterItems),
@@ -1212,7 +1220,11 @@ impl Application for App {
         let dialog_page = self.dialog_pages.front()?;
 
         let dialog = match dialog_page {
-            DialogPage::NewFolder { parent, name } => {
+            DialogPage::NewFolder {
+                parent,
+                name,
+                error,
+            } => {
                 let mut dialog = widget::dialog().title(fl!("create-new-folder"));
 
                 let complete_maybe = if name.is_empty() {
@@ -1248,6 +1260,11 @@ impl Application for App {
                     }
                 };
 
+                // A create that already failed outranks the advisory name hints.
+                if let Some(error) = error {
+                    dialog = dialog.tertiary_action(widget::text::body(error.clone()));
+                }
+
                 dialog
                     .primary_action(
                         widget::button::suggested(fl!("save"))
@@ -1265,6 +1282,7 @@ impl Application for App {
                                     Message::DialogUpdate(DialogPage::NewFolder {
                                         parent: parent.clone(),
                                         name,
+                                        error: None,
                                     })
                                 })
                                 .on_submit_maybe(complete_maybe.map(|maybe| move |_| maybe.clone()))
@@ -1493,21 +1511,30 @@ impl Application for App {
             Message::DialogComplete => {
                 if let Some(dialog_page) = self.dialog_pages.pop_front() {
                     match dialog_page {
-                        DialogPage::NewFolder { parent, name } => {
+                        DialogPage::NewFolder { parent, name, .. } => {
                             self.invalidate_save();
+                            let request = self.navigation.begin();
+                            let location = self.tab.location.clone();
                             let path = parent.join(name);
-                            match fs::create_dir(&path) {
-                                Ok(()) => {
-                                    // cd to directory
-                                    let message = Message::TabMessage(tab::Message::Location(
-                                        Location::Path(path),
-                                    ));
-                                    return self.update(message);
-                                }
-                                Err(err) => {
-                                    log::warn!("failed to create {}: {}", path.display(), err);
-                                }
-                            }
+                            // fs::create_dir blocks: on a slow mount it would freeze the dialog.
+                            return Task::future(async move {
+                                let result = match tokio::task::spawn_blocking({
+                                    let path = path.clone();
+                                    move || fs::create_dir(&path)
+                                })
+                                .await
+                                {
+                                    Ok(Ok(())) => Ok(()),
+                                    Ok(Err(err)) => Err(err.to_string()),
+                                    Err(err) => Err(err.to_string()),
+                                };
+                                cosmic::action::app(Message::FolderCreated {
+                                    request,
+                                    location,
+                                    path,
+                                    result,
+                                })
+                            });
                         }
                         DialogPage::Replace { request, path, .. } => {
                             if self.save_request.finish(&request) {
@@ -1539,6 +1566,43 @@ impl Application for App {
                     self.filter_selected = None;
                 }
                 return self.rescan_tab(None);
+            }
+            Message::FolderCreated {
+                request,
+                location,
+                path,
+                result,
+            } => {
+                if !self.navigation.finish(&request)
+                    || self.result_opt.is_some()
+                    || self.tab.location != location
+                {
+                    if let Err(error) = result {
+                        log::warn!("failed to create {}: {}", path.display(), error);
+                    }
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        return self.update(Message::TabMessage(tab::Message::Location(
+                            Location::Path(path),
+                        )));
+                    }
+                    Err(error) => {
+                        log::warn!("failed to create {}: {}", path.display(), error);
+                        let name = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+                        self.dialog_pages.push_front(DialogPage::NewFolder {
+                            parent,
+                            name,
+                            error: Some(error),
+                        });
+                        return widget::text_input::focus(self.dialog_text_input.clone());
+                    }
+                }
             }
             Message::Key(modifiers, key, physical_key, text) => {
                 for (key_bind, action) in &self.key_binds {
@@ -1661,6 +1725,7 @@ impl Application for App {
                     self.dialog_pages.push_back(DialogPage::NewFolder {
                         parent: path.clone(),
                         name: String::new(),
+                        error: None,
                     });
                     return widget::text_input::focus(self.dialog_text_input.clone());
                 }
@@ -2763,6 +2828,50 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_folder_creation_reports_in_the_dialog() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.pdf");
+
+        let request = app.navigation.begin();
+        let location = app.tab.location.clone();
+        let _task = app.update(Message::FolderCreated {
+            request,
+            location,
+            path: dir.path().join("drafts"),
+            result: Err("permission denied".to_string()),
+        });
+
+        assert!(
+            matches!(
+                app.dialog_pages.front(),
+                Some(DialogPage::NewFolder { name, error: Some(error), .. })
+                    if name == "drafts" && error.as_str() == "permission denied"
+            ),
+            "the dialog should reopen carrying the failed name and the error"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_created_folder_opens_in_the_picker() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.pdf");
+        let created = dir.path().join("drafts");
+        std::fs::create_dir(&created)?;
+
+        let request = app.navigation.begin();
+        let location = app.tab.location.clone();
+        let _task = app.update(Message::FolderCreated {
+            request,
+            location,
+            path: created.clone(),
+            result: Ok(()),
+        });
+
+        assert_eq!(app.tab.location.path_opt(), Some(&created));
+        Ok(())
+    }
+    #[test]
     fn a_save_check_for_an_edited_filename_is_ignored() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "first.txt");
@@ -2913,6 +3022,44 @@ mod tests {
             .as_ref()
             .expect("the watcher should be restored");
         assert_eq!(watched, &std::iter::once(target).collect());
+        Ok(())
+    }
+
+    #[test]
+    fn a_created_folder_cannot_replace_newer_navigation() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.txt");
+        let request = app.navigation.begin();
+        let location = app.tab.location.clone();
+        let target = crate::location::Location::Path(dir.path().join("elsewhere"));
+        let _ = app.update(Message::TabMessage(crate::tab::Message::Location(
+            target.clone(),
+        )));
+        let _ = app.update(Message::FolderCreated {
+            request,
+            location,
+            path: dir.path().join("created"),
+            result: Ok(()),
+        });
+        assert_eq!(app.tab.location, target);
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_folder_creation_cannot_reopen_a_cancelled_picker() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.txt");
+        let request = app.navigation.begin();
+        let location = app.tab.location.clone();
+        let _ = app.update(Message::Cancel);
+        let _ = app.update(Message::FolderCreated {
+            request,
+            location,
+            path: dir.path().join("created"),
+            result: Err("permission denied".into()),
+        });
+        assert!(app.dialog_pages.is_empty());
+        assert!(matches!(app.result_opt, Some(DialogResult::Cancel)));
         Ok(())
     }
 }
