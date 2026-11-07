@@ -21,7 +21,8 @@ This document provides a regression testing checklist for COSMIC Files. The chec
 - [ ] Files can be renamed.
 - [ ] Files can be opened with non-default apps & browsing store for new apps works.
 - [ ] Normal right-click shows `Move to trash` option.
-- [ ] Shift right-click, and right-click followed by Shift, both show `Permanently delete` option.
+- [ ] Shift right-click, and right-click followed by Shift, both show `Delete permanently` option.
+- [ ] On a network drive, and inside a folder opened from the Trash, right-click and the menu bar show `Delete permanently`, with or without Shift, and the Delete key asks before deleting permanently.
 
 ### Advanced navigation & view settings
 

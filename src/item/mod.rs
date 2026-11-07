@@ -29,7 +29,7 @@ mod metadata;
 mod state;
 mod thumbnail;
 
-pub use self::fs_kind::FsKind;
+pub use self::fs_kind::{FsKind, can_trash};
 pub use self::metadata::ItemMetadata;
 pub use self::state::ItemState;
 pub(crate) use self::state::next_work_id;

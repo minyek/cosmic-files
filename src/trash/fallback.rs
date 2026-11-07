@@ -16,6 +16,18 @@ pub struct TrashItem {
     pub time_deleted: Option<SystemTime>,
 }
 
+#[cfg(test)]
+impl TrashItem {
+    /// An entry for the trashed copy at `trashed`, deleted from `original_path`.
+    pub(crate) fn for_test(trashed: PathBuf, original_path: PathBuf, _size: TrashItemSize) -> Self {
+        Self {
+            name: trashed.file_name().unwrap_or_default().to_owned(),
+            original_path,
+            time_deleted: None,
+        }
+    }
+}
+
 pub fn item_from_trash_entry(_entry: TrashItem, _size: TrashItemSize, _sizes: IconSizes) -> Item {
     panic!("TrashItems should not exist on this platform")
 }

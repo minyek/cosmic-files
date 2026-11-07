@@ -2,6 +2,12 @@ use rustc_hash::FxHashMap;
 use std::fs::Metadata;
 use std::sync::LazyLock;
 
+/// Whether deleting the file with this metadata moves it to the Trash. This app trashes files
+/// on local filesystems only and deletes the rest permanently, after asking.
+pub fn can_trash(metadata: &Metadata) -> bool {
+    FsKind::new(metadata) == FsKind::Local
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FsKind {
     Local,
