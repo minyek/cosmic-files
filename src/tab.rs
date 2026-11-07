@@ -7272,4 +7272,37 @@ mod tests {
             vec![String::new(), "root".to_string()]
         );
     }
+
+    // Deleting moves an item to the Trash only when it is a file on a local filesystem; a trash
+    // entry is already in the Trash, and the simple network entries have no filesystem.
+    #[test]
+    fn only_local_path_items_can_be_trashed() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("local.txt");
+        fs::write(&path, b"")?;
+        let local = ItemMetadata::Path {
+            metadata: fs::metadata(&path)?,
+            children_opt: None,
+        };
+        let size = crate::trash::TrashItemSize::Bytes(0);
+        let trashed = ItemMetadata::Trash {
+            size,
+            entry: crate::trash::TrashItem::for_test(path.clone(), path.clone(), size),
+        };
+        assert!(local.can_trash());
+        assert!(!trashed.can_trash());
+        assert!(!ItemMetadata::SimpleFile { size: 0 }.can_trash());
+        assert!(!ItemMetadata::SimpleDir { entries: 0 }.can_trash());
+        #[cfg(feature = "gvfs")]
+        assert!(
+            !ItemMetadata::GvfsPath {
+                mtime: 0,
+                size_opt: None,
+                children_opt: None,
+                is_dir: false,
+            }
+            .can_trash()
+        );
+        Ok(())
+    }
 }

@@ -1,6 +1,7 @@
 use std::fs::Metadata;
 use std::time::{Duration, SystemTime};
 
+use super::can_trash;
 use crate::trash::{TrashItem, TrashItemSize};
 
 #[derive(Clone, Debug)]
@@ -29,6 +30,16 @@ pub enum ItemMetadata {
 }
 
 impl ItemMetadata {
+    /// Whether deleting the item can move it to the Trash. A trash entry is already there.
+    pub fn can_trash(&self) -> bool {
+        match self {
+            Self::Path { metadata, .. } => can_trash(metadata),
+            Self::Trash { .. } | Self::SimpleDir { .. } | Self::SimpleFile { .. } => false,
+            #[cfg(feature = "gvfs")]
+            Self::GvfsPath { .. } => false,
+        }
+    }
+
     pub fn is_dir(&self) -> bool {
         match self {
             Self::Path { metadata, .. } => metadata.is_dir(),
