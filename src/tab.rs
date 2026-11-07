@@ -2180,19 +2180,10 @@ impl Tab {
                 }
             }
             Message::Location(location) => {
-                // Workaround to support favorited files
-                match &location {
-                    Location::Path(path) => {
-                        if path.is_dir() {
-                            cd = Some(location);
-                        } else {
-                            commands.push(Command::OpenFile(vec![path.clone()]));
-                        }
-                    }
-                    _ => {
-                        cd = Some(location);
-                    }
-                }
+                // Every sender of Message::Location passes a directory (breadcrumbs, mounts, and
+                // on_nav_select, which routes favorited *files* to OpenFile off-thread), so no
+                // is_dir stat is needed here on the GUI thread.
+                cd = Some(location);
             }
             Message::LocationSelect(location, paths) => {
                 // A typed/completed file path, resolved off-thread to its parent directory plus the

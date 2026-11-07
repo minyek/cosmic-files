@@ -455,6 +455,13 @@ pub enum Message {
     NavBarClose(Entity),
     NavBarContext(Entity),
     NavMenuAction(NavMenuAction),
+    NavSelectChecked {
+        entity: Entity,
+        tab_entity: Entity,
+        request: widget::Id,
+        exists: bool,
+        is_dir: bool,
+    },
     NavigationResolved {
         entity: Entity,
         request: widget::Id,
@@ -464,6 +471,11 @@ pub enum Message {
     NetworkDriveInput(String),
     NetworkDriveOpenEntityAfterMount {
         entity: Entity,
+    },
+    NavigationMounted {
+        entity: Entity,
+        tab_entity: Entity,
+        request: widget::Id,
     },
     NetworkDriveOpenTabAfterMount {
         location: Location,
@@ -2864,97 +2876,32 @@ impl Application for App {
     }
 
     fn on_nav_select(&mut self, entity: Entity) -> Task<Self::Message> {
+        let request = self.navigation.begin();
+        let tab_entity = self.tab_model.active();
         self.nav_model.activate(entity);
         if let Some(location) = self.nav_model.data::<Location>(entity) {
-            let should_open = match location {
-                #[cfg(feature = "gvfs")]
-                Location::Network(uri, name, Some(path))
-                    if !path.try_exists().unwrap_or_default() =>
-                {
-                    let mut found = false;
-
-                    if let Some(key) = self
-                        .mounter_items
-                        .iter()
-                        .find_map(|(k, items)| {
-                            items.iter().find_map(|item| {
-                                found |= item.path().is_some_and(|p| path.starts_with(&p))
-                                    || item.name() == *name
-                                    || item.uri() == *uri;
-                                (!item.is_mounted() && found).then_some(*k)
-                            })
-                        })
-                        .or(if found {
-                            None
-                        } else {
-                            // TODO do we need to choose the correct mounter?
-                            self.mounter_items.keys().copied().next()
-                        })
-                        && let Some(mounter) = MOUNTERS.get(&key)
-                    {
-                        return mounter.network_drive(uri.clone()).map(move |mounted| {
-                            if mounted {
-                                cosmic::Action::App(Message::NetworkDriveOpenEntityAfterMount {
-                                    entity,
-                                })
-                            } else {
-                                cosmic::action::none()
-                            }
-                        });
-                    }
-
-                    log::warn!(
-                        "failed to open favorite, path does not exist: {}",
-                        path.display()
-                    );
-                    return self.push_dialog(
-                        DialogPage::FavoritePathError {
-                            path: path.clone(),
-                            entity,
-                        },
-                        Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
-                    );
-                }
-                Location::Path(path) | Location::Network(_, _, Some(path)) => {
-                    match path.try_exists() {
-                        Ok(true) => true,
-                        Ok(false) => {
-                            log::warn!(
-                                "failed to open favorite, path does not exist: {}",
-                                path.display()
-                            );
-                            return self.push_dialog(
-                                DialogPage::FavoritePathError {
-                                    path: path.clone(),
-                                    entity,
-                                },
-                                Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
-                            );
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "failed to open favorite for path: {}, {}",
-                                path.display(),
-                                err
-                            );
-                            return self.push_dialog(
-                                DialogPage::FavoritePathError {
-                                    path: path.clone(),
-                                    entity,
-                                },
-                                Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
-                            );
-                        }
-                    }
-                }
-
-                _ => true,
-            };
-
-            if should_open {
-                let message = Message::TabMessage(None, tab::Message::Location(location.clone()));
-                return self.update(message);
+            // Path-bearing favorites/mounts need an existence check (and dir-vs-file decision)
+            // that stats the path; on a dead or slow network favorite that blocks the GUI
+            // thread, so compute it off-thread and branch in Message::NavSelectChecked.
+            if let Some(path) = location.path_opt().cloned() {
+                return Task::future(async move {
+                    let (exists, is_dir) = tokio::task::spawn_blocking(move || {
+                        (path.try_exists().unwrap_or(false), path.is_dir())
+                    })
+                    .await
+                    .unwrap_or((false, false));
+                    cosmic::action::app(Message::NavSelectChecked {
+                        entity,
+                        tab_entity,
+                        request,
+                        exists,
+                        is_dir,
+                    })
+                });
             }
+            // Locations without a path (Trash, Recents, Desktop, ...) open with no I/O.
+            let message = Message::TabMessage(None, tab::Message::Location(location.clone()));
+            return self.update(message);
         }
         if let Some(data) = self.nav_model.data::<MounterData>(entity)
             && let Some(mounter) = MOUNTERS.get(&data.0)
@@ -5340,6 +5287,98 @@ impl Application for App {
                     return self.update(Message::TabMessage(Some(entity), message));
                 }
             }
+            Message::NavSelectChecked {
+                entity,
+                tab_entity,
+                request,
+                exists,
+                is_dir,
+            } => {
+                if !self.navigation.is_current(&request)
+                    || self.tab_model.data::<Tab>(tab_entity).is_none()
+                {
+                    return Task::none();
+                }
+                let Some(location) = self.nav_model.data::<Location>(entity).cloned() else {
+                    return Task::none();
+                };
+
+                // A gvfs network favorite that isn't present: try to mount it, else report it.
+                #[cfg(feature = "gvfs")]
+                if let Location::Network(uri, name, Some(path)) = &location
+                    && !exists
+                {
+                    let mut found = false;
+                    if let Some(key) = self
+                        .mounter_items
+                        .iter()
+                        .find_map(|(k, items)| {
+                            items.iter().find_map(|item| {
+                                found |= item.path().is_some_and(|p| path.starts_with(&p))
+                                    || item.name() == *name
+                                    || item.uri() == *uri;
+                                (!item.is_mounted() && found).then_some(*k)
+                            })
+                        })
+                        .or(if found {
+                            None
+                        } else {
+                            // TODO do we need to choose the correct mounter?
+                            self.mounter_items.keys().copied().next()
+                        })
+                        && let Some(mounter) = MOUNTERS.get(&key)
+                    {
+                        return mounter.network_drive(uri.clone()).map(move |mounted| {
+                            if mounted {
+                                cosmic::Action::App(Message::NavigationMounted {
+                                    entity,
+                                    tab_entity,
+                                    request: request.clone(),
+                                })
+                            } else {
+                                cosmic::action::none()
+                            }
+                        });
+                    }
+
+                    log::warn!(
+                        "failed to open favorite, path does not exist: {}",
+                        path.display()
+                    );
+                    return self.push_dialog(
+                        DialogPage::FavoritePathError {
+                            path: path.clone(),
+                            entity,
+                        },
+                        Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
+                    );
+                }
+
+                self.navigation.finish(&request);
+
+                // Other path-bearing favorites: report if missing, otherwise open — a file
+                // (local or on a mounted share) launches, a directory is navigated to.
+                if let Some(path) = location.path_opt().cloned() {
+                    if !exists {
+                        log::warn!(
+                            "failed to open favorite, path does not exist: {}",
+                            path.display()
+                        );
+                        return self.push_dialog(
+                            DialogPage::FavoritePathError { path, entity },
+                            Some(FAVORITE_PATH_ERROR_REMOVE_BUTTON_ID.clone()),
+                        );
+                    }
+                    if !is_dir {
+                        return Self::open_file(&[path]);
+                    }
+                }
+
+                return self.update(Message::TabMessage(
+                    Some(tab_entity),
+                    tab::Message::Location(location),
+                ));
+            }
             Message::NavMenuAction(action) => match action {
                 NavMenuAction::ClearRecents => match recently_used_xbel::clear_recently_used() {
                     Ok(()) => {}
@@ -5713,6 +5752,19 @@ impl Application for App {
                 {
                     log::warn!("Failed to save sort names: {err:?}");
                 }
+            }
+            Message::NavigationMounted {
+                entity,
+                tab_entity,
+                request,
+            } => {
+                if !self.navigation.finish(&request)
+                    || self.tab_model.active() != tab_entity
+                    || self.tab_model.data::<Tab>(tab_entity).is_none()
+                {
+                    return Task::none();
+                }
+                return self.on_nav_select(entity);
             }
             Message::NetworkDriveOpenEntityAfterMount { entity } => {
                 return self.on_nav_select(entity);
@@ -7989,6 +8041,64 @@ mod tests {
         let _ = app.update(super::Message::TabNew);
         assert_ne!(app.tab_model.active(), previous_tab);
         assert!(!app.navigation.is_current(&request));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_obsolete_mount_cannot_redirect_the_active_tab() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Trash")
+            .data(crate::location::Location::Trash)
+            .id();
+        let tab_entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        let _ = app.navigation.begin();
+        let _ = app.update(super::Message::NavigationMounted {
+            entity,
+            tab_entity,
+            request,
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(tab_entity)
+                .unwrap()
+                .location
+                .path_opt(),
+            Some(&dir.path().to_path_buf())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_current_mount_continues_the_requested_navigation() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Trash")
+            .data(crate::location::Location::Trash)
+            .id();
+        let tab_entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        let _ = app.update(super::Message::NavigationMounted {
+            entity,
+            tab_entity,
+            request,
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(tab_entity)
+                .unwrap()
+                .location,
+            crate::location::Location::Trash
+        );
         Ok(())
     }
 
