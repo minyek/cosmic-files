@@ -80,6 +80,7 @@ pub fn scan_desktop(
             name,
             display_name,
             is_mount_point: false,
+            is_symlink_dir: false,
             metadata,
             hidden: false,
             location_opt: Some(Location::Trash),

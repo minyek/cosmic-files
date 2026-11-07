@@ -3741,9 +3741,7 @@ impl Tab {
                     //TODO: one focus group per grid item (needs custom widget)
                     let buttons: Vec<Element<Message>> = vec![
                         widget::button::custom(
-                            widget::icon::icon(item.icon_handle_grid.clone())
-                                .content_fit(ContentFit::Contain)
-                                .size(icon_sizes.grid()),
+                            item.icon(&item.icon_handle_grid, icon_sizes.grid()),
                         )
                         .padding(space_xxxs)
                         .class(button_style(
@@ -3902,9 +3900,7 @@ impl Tab {
                     if *row == r && *col == c {
                         let buttons = vec![
                             widget::button::custom(
-                                widget::icon::icon(item.icon_handle_grid.clone())
-                                    .content_fit(ContentFit::Contain)
-                                    .size(icon_sizes.grid()),
+                                item.icon(&item.icon_handle_grid, icon_sizes.grid()),
                             )
                             .on_press(Message::Click(Some(*i)))
                             .padding(space_xxxs)
@@ -4122,10 +4118,7 @@ impl Tab {
 
                     let row = if condensed {
                         widget::row::with_children([
-                            widget::icon::icon(item.icon_handle_list_condensed.clone())
-                                .content_fit(ContentFit::Contain)
-                                .size(icon_size)
-                                .into(),
+                            item.icon(&item.icon_handle_list_condensed, icon_size),
                             widget::column::with_children([
                                 Item::list_display_name(item.display_name.clone()).into(),
                                 //TODO: translate?
@@ -4139,10 +4132,7 @@ impl Tab {
                         .spacing(space_xxs)
                     } else if is_search {
                         widget::row::with_children([
-                            widget::icon::icon(item.icon_handle_list_condensed.clone())
-                                .content_fit(ContentFit::Contain)
-                                .size(icon_size)
-                                .into(),
+                            item.icon(&item.icon_handle_list_condensed, icon_size),
                             widget::column::with_children([
                                 Item::list_display_name(item.display_name.clone())
                                     .ellipsize(text::Ellipsize::Middle(
@@ -4172,10 +4162,7 @@ impl Tab {
                         .spacing(space_xxs)
                     } else {
                         widget::row::with_children([
-                            widget::icon::icon(item.icon_handle_list.clone())
-                                .content_fit(ContentFit::Contain)
-                                .size(icon_size)
-                                .into(),
+                            item.icon(&item.icon_handle_list, icon_size),
                             Item::list_display_name(item.display_name.clone())
                                 .width(Length::Fill)
                                 .into(),
@@ -4235,10 +4222,7 @@ impl Tab {
                             )
                         } else if condensed {
                             widget::row::with_children([
-                                widget::icon::icon(item.icon_handle_list_condensed.clone())
-                                    .content_fit(ContentFit::Contain)
-                                    .size(icon_size)
-                                    .into(),
+                                item.icon(&item.icon_handle_list_condensed, icon_size),
                                 widget::column::with_children([
                                     Item::list_display_name(item.display_name.clone()).into(),
                                     //TODO: translate?
@@ -4252,10 +4236,7 @@ impl Tab {
                             .into()
                         } else if is_search {
                             widget::row::with_children([
-                                widget::icon::icon(item.icon_handle_list_condensed.clone())
-                                    .content_fit(ContentFit::Contain)
-                                    .size(icon_size)
-                                    .into(),
+                                item.icon(&item.icon_handle_list_condensed, icon_size),
                                 widget::column::with_children([
                                     Item::list_display_name(item.display_name.clone())
                                         .ellipsize(text::Ellipsize::Middle(
@@ -4285,10 +4266,7 @@ impl Tab {
                             .into()
                         } else {
                             widget::row::with_children([
-                                widget::icon::icon(item.icon_handle_list.clone())
-                                    .content_fit(ContentFit::Contain)
-                                    .size(icon_size)
-                                    .into(),
+                                item.icon(&item.icon_handle_list, icon_size),
                                 Item::list_display_name(item.display_name.clone())
                                     .width(Length::Fill)
                                     .into(),
