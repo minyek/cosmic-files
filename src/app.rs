@@ -442,6 +442,7 @@ pub enum Message {
     NotifyEvents(Vec<DebouncedEvent>),
     NotifyWatcher(WatcherWrapper),
     OpenTerminal(Option<Entity>),
+    OpenLaunchLocations(Vec<(Location, Option<Vec<PathBuf>>)>),
     OpenInNewTab(Option<Entity>),
     OpenInNewWindow(Option<Entity>),
     OpenItemLocation(Option<Entity>),
@@ -1241,6 +1242,12 @@ impl App {
         tasks.push(self.update_watcher());
         tasks.push(self.update_tab(entity, location, selection_paths));
         (entity, Task::batch(tasks))
+    }
+
+    /// Open the tab shown when no location was asked for: the working directory, or home.
+    fn open_default_tab(&mut self) -> Task<Message> {
+        let path = env::current_dir().unwrap_or_else(|_| home_dir());
+        self.open_tab(Location::Path(path), true, None)
     }
 
     fn open_tab(
@@ -2572,19 +2579,32 @@ impl Application for App {
 
         let mut commands = vec![app.update_config(), app.update(Message::CheckClipboard)];
 
-        for location in flags.locations {
-            if let Some(path) = location.path_opt()
-                && path.is_file()
-                && let Some(parent) = path.parent()
-            {
-                commands.push(app.open_tab(
-                    Location::Path(parent.to_path_buf()),
-                    true,
-                    Some(vec![path.clone()]),
-                ));
-                continue;
-            }
-            commands.push(app.open_tab(location, true, None));
+        // Resolving each launch location stats it (a file argument opens its parent with the
+        // file selected), which blocks init on a slow mount; do it off-thread and open the
+        // tabs in Message::OpenLaunchLocations.
+        let launch_locations = flags.locations;
+        let has_launch_locations = !launch_locations.is_empty();
+        if has_launch_locations {
+            commands.push(Task::future(async move {
+                let resolved = tokio::task::spawn_blocking(move || {
+                    launch_locations
+                        .into_iter()
+                        .map(|location| {
+                            let redirect =
+                                location.path_opt().filter(|path| path.is_file()).and_then(
+                                    |path| Some((path.parent()?.to_path_buf(), path.clone())),
+                                );
+                            match redirect {
+                                Some((parent, file)) => (Location::Path(parent), Some(vec![file])),
+                                None => (location, None),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .unwrap_or_default();
+                cosmic::action::app(Message::OpenLaunchLocations(resolved))
+            }));
         }
         for location in flags.uris {
             if let Some(e) = app.nav_model.iter().find(|e| {
@@ -2598,12 +2618,10 @@ impl Application for App {
             }
         }
 
-        if app.tab_model.entity_at(0).is_none() {
-            if let Ok(current_dir) = env::current_dir() {
-                commands.push(app.open_tab(Location::Path(current_dir), true, None));
-            } else {
-                commands.push(app.open_tab(Location::Path(home_dir()), true, None));
-            }
+        // Launch locations open off-thread, so tab_model is still empty here even when
+        // locations were given; gate the default tab on whether any were passed.
+        if !has_launch_locations && app.tab_model.entity_at(0).is_none() {
+            commands.push(app.open_default_tab());
         }
 
         (app, Task::batch(commands))
@@ -3878,6 +3896,17 @@ impl Application for App {
                         }
                     }
                 }
+            }
+            Message::OpenLaunchLocations(locations) => {
+                if locations.is_empty() && self.tab_model.entity_at(0).is_none() {
+                    // Resolving them failed; init left the default tab to this handler.
+                    return self.open_default_tab();
+                }
+                return Task::batch(
+                    locations
+                        .into_iter()
+                        .map(|(location, selection)| self.open_tab(location, true, selection)),
+                );
             }
             Message::OpenInNewTab(entity_opt) => {
                 let selected_paths: Box<[_]> = self
@@ -7611,6 +7640,58 @@ mod tests {
             cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) => message,
             _ => panic!("the task must return an application message"),
         }
+    }
+
+    #[tokio::test]
+    async fn failed_launch_resolution_opens_a_usable_tab_in_a_tabless_app() -> std::io::Result<()> {
+        use cosmic::Application;
+        use cosmic::iced::futures::StreamExt;
+
+        let dir = tempfile::TempDir::new()?;
+        let mut core = cosmic::app::Core::default();
+        core.set_main_window_id(Some(cosmic::iced::window::Id::unique()));
+        let (mut app, _) = super::App::init(
+            core,
+            super::Flags {
+                config_handler: None,
+                config: crate::config::Config::default(),
+                state_handler: None,
+                state: crate::config::State::default(),
+                mode: super::Mode::App,
+                locations: vec![crate::location::Location::Path(dir.path().to_path_buf())],
+                uris: Vec::new(),
+            },
+        );
+        assert!(app.tab_model.entity_at(0).is_none());
+
+        let fallback = app.update(super::Message::OpenLaunchLocations(Vec::new()));
+        let entity = app
+            .tab_model
+            .entity_at(0)
+            .expect("a fallback tab must open");
+        assert_eq!(app.tab_model.active(), entity);
+        let tab = app.tab_model.data::<crate::tab::Tab>(entity).unwrap();
+        assert_eq!(tab.location.path_opt(), Some(&std::env::current_dir()?));
+        let mut fallback = cosmic::iced::runtime::task::into_stream(fallback).unwrap();
+        let mut listed = false;
+        while let Some(action) = fallback.next().await {
+            if let cosmic::iced::runtime::Action::Output(cosmic::Action::App(
+                message @ super::Message::TabRescan(..),
+            )) = action
+            {
+                let _ = app.update(message);
+                listed = true;
+            }
+        }
+        assert!(listed, "the fallback tab must complete its initial listing");
+        assert!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .items_opt()
+                .is_some()
+        );
+        Ok(())
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ use cosmic::app::Settings;
 use cosmic::iced::Limits;
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::{env, fs, process};
+use std::{env, process};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -205,11 +205,17 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => PathBuf::from(arg),
             };
-            match fs::canonicalize(&path) {
-                Ok(absolute) => Location::Path(absolute),
-                Err(err) => {
-                    log::warn!("failed to canonicalize {}: {}", path.display(), err);
-                    continue;
+            // Daemonization changes cwd. Resolve relative arguments against the invoking cwd,
+            // leaving symlink and parent-component resolution to background filesystem work.
+            if path.is_absolute() {
+                Location::Path(path)
+            } else {
+                match env::current_dir() {
+                    Ok(dir) => Location::Path(dir.join(path)),
+                    Err(err) => {
+                        log::warn!("failed to resolve {}: {}", path.display(), err);
+                        continue;
+                    }
                 }
             }
         };
