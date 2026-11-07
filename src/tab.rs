@@ -454,6 +454,7 @@ pub enum Message {
     Checksums(PathBuf, ChecksumState, u64),
     CalculateChecksums(PathBuf),
     CopyChecksum(String),
+    ImageDecodeFailed(PathBuf, u64),
     ImageDecoded(PathBuf, u32, u32, Vec<u8>, Option<(u32, u32)>, u64), // path, width, height, pixels, display_size, generation
 }
 
@@ -1325,7 +1326,7 @@ impl Tab {
         if should_decode {
             vec![Command::Iced(
                 cosmic::iced::Task::perform(
-                    decode_large_image(path, target_dimensions),
+                    decode_large_image(path.clone(), target_dimensions),
                     move |result| {
                         result
                             .map(|(path, width, height, pixels)| {
@@ -1338,7 +1339,7 @@ impl Tab {
                                     generation,
                                 )
                             })
-                            .unwrap_or_else(|| Message::AutoScroll(None))
+                            .unwrap_or_else(|| Message::ImageDecodeFailed(path.clone(), generation))
                     },
                 )
                 .into(),
@@ -2576,6 +2577,13 @@ impl Tab {
                         }
                     }
                 }
+            }
+            Message::ImageDecodeFailed(path, generation) => {
+                self.large_image_manager.store_error_with_generation(
+                    path,
+                    "Failed to decode image".into(),
+                    generation,
+                );
             }
             Message::ImageDecoded(path, width, height, pixels, display_size, generation) => {
                 // Create handle from pre-decoded RGBA data (fast!)
