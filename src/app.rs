@@ -395,6 +395,10 @@ pub enum Message {
     CosmicSettings(&'static str),
     Cut(Option<Entity>),
     Delete(Option<Entity>),
+    DeleteClassified {
+        trash_paths: Vec<PathBuf>,
+        dialog_paths: Vec<PathBuf>,
+    },
     DesktopConfig(DesktopConfig),
     DesktopViewOptions,
     DesktopDialogs(bool),
@@ -1256,26 +1260,48 @@ impl App {
     }
 
     // This wrapper ensures that local folders use trash and remote folders permanently delete with a dialog
-    fn delete(&mut self, paths: impl IntoIterator<Item = PathBuf>) -> Task<Message> {
-        let mut dialog_paths = Vec::new();
-        let mut trash_paths = Vec::new();
-
-        for path in paths {
-            //TODO: is there a smarter way to check this? (like checking for trash folders)
-            let can_trash = match path.metadata() {
-                Ok(metadata) => matches!(FsKind::new(&metadata), FsKind::Local),
-                Err(err) => {
-                    log::warn!("failed to get metadata for {}: {}", path.display(), err);
-                    false
+    fn delete(paths: impl IntoIterator<Item = PathBuf>) -> Task<Message> {
+        let paths: Vec<PathBuf> = paths.into_iter().collect();
+        // Classifying trash vs permanent-delete stats each path, which blocks on slow mounts;
+        // do it off-thread and finish in Message::DeleteClassified.
+        Task::future(async move {
+            let (trash_paths, dialog_paths) = tokio::task::spawn_blocking(move || {
+                let mut trash_paths = Vec::new();
+                let mut dialog_paths = Vec::new();
+                for path in paths {
+                    //TODO: is there a smarter way to check this? (like checking for trash folders)
+                    let can_trash = match path.metadata() {
+                        Ok(metadata) => matches!(FsKind::new(&metadata), FsKind::Local),
+                        Err(err) => {
+                            log::warn!("failed to get metadata for {}: {}", path.display(), err);
+                            false
+                        }
+                    };
+                    if can_trash {
+                        trash_paths.push(path);
+                    } else {
+                        dialog_paths.push(path);
+                    }
                 }
-            };
-            if can_trash {
-                trash_paths.push(path);
-            } else {
-                dialog_paths.push(path);
-            }
-        }
+                (trash_paths, dialog_paths)
+            })
+            .await
+            .unwrap_or_else(|err| {
+                log::warn!("failed to classify paths for deletion: {err}");
+                (Vec::new(), Vec::new())
+            });
+            cosmic::action::app(Message::DeleteClassified {
+                trash_paths,
+                dialog_paths,
+            })
+        })
+    }
 
+    fn delete_classified(
+        &mut self,
+        trash_paths: Vec<PathBuf>,
+        dialog_paths: Vec<PathBuf>,
+    ) -> Task<Message> {
         let mut tasks = Vec::new();
         if !dialog_paths.is_empty() {
             tasks.push(self.update(Message::DialogPush(
@@ -3113,10 +3139,16 @@ impl Application for App {
                     } else {
                         let paths: Box<[_]> = self.selected_paths(entity_opt).collect();
                         if !paths.is_empty() {
-                            return self.delete(paths);
+                            return Self::delete(paths);
                         }
                     }
                 }
+            }
+            Message::DeleteClassified {
+                trash_paths,
+                dialog_paths,
+            } => {
+                return self.delete_classified(trash_paths, dialog_paths);
             }
             Message::DesktopConfig(config) => {
                 if config != self.config.desktop {
@@ -4612,7 +4644,7 @@ impl Application for App {
                                 .map(move |message| Message::TabMessage(Some(entity), message));
                             commands.push(self.update(Message::Surface(action)));
                         }
-                        tab::Command::Delete(paths) => commands.push(self.delete(paths)),
+                        tab::Command::Delete(paths) => commands.push(Self::delete(paths)),
                         tab::Command::DropFiles(to, from) => {
                             commands.push(self.update(Message::PasteContents(to, from)));
                         }
@@ -5041,7 +5073,7 @@ impl Application for App {
                             },
                         )),
                         Location::Trash if matches!(action, DndAction::Move) => {
-                            self.delete(data.paths)
+                            Self::delete(data.paths)
                         }
                         _ => {
                             log::warn!("Copy to trash is not supported.");
@@ -5096,7 +5128,7 @@ impl Application for App {
                     };
                     let ret = match &tab.location {
                         Location::Trash if matches!(action, DndAction::Move) => {
-                            self.delete(data.paths)
+                            Self::delete(data.paths)
                         }
                         _ => {
                             if let Some(path) = tab.location.path_opt() {
