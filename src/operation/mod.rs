@@ -12,7 +12,6 @@ use zip::AesMode::Aes256;
 
 use crate::app::{ArchiveType, DialogPage, Message, REPLACE_BUTTON_ID};
 use crate::config::IconSizes;
-use crate::item::item_from_path;
 use crate::spawn_detached::spawn_detached;
 use crate::trash::{Trash, TrashExt, TrashItem};
 use crate::{archive, fl};
@@ -32,6 +31,26 @@ pub mod reader;
 use self::recursive::{Context, Method};
 pub mod recursive;
 
+/// Builds the item shown for one side of a replace prompt, on compio's blocking pool because
+/// `item_from_path` stats the path and would otherwise stall the executor on a slow mount.
+async fn build_replace_item(path: PathBuf) -> Option<Box<crate::item::Item>> {
+    match compio::runtime::spawn_blocking(move || {
+        crate::item::item_from_path(path, IconSizes::default())
+    })
+    .await
+    {
+        Ok(Ok(item)) => Some(Box::new(item)),
+        Ok(Err(err)) => {
+            log::warn!("{err}");
+            None
+        }
+        Err(_) => {
+            log::error!("compio runtime spawn failed while building replace item");
+            None
+        }
+    }
+}
+
 async fn handle_replace(
     msg_tx: Arc<TokioMutex<Sender<Message>>>,
     file_from: PathBuf,
@@ -39,20 +58,11 @@ async fn handle_replace(
     multiple: bool,
     conflict_count: usize,
 ) -> ReplaceResult {
-    let item_from = match item_from_path(file_from, IconSizes::default()) {
-        Ok(ok) => Box::new(ok),
-        Err(err) => {
-            log::warn!("{err}");
-            return ReplaceResult::Cancel;
-        }
+    let Some(item_from) = build_replace_item(file_from).await else {
+        return ReplaceResult::Cancel;
     };
-
-    let item_to = match item_from_path(file_to, IconSizes::default()) {
-        Ok(ok) => Box::new(ok),
-        Err(err) => {
-            log::warn!("{err}");
-            return ReplaceResult::Cancel;
-        }
+    let Some(item_to) = build_replace_item(file_to).await else {
+        return ReplaceResult::Cancel;
     };
 
     let (tx, mut rx) = mpsc::channel(1);
