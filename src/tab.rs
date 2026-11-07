@@ -2880,6 +2880,15 @@ impl Tab {
                 .is_some_and(|path| !self.children_count_failed.contains(path))
     }
 
+    /// Whether anything would render a thumbnail for `item`.
+    ///
+    /// A text preview is rendered only by the gallery and by the preview pane, which shows one
+    /// item at a time. Building one shapes the file under the process-wide font system, which
+    /// every text layout on the GUI thread also waits on.
+    fn thumbnail_is_displayed(&self, item: &Item, preview: bool) -> bool {
+        item.mime.type_() != mime::TEXT || self.gallery || (preview && item.state.selected)
+    }
+
     /// Sorted item indices, recomputed only when the item set or the sort options change.
     ///
     /// `view` runs on every frame and every layout pass, so collating thousands of names per
@@ -4918,6 +4927,10 @@ impl Tab {
                     continue;
                 }
 
+                if !self.thumbnail_is_displayed(item, preview) {
+                    continue;
+                }
+
                 let can_thumbnail = match item.metadata {
                     ItemMetadata::Path { .. } => true,
                     #[cfg(feature = "gvfs")]
@@ -5477,8 +5490,8 @@ mod tests {
     };
     use crate::config::{IconSizes, TabConfig, ThumbCfg};
     use crate::item::{
-        ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail, item_from_entry,
-        item_from_path,
+        ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail,
+        TEXT_PREVIEW_MAX_BYTES, item_from_entry, item_from_path,
     };
     use crate::location::{Location, SearchLocation};
     use crate::scan::scan_path;
@@ -5993,6 +6006,48 @@ mod tests {
     }
 
     #[test]
+    fn a_standalone_preview_item_carries_no_shaped_text() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("notes.txt");
+        fs::write(&path, "hello")?;
+
+        let item = item_from_path(&path, IconSizes::default()).expect("the file should resolve");
+
+        // App::context_drawer clones the custom preview item on every rebuild, and cloning a text
+        // preview re-shapes it under the process-wide font system. Only the tab subscription
+        // builds those, and it reaches listed items alone.
+        assert!(
+            !matches!(item.thumbnail_opt, Some(ItemThumbnail::Text(_))),
+            "a preview item built outside a listing must not carry a shaped text preview"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_text_preview_is_capped_at_what_the_preview_can_show() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("big.log");
+        let line = "the quick brown fox jumps over the lazy dog\n";
+        fs::write(&path, line.repeat(TEXT_PREVIEW_MAX_BYTES / line.len() * 4))?;
+        let item_metadata = ItemMetadata::Path {
+            metadata: fs::metadata(&path)?,
+            children_opt: None,
+        };
+
+        let thumb = ItemThumbnail::new(&path, item_metadata, mime::TEXT_PLAIN, 128, 100, 1, 8);
+
+        let ItemThumbnail::Text(content) = thumb else {
+            panic!("a text file should produce a text preview");
+        };
+        assert!(
+            content.text().len() <= TEXT_PREVIEW_MAX_BYTES + 1,
+            "a preview shapes at most {TEXT_PREVIEW_MAX_BYTES} bytes, got {}",
+            content.text().len()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn item_thumbnail_text_preview_empty_file_returns_not_image() -> io::Result<()> {
         let dir = TempDir::new()?;
         let path = dir.path().join("empty.txt");
@@ -6312,6 +6367,56 @@ mod tests {
                 if discarded { "" } else { " not" }
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_text_preview_is_built_only_where_one_is_rendered() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join("notes.txt"), b"hello")?;
+        fs::write(dir.path().join("photo.png"), b"")?;
+        let mut tab = Tab::new(
+            Location::Path(dir.path().into()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+        tab.set_items(scan_path(&dir.path().to_path_buf(), IconSizes::default()));
+
+        let displayed = |tab: &Tab, name: &str, preview: bool| {
+            let items = tab.items_opt().expect("tab should be populated");
+            let item = items
+                .iter()
+                .find(|item| item.name == name)
+                .unwrap_or_else(|| panic!("{name} should be listed"));
+            tab.thumbnail_is_displayed(item, preview)
+        };
+
+        assert!(
+            displayed(&tab, "photo.png", false),
+            "a row renders its own thumbnail"
+        );
+        assert!(
+            !displayed(&tab, "notes.txt", false),
+            "nothing renders a text preview with the pane closed"
+        );
+        assert!(
+            !displayed(&tab, "notes.txt", true),
+            "the pane renders the selected item, not every row"
+        );
+
+        for item in tab.items_opt.as_mut().expect("tab should be populated") {
+            item.state.selected = item.name == "notes.txt";
+        }
+        assert!(displayed(&tab, "notes.txt", true));
+
+        tab.gallery = true;
+        assert!(
+            displayed(&tab, "notes.txt", false),
+            "the gallery renders a text preview of its own"
+        );
         Ok(())
     }
 

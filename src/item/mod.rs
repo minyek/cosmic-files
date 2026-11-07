@@ -34,6 +34,8 @@ pub use self::metadata::ItemMetadata;
 pub use self::state::ItemState;
 pub(crate) use self::state::next_work_id;
 pub use self::thumbnail::ItemThumbnail;
+#[cfg(test)]
+pub(crate) use self::thumbnail::TEXT_PREVIEW_MAX_BYTES;
 
 static SPECIAL_DIRS: LazyLock<FxHashMap<PathBuf, &'static str>> = LazyLock::new(|| {
     let mut special_dirs = FxHashMap::default();
