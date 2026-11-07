@@ -477,7 +477,7 @@ enum Message {
     NewFolder,
     NotifyEvents(Vec<DebouncedEvent>),
     NotifyWatcher(WatcherWrapper),
-    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
+    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>, FxHashSet<PathBuf>),
     Open,
     Preview,
     PersistenceFlushed,
@@ -1035,6 +1035,7 @@ impl App {
         };
         let new_paths = self.watched_paths();
         Task::future(async move {
+            let requested = new_paths.clone();
             match tokio::task::spawn_blocking(move || {
                 crate::watcher::reconcile(watcher, old_paths, new_paths)
             })
@@ -1045,6 +1046,7 @@ impl App {
                         watcher_opt: Some(watcher),
                     },
                     paths,
+                    requested,
                 )),
                 Err(err) => {
                     log::warn!("failed to update watcher: {err}");
@@ -1673,9 +1675,9 @@ impl Application for App {
                     log::warn!("message did not contain notify watcher");
                 }
             },
-            Message::WatcherUpdated(mut wrapper, paths) => {
+            Message::WatcherUpdated(mut wrapper, paths, requested) => {
                 if let Some(watcher) = wrapper.watcher_opt.take() {
-                    let stale = paths != self.watched_paths();
+                    let stale = requested != self.watched_paths();
                     self.watcher_opt = Some((watcher, paths));
                     if stale || self.watcher_update_pending {
                         self.watcher_update_pending = false;
@@ -2479,6 +2481,28 @@ mod tests {
                 Completion::FrameworkClose,
             )
         }
+    }
+
+    #[tokio::test]
+    async fn a_failed_watch_does_not_resubmit_without_a_new_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("missing");
+        let mut app = save_dialog(&dir, "new.txt");
+        app.tab.location = crate::location::Location::Path(path);
+        let watcher = notify_debouncer_full::new_debouncer(
+            std::time::Duration::from_millis(100),
+            None,
+            |_events| {},
+        )
+        .unwrap();
+        app.watcher_opt = Some((watcher, Default::default()));
+        app.watcher_update_pending = false;
+        let result = task_result(app.update_watcher()).await;
+        let followup = app.update(result);
+        assert_eq!(followup.units(), 0);
+        assert!(app.watcher_opt.as_ref().unwrap().1.is_empty());
+        Ok(())
     }
 
     #[tokio::test]

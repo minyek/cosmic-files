@@ -9,12 +9,17 @@ pub(crate) fn reconcile<W: Watcher, C: FileIdCache>(
     old_paths: FxHashSet<PathBuf>,
     new_paths: FxHashSet<PathBuf>,
 ) -> (Debouncer<W, C>, FxHashSet<PathBuf>) {
+    let mut registered = old_paths.clone();
     let reconciled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         for path in &old_paths {
             if !new_paths.contains(path) {
                 match watcher.unwatch(path) {
                     Ok(()) => {
+                        registered.remove(path);
                         log::debug!("unwatching {}", path.display());
+                    }
+                    Err(err) if matches!(err.kind, notify::ErrorKind::WatchNotFound) => {
+                        registered.remove(path);
                     }
                     Err(err) => {
                         log::debug!("failed to unwatch {}: {}", path.display(), err)
@@ -27,6 +32,7 @@ pub(crate) fn reconcile<W: Watcher, C: FileIdCache>(
             if !old_paths.contains(path) {
                 match watcher.watch(path, notify::RecursiveMode::NonRecursive) {
                     Ok(()) => {
+                        registered.insert(path.clone());
                         log::debug!("watching {}", path.display());
                     }
                     Err(err) => {
@@ -38,7 +44,7 @@ pub(crate) fn reconcile<W: Watcher, C: FileIdCache>(
     }));
 
     match reconciled {
-        Ok(()) => (watcher, new_paths),
+        Ok(()) => (watcher, registered),
         Err(_) => {
             log::error!("watch update panicked; rebuilding the watch set");
             (watcher, FxHashSet::default())
@@ -105,6 +111,26 @@ mod tests {
             .collect::<super::FxHashSet<_>>();
         let (_watcher, registered) = super::reconcile(watcher, registered, requested.clone());
         assert_eq!(registered, requested);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_watch_can_be_retried_after_the_directory_appears() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("late");
+        let watcher = notify_debouncer_full::new_debouncer(
+            std::time::Duration::from_millis(100),
+            None,
+            |_events| {},
+        )
+        .unwrap();
+        let requested = [path.clone()].into_iter().collect();
+        let (watcher, registered) = super::reconcile(watcher, Default::default(), requested);
+        assert!(registered.is_empty());
+        std::fs::create_dir(&path)?;
+        let requested = [path.clone()].into_iter().collect();
+        let (_watcher, registered) = super::reconcile(watcher, registered, requested);
+        assert!(registered.contains(&path));
         Ok(())
     }
 }
