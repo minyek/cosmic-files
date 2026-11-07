@@ -446,6 +446,7 @@ pub enum Message {
     Key(window::Id, Modifiers, Key, Physical, Option<SmolStr>),
     LaunchUrl(String),
     MaybeExit,
+    PersistenceFlushed,
     ModifiersChanged(window::Id, Modifiers),
     MounterItems(MounterKey, MounterItems),
     MountResult(MounterKey, MounterItem, Result<bool, String>),
@@ -975,23 +976,16 @@ impl App {
             }
 
             // Fall back to using open crate
+            let mut opened = Vec::with_capacity(paths.len());
             for path in paths {
                 match open::that_detached(&path) {
-                    Ok(()) => {
-                        if self.config.show_recents {
-                            let _ = recently_used_xbel::update_recently_used(
-                                &path,
-                                Self::APP_ID.to_string(),
-                                "cosmic-files".to_string(),
-                                None,
-                            );
-                        }
-                    }
+                    Ok(()) => opened.push(path),
                     Err(err) => {
                         log::warn!("failed to open {}: {}", path.display(), err);
                     }
                 }
             }
+            self.record_recently_used(opened);
         }
 
         Task::batch(tasks)
@@ -1047,6 +1041,16 @@ impl App {
         }
     }
 
+    fn record_recently_used(&self, paths: Vec<PathBuf>) {
+        if self.config.show_recents {
+            crate::recents::record_recently_used(paths, Self::APP_ID);
+        }
+    }
+
+    fn clear_recently_used() {
+        crate::recents::clear_recently_used();
+    }
+
     fn launch_from_mime_cache<P>(&self, mime: &Mime, paths: &[P]) -> bool
     where
         P: std::fmt::Debug + AsRef<Path> + AsRef<std::ffi::OsStr>,
@@ -1060,16 +1064,12 @@ impl App {
             for (i, mut command) in commands.into_iter().enumerate() {
                 match spawn_detached(&mut command) {
                     Ok(()) => {
-                        if self.config.show_recents {
-                            for path in paths {
-                                let _ = recently_used_xbel::update_recently_used(
-                                    &path.into(),
-                                    Self::APP_ID.to_string(),
-                                    "cosmic-files".to_string(),
-                                    None,
-                                );
-                            }
-                        }
+                        self.record_recently_used(
+                            paths
+                                .iter()
+                                .map(|path| <P as AsRef<Path>>::as_ref(path).to_path_buf())
+                                .collect(),
+                        );
 
                         return true;
                     }
@@ -3401,14 +3401,7 @@ impl Application for App {
                                 {
                                     match spawn_detached(&mut command) {
                                         Ok(()) => {
-                                            if self.config.show_recents {
-                                                let _ = recently_used_xbel::update_recently_used(
-                                                    &path,
-                                                    Self::APP_ID.to_string(),
-                                                    "cosmic-files".to_string(),
-                                                    None,
-                                                );
-                                            }
+                                            self.record_recently_used(vec![path.clone()]);
                                         }
                                         Err(err) => {
                                             log::warn!(
@@ -3610,7 +3603,14 @@ impl Application for App {
             }
             Message::MaybeExit => {
                 if self.core.main_window_id().is_none() && self.pending_operations.is_empty() {
-                    // Exit if window is closed and there are no pending operations
+                    return Task::future(async {
+                        crate::persistence::flush().await;
+                        cosmic::action::app(Message::PersistenceFlushed)
+                    });
+                }
+            }
+            Message::PersistenceFlushed => {
+                if self.core.main_window_id().is_none() && self.pending_operations.is_empty() {
                     process::exit(0);
                 }
             }
@@ -4743,12 +4743,7 @@ impl Application for App {
                             commands.push(self.update(Message::PasteContents(to, from)));
                         }
                         tab::Command::ClearRecents => {
-                            match recently_used_xbel::clear_recently_used() {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    log::warn!("failed to clear recents history: {}", err);
-                                }
-                            }
+                            Self::clear_recently_used();
                         }
                         tab::Command::EmptyTrash => {
                             return self.push_dialog(
@@ -4815,9 +4810,19 @@ impl Application for App {
                             self.set_show_context(true);
                         }
                         tab::Command::SetOpenWith(mime, id) => {
-                            //TODO: this will block for a few ms, run in background?
-                            self.mime_app_cache.set_default(mime, id);
+                            let completion = crate::mime_app::queue_default(mime, id);
+                            commands.push(Task::future(async move {
+                                match completion.await {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(err)) => {
+                                        log::warn!("failed to set default handler: {err}")
+                                    }
+                                    Err(err) => log::warn!("failed to set default handler: {err}"),
+                                }
+                                cosmic::action::app(Message::ReloadMimeAppCache)
+                            }));
                         }
+
                         tab::Command::SetPermissions(path, mode) => {
                             commands.push(self.operation(Operation::SetPermissions { path, mode }));
                         }
@@ -5380,12 +5385,7 @@ impl Application for App {
                 ));
             }
             Message::NavMenuAction(action) => match action {
-                NavMenuAction::ClearRecents => match recently_used_xbel::clear_recently_used() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        log::warn!("failed to clear recents history: {}", err);
-                    }
-                },
+                NavMenuAction::ClearRecents => Self::clear_recently_used(),
                 NavMenuAction::EmptyTrash => {
                     return self
                         .push_dialog(DialogPage::EmptyTrash, Some(EMPTY_TRASH_BUTTON_ID.clone()));
@@ -7882,6 +7882,43 @@ mod tests {
                 .items_opt()
                 .is_some()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn clean_exit_waits_for_queued_persistence() -> std::io::Result<()> {
+        use cosmic::Application;
+        const CHILD_PROFILE: &str = "COSMIC_TEST_EXIT_PROFILE";
+        if let Some(profile) = std::env::var_os(CHILD_PROFILE) {
+            let profile = std::path::PathBuf::from(profile);
+            return tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let dir = tempfile::TempDir::new_in(&profile)?;
+                let path = dir.path().join("saved-before-exit.txt");
+                std::fs::write(&path, b"content")?;
+                let mut app = test_app(&dir);
+                crate::recents::record_recently_used(vec![path], "test");
+                app.core.set_main_window_id(None);
+                let _ = task_result(app.update(super::Message::MaybeExit)).await;
+                let history =
+                    std::fs::read_to_string(profile.join(".local/share/recently-used.xbel"))?;
+                assert!(history.contains("saved-before-exit.txt"));
+                std::fs::write(profile.join("drained"), b"complete")
+            });
+        }
+        let profile = tempfile::TempDir::new()?;
+        let status = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "app::tests::clean_exit_waits_for_queued_persistence",
+                "--nocapture",
+            ])
+            .env(CHILD_PROFILE, profile.path())
+            .env("HOME", profile.path())
+            .env("XDG_DATA_HOME", profile.path().join(".local/share"))
+            .env("XDG_CONFIG_HOME", profile.path().join(".config"))
+            .status()?;
+        assert!(status.success());
+        assert!(profile.path().join("drained").is_file());
         Ok(())
     }
 

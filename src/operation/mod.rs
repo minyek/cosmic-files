@@ -1111,7 +1111,7 @@ impl Operation {
             Self::RemoveFromRecents { paths } => {
                 tokio::task::spawn_blocking(move || {
                     let path_refs = paths.iter().map(PathBuf::as_path).collect::<Box<[_]>>();
-                    recently_used_xbel::remove_recently_used(&path_refs)
+                    crate::recents::remove_recently_used(&path_refs)
                 })
                 .await
                 .map_err(|e| OperationError::from_err(e, &controller))?

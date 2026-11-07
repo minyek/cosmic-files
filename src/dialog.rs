@@ -22,7 +22,6 @@ use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme, 
 use mime_guess::{Mime, mime};
 use notify_debouncer_full::notify::{self, RecommendedWatcher};
 use notify_debouncer_full::{DebouncedEvent, Debouncer, RecommendedCache, new_debouncer};
-use recently_used_xbel::update_recently_used;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
@@ -36,7 +35,7 @@ use crate::app::{
 use crate::config::{
     Config, DialogConfig, State, TIME_CONFIG_ID, ThumbCfg, TimeConfig, TypeToSearch,
 };
-use crate::item::{Item, ItemMetadata, folder_icon_symbolic};
+use crate::item::Item;
 use crate::key_bind::key_binds;
 use crate::localize::LANGUAGE_SORTER;
 use crate::location::{Location, SearchLocation};
@@ -279,15 +278,9 @@ impl<M: Send + 'static> Dialog<M> {
         core.set_main_window_id(Some(window_id));
         let flags = Flags {
             kind: dialog_settings.kind,
-            path_opt: dialog_settings.path_opt.as_ref().and_then(|path| {
-                match fs::canonicalize(path) {
-                    Ok(ok) => Some(ok),
-                    Err(err) => {
-                        log::warn!("failed to canonicalize {}: {}", path.display(), err);
-                        None
-                    }
-                }
-            }),
+            // Tab::new normalizes this path lexically; canonicalizing it here would stat-walk
+            // every component and freeze dialog launch on a slow mount.
+            path_opt: dialog_settings.path_opt,
             window_id,
             config_handler,
             config,
@@ -367,7 +360,9 @@ impl<M: Send + 'static> Dialog<M> {
             .update(message.0)
             .map(DialogMessage)
             .map(move |message| cosmic::action::app(mapper(message)));
-        if let Some(result) = self.cosmic.app.result_opt.take() {
+        if self.cosmic.app.completed
+            && let Some(result) = self.cosmic.app.result_opt.take()
+        {
             #[cfg(feature = "wayland")]
             if !self.cosmic.surface_views.is_empty() {
                 log::debug!("waiting for surfaces to close...");
@@ -435,8 +430,15 @@ impl<M: Send + 'static> Dialog<M> {
 
 #[derive(Clone, Debug)]
 enum DialogPage {
-    NewFolder { parent: PathBuf, name: String },
-    Replace { filename: String },
+    NewFolder {
+        parent: PathBuf,
+        name: String,
+    },
+    Replace {
+        request: widget::Id,
+        filename: String,
+        path: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -477,7 +479,14 @@ enum Message {
     NotifyWatcher(WatcherWrapper),
     Open,
     Preview,
+    PersistenceFlushed,
     Save(bool),
+    SaveChecked {
+        request: widget::Id,
+        replace: bool,
+        path: PathBuf,
+        existing: Option<bool>,
+    },
     ScrollTab(i16),
     SearchActivate,
     SearchClear,
@@ -567,7 +576,9 @@ struct App {
     mounter_items: FxHashMap<MounterKey, MounterItems>,
     nav_model: segmented_button::SingleSelectModel,
     navigation: crate::navigation::PendingRequest,
+    save_request: crate::navigation::PendingRequest,
     result_opt: Option<DialogResult>,
+    completed: bool,
     search_id: widget::Id,
     tab: Tab,
     key_binds: HashMap<KeyBind, Action>,
@@ -581,6 +592,43 @@ struct App {
 }
 
 impl App {
+    fn close(&self) -> Task<Message> {
+        Task::future(async {
+            crate::persistence::flush().await;
+            cosmic::action::app(Message::PersistenceFlushed)
+        })
+    }
+
+    fn invalidate_save(&mut self) {
+        self.save_request.invalidate();
+        self.dialog_pages
+            .retain(|page| !matches!(page, DialogPage::Replace { .. }));
+    }
+
+    fn check_save(&mut self, path: PathBuf, replace: bool) -> Task<Message> {
+        self.invalidate_save();
+        let request = self.save_request.begin();
+        Task::future(async move {
+            let stat_path = path.clone();
+            match tokio::task::spawn_blocking(move || {
+                stat_path.metadata().ok().map(|metadata| metadata.is_dir())
+            })
+            .await
+            {
+                Ok(existing) => cosmic::action::app(Message::SaveChecked {
+                    request,
+                    replace,
+                    path,
+                    existing,
+                }),
+                Err(err) => {
+                    log::warn!("failed to check {}: {}", path.display(), err);
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
     fn button_view(&self) -> Element<'_, Message> {
         let cosmic_theme::Spacing {
             space_xxxs,
@@ -799,6 +847,7 @@ impl App {
 
     fn search_set(&mut self, term_opt: Option<String>) -> Task<Message> {
         self.navigation.invalidate();
+        self.invalidate_save();
         let location_opt = match term_opt {
             Some(term) => {
                 let search_location = if let Some(path) = self.tab.location.path_opt() {
@@ -911,14 +960,10 @@ impl App {
                 nav_model = nav_model.insert(move |b| {
                     b.text(name.clone())
                         .icon(
-                            widget::icon::icon(if path.is_dir() {
-                                folder_icon_symbolic(&path, 16)
-                            } else {
-                                widget::icon::from_name("text-x-generic-symbolic")
-                                    .size(16)
-                                    .handle()
-                            })
-                            .size(16),
+                            // Show the folder icon for every favorite; picking an icon per kind
+                            // means an is_dir stat that blocks on a dead or slow network mount.
+                            widget::icon::icon(crate::item::folder_icon_symbolic(&path, 16))
+                                .size(16),
                         )
                         .data(Location::Path(path.clone()))
                 });
@@ -960,6 +1005,21 @@ impl App {
     fn update_title(&mut self) -> Task<Message> {
         self.set_header_title(self.title.clone());
         self.set_window_title(self.title.clone(), self.flags.window_id)
+    }
+
+    fn leave_unmounted_paths(&mut self, unmounted: &[PathBuf]) -> Task<Message> {
+        if self
+            .tab
+            .location
+            .path_opt()
+            .is_some_and(|current| unmounted.iter().any(|path| current.starts_with(path)))
+        {
+            self.navigation.invalidate();
+            self.invalidate_save();
+            self.tab.change_location(&Location::Path(home_dir()), None);
+            return Task::batch([self.update_watcher(), self.rescan_tab(None)]);
+        }
+        Task::none()
     }
 
     fn update_watcher(&mut self) -> Task<Message> {
@@ -1075,7 +1135,9 @@ impl Application for App {
             mounter_items: FxHashMap::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
             navigation: crate::navigation::PendingRequest::default(),
+            save_request: crate::navigation::PendingRequest::default(),
             result_opt: None,
+            completed: false,
             search_id: widget::Id::new("Dialog File Search"),
             tab,
             key_binds,
@@ -1204,7 +1266,7 @@ impl Application for App {
                         .spacing(space_xxs),
                     )
             }
-            DialogPage::Replace { filename } => widget::dialog()
+            DialogPage::Replace { filename, .. } => widget::dialog()
                 .title(fl!("replace-title", filename = filename.as_str()))
                 .icon(widget::icon::from_name("dialog-question").size(64))
                 .body(fl!("replace-warning"))
@@ -1308,8 +1370,7 @@ impl Application for App {
     }
 
     fn on_app_exit(&mut self) -> Option<Message> {
-        self.result_opt = Some(DialogResult::Cancel);
-        None
+        Some(Message::Cancel)
     }
 
     fn on_nav_select(&mut self, entity: segmented_button::Entity) -> Task<Message> {
@@ -1369,12 +1430,24 @@ impl Application for App {
 
     /// Handle application events here.
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.completed
+            || (self.result_opt.is_some() && !matches!(message, Message::PersistenceFlushed))
+        {
+            return Task::none();
+        }
         match message {
             Message::None => {}
+            Message::PersistenceFlushed => {
+                if self.result_opt.is_some() {
+                    self.completed = true;
+                    return window::close(self.flags.window_id);
+                }
+            }
             Message::Cancel => {
                 self.navigation.invalidate();
+                self.invalidate_save();
                 self.result_opt = Some(DialogResult::Cancel);
-                return window::close(self.flags.window_id);
+                return self.close();
             }
             Message::Choice(choice_i, option_i) => {
                 if let Some(choice) = self.choices.get_mut(choice_i) {
@@ -1403,12 +1476,18 @@ impl Application for App {
                 }
             }
             Message::DialogCancel => {
-                self.dialog_pages.pop_front();
+                if matches!(
+                    self.dialog_pages.pop_front(),
+                    Some(DialogPage::Replace { .. })
+                ) {
+                    self.save_request.invalidate();
+                }
             }
             Message::DialogComplete => {
                 if let Some(dialog_page) = self.dialog_pages.pop_front() {
                     match dialog_page {
                         DialogPage::NewFolder { parent, name } => {
+                            self.invalidate_save();
                             let path = parent.join(name);
                             match fs::create_dir(&path) {
                                 Ok(()) => {
@@ -1423,8 +1502,10 @@ impl Application for App {
                                 }
                             }
                         }
-                        DialogPage::Replace { .. } => {
-                            return self.update(Message::Save(true));
+                        DialogPage::Replace { request, path, .. } => {
+                            if self.save_request.finish(&request) {
+                                return self.check_save(path, true);
+                            }
                         }
                     }
                 }
@@ -1436,6 +1517,7 @@ impl Application for App {
             }
             Message::Escape => return self.on_escape(),
             Message::Filename(new_filename) => {
+                self.invalidate_save();
                 // Select based on filename
                 self.tab.select_name(&new_filename);
 
@@ -1542,22 +1624,13 @@ impl Application for App {
                                 }
                             }
                             if !still_mounted {
-                                unmounted.push(Location::Path(old_path));
+                                unmounted.push(old_path);
                             }
                         }
                     }
                 }
 
-                // Go back to home in any tabs that were unmounted
-                let mut commands = Vec::new();
-                {
-                    let home_location = Location::Path(home_dir());
-                    if unmounted.contains(&self.tab.location) {
-                        self.tab.change_location(&home_location, None);
-                        commands.push(self.update_watcher());
-                        commands.push(self.rescan_tab(None));
-                    }
-                }
+                let commands = vec![self.leave_unmounted_paths(&unmounted)];
 
                 // Insert new items
                 self.mounter_items.insert(mounter_key, mounter_items);
@@ -1576,6 +1649,7 @@ impl Application for App {
             }
             Message::NewFolder => {
                 self.navigation.invalidate();
+                self.invalidate_save();
                 if let Some(path) = self.tab.location.path_opt() {
                     self.dialog_pages.push_back(DialogPage::NewFolder {
                         parent: path.clone(),
@@ -1588,50 +1662,12 @@ impl Application for App {
                 log::debug!("{events:?}");
 
                 if let Some(path) = self.tab.location.path_opt() {
-                    let mut contains_change = false;
-                    for event in &events {
-                        for event_path in &event.paths {
-                            if event_path.starts_with(path) {
-                                if let notify::EventKind::Modify(
-                                    notify::event::ModifyKind::Metadata(_)
-                                    | notify::event::ModifyKind::Data(_),
-                                ) = event.kind
-                                {
-                                    // If metadata or data changed, find the matching item and reload it
-                                    //TODO: this could be further optimized by looking at what exactly changed
-                                    if let Some(items) = &mut self.tab.items_opt {
-                                        for item in items.iter_mut() {
-                                            if item.path_opt() == Some(event_path) {
-                                                //TODO: reload more, like mime types?
-                                                match fs::metadata(event_path) {
-                                                    Ok(new_metadata) => {
-                                                        if let ItemMetadata::Path {
-                                                            metadata, ..
-                                                        } = &mut item.metadata
-                                                        {
-                                                            *metadata = new_metadata;
-                                                        }
-                                                    }
-                                                    Err(err) => {
-                                                        log::warn!(
-                                                            "failed to reload metadata for {}: {}",
-                                                            path.display(),
-                                                            err
-                                                        );
-                                                    }
-                                                }
-                                                //TODO item.thumbnail_opt =
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    // Any other events reload the whole tab
-                                    contains_change = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    let contains_change = events.iter().any(|event| {
+                        event
+                            .paths
+                            .iter()
+                            .any(|event_path| event_path.starts_with(path))
+                    });
                     if contains_change {
                         return self.rescan_tab_if_idle();
                     }
@@ -1648,31 +1684,12 @@ impl Application for App {
                 }
             },
             Message::Open => {
-                let mut paths = Vec::new();
-                if let Some(items) = self.tab.items_opt() {
-                    for item in items {
-                        if item.state.selected
-                            && let Some(path) = item.path_opt()
-                        {
-                            paths.push(path.clone());
-                            if self.flags.config.show_recents {
-                                let _ = update_recently_used(
-                                    path,
-                                    Self::APP_ID.to_string(),
-                                    "cosmic-files".to_string(),
-                                    None,
-                                );
-                            }
-                        }
-                    }
-                }
+                let paths = self.tab.selected_paths_with_dir();
 
-                // Ensure selection is allowed
-                //TODO: improve tab logic so this doesn't block the open button so often
-                for path in &paths {
-                    let path_is_dir = path.is_dir();
-                    if path_is_dir != self.flags.kind.is_dir() {
-                        if path_is_dir && paths.len() == 1 {
+                // Ensure selection is allowed, deciding dir-vs-file from cached metadata.
+                for (path, path_is_dir) in &paths {
+                    if *path_is_dir != self.flags.kind.is_dir() {
+                        if *path_is_dir && paths.len() == 1 {
                             // If the only selected item is a directory and we are selecting files, cd to it
                             let message = Message::TabMessage(tab::Message::Location(
                                 Location::Path(path.clone()),
@@ -1687,8 +1704,16 @@ impl Application for App {
 
                 // If there are proper matching items, return them
                 if !paths.is_empty() {
-                    self.result_opt = Some(DialogResult::Open(paths));
-                    return window::close(self.flags.window_id);
+                    if self.flags.config.show_recents {
+                        crate::recents::record_recently_used(
+                            paths.iter().map(|(path, _)| path.clone()).collect(),
+                            Self::APP_ID,
+                        );
+                    }
+                    self.result_opt = Some(DialogResult::Open(
+                        paths.into_iter().map(|(path, _)| path).collect(),
+                    ));
+                    return self.close();
                 }
 
                 // If we are in directory mode, return the current directory
@@ -1696,7 +1721,7 @@ impl Application for App {
                     && let Location::Path(tab_path) = &self.tab.location
                 {
                     self.result_opt = Some(DialogResult::Open(vec![tab_path.clone()]));
-                    return window::close(self.flags.window_id);
+                    return self.close();
                 }
             }
             Message::Preview => {
@@ -1711,21 +1736,47 @@ impl Application for App {
                     && let Some(tab_path) = self.tab.location.path_opt()
                 {
                     let path = tab_path.join(filename);
-                    if path.is_dir() {
-                        // cd to directory
-                        let message =
-                            Message::TabMessage(tab::Message::Location(Location::Path(path)));
-                        return self.update(message);
-                    } else if !replace && path.exists() {
-                        self.dialog_pages.push_back(DialogPage::Replace {
-                            filename: filename.clone(),
-                        });
-                        return widget::button::focus(REPLACE_BUTTON_ID.clone());
-                    }
-                    self.result_opt = Some(DialogResult::Open(vec![path]));
-                    return window::close(self.flags.window_id);
+                    return self.check_save(path, replace);
                 }
             }
+            Message::SaveChecked {
+                request,
+                replace,
+                path,
+                existing,
+            } => {
+                let current_path = match &self.flags.kind {
+                    DialogKind::SaveFile { filename } => self
+                        .tab
+                        .location
+                        .path_opt()
+                        .map(|parent| parent.join(filename)),
+                    _ => None,
+                };
+                if !self.save_request.finish(&request)
+                    || self.result_opt.is_some()
+                    || current_path.as_ref() != Some(&path)
+                {
+                    return Task::none();
+                }
+                if existing == Some(true) {
+                    return self.update(Message::TabMessage(tab::Message::Location(
+                        Location::Path(path),
+                    )));
+                } else if !replace && existing.is_some() {
+                    self.dialog_pages.push_back(DialogPage::Replace {
+                        request: self.save_request.begin(),
+                        filename: path
+                            .file_name()
+                            .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+                        path,
+                    });
+                    return widget::button::focus(REPLACE_BUTTON_ID.clone());
+                }
+                self.result_opt = Some(DialogResult::Open(vec![path]));
+                return self.close();
+            }
+
             Message::ScrollTab(scroll_speed) => {
                 return self.update(Message::TabMessage(tab::Message::ScrollTab(
                     f32::from(scroll_speed) / 10.0,
@@ -1766,6 +1817,7 @@ impl Application for App {
                     tab::Message::EditLocation(_) | tab::Message::EditLocationEnable
                 ) {
                     self.navigation.invalidate();
+                    self.invalidate_save();
                 }
                 let click_i_opt = match tab_message {
                     tab::Message::Click(click_i_opt) => click_i_opt,
@@ -1781,7 +1833,11 @@ impl Application for App {
                     && let Some(item) = items.get(click_i)
                     && item.state.selected
                     && !item.metadata.is_dir()
+                    && *filename != item.name
                 {
+                    self.save_request.invalidate();
+                    self.dialog_pages
+                        .retain(|page| !matches!(page, DialogPage::Replace { .. }));
                     filename.clone_from(&item.name);
                 }
 
@@ -1793,12 +1849,14 @@ impl Application for App {
                         }
                         tab::Command::ChangeLocation(_tab_title, _tab_path, selection_paths) => {
                             self.navigation.invalidate();
+                            self.invalidate_save();
                             commands.push(Task::batch([
                                 self.update_watcher(),
                                 self.rescan_tab(selection_paths),
                             ]));
                         }
                         tab::Command::EditLocationSubmit(edit_location, typed_uri) => {
+                            self.invalidate_save();
                             let request = self.navigation.begin();
                             commands.push(Task::future(async move {
                                 let target = tokio::task::spawn_blocking(move || {
@@ -2211,7 +2269,10 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{App, Application, Config, Core, DialogKind, Flags, Message, window};
+    use super::{
+        App, Application, Config, Core, DialogKind, DialogPage, DialogResult, Flags, Message,
+        window,
+    };
 
     fn save_dialog(dir: &TempDir, filename: &str) -> App {
         let window_id = window::Id::unique();
@@ -2241,6 +2302,268 @@ mod tests {
             cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) => message,
             _ => panic!("the task must return an application message"),
         }
+    }
+
+    #[cfg(unix)]
+    mod picker_completion {
+        use std::ffi::CString;
+        use std::io::Write;
+        use std::os::unix::ffi::OsStrExt;
+
+        use cosmic::iced::futures::{FutureExt, StreamExt};
+        use cosmic::iced::runtime::{Action, task};
+
+        use super::*;
+        use crate::dialog::{Dialog, DialogMessage};
+
+        #[derive(Clone, Debug)]
+        enum ParentMessage {
+            Dialog(DialogMessage),
+            Result(DialogResult),
+        }
+
+        #[derive(Clone, Copy)]
+        enum Completion {
+            Save,
+            Cancel,
+            FrameworkClose,
+        }
+
+        fn framework_close() -> DialogMessage {
+            DialogMessage(cosmic::Action::Cosmic(cosmic::app::Action::Close))
+        }
+
+        fn run_isolated(test_name: &str, completion: Completion) -> io::Result<()> {
+            const CHILD_PROFILE: &str = "COSMIC_TEST_PICKER_COMPLETION_PROFILE";
+            if let Some(profile) = std::env::var_os(CHILD_PROFILE) {
+                return tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(check_completion(std::path::Path::new(&profile), completion));
+            }
+            let profile = TempDir::new()?;
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", test_name, "--nocapture"])
+                .env(CHILD_PROFILE, profile.path())
+                .env("HOME", profile.path())
+                .env("XDG_DATA_HOME", profile.path().join(".local/share"))
+                .env("XDG_CONFIG_HOME", profile.path().join(".config"))
+                .status()?;
+            assert!(status.success(), "the isolated picker completion failed");
+            assert!(profile.path().join("drained").is_file());
+            Ok(())
+        }
+
+        async fn check_completion(
+            profile: &std::path::Path,
+            completion: Completion,
+        ) -> io::Result<()> {
+            let dir = TempDir::new_in(profile)?;
+            let recorded = dir.path().join("queued-before-picker-close.txt");
+            std::fs::write(&recorded, b"content")?;
+            let app = save_dialog(&dir, "new.txt");
+            let window_id = app.flags.window_id;
+            let mut dialog = Dialog {
+                cosmic: cosmic::app::cosmic::Cosmic::new(app),
+                mapper: ParentMessage::Dialog,
+                on_result: Box::new(ParentMessage::Result),
+            };
+
+            let history = profile.join(".local/share/recently-used.xbel");
+            std::fs::create_dir_all(history.parent().unwrap())?;
+            let fifo = CString::new(history.as_os_str().as_bytes()).unwrap();
+            if unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            crate::recents::record_recently_used(vec![recorded], "test");
+            let mut release = std::fs::OpenOptions::new().write(true).open(&history)?;
+            let initial_history = br#"<?xml version="1.0" encoding="UTF-8"?><xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks" xmlns:mime="http://www.freedesktop.org/standards/shared-mime-info"/>"#;
+            let mut replacement = tempfile::NamedTempFile::new_in(history.parent().unwrap())?;
+            replacement.write_all(initial_history)?;
+            replacement.persist(&history).map_err(|err| err.error)?;
+
+            let closing = match completion {
+                Completion::Save => {
+                    let checking =
+                        dialog.update(DialogMessage(cosmic::Action::App(Message::Save(false))));
+                    let mut checking = task::into_stream(checking).unwrap();
+                    let Some(Action::Output(cosmic::Action::App(ParentMessage::Dialog(checked)))) =
+                        checking.next().await
+                    else {
+                        panic!("the save check must return a dialog message");
+                    };
+                    dialog.update(checked)
+                }
+                Completion::Cancel => {
+                    dialog.update(DialogMessage(cosmic::Action::App(Message::Cancel)))
+                }
+                Completion::FrameworkClose => dialog.update(framework_close()),
+            };
+            let mut closing = task::into_stream(closing).unwrap();
+            assert!(
+                closing.next().now_or_never().is_none(),
+                "the picker closed or published its result before the recents write finished"
+            );
+            assert_eq!(dialog.update(framework_close()).units(), 0);
+            assert_eq!(
+                dialog
+                    .update(DialogMessage(cosmic::Action::App(Message::Cancel)))
+                    .units(),
+                0
+            );
+
+            release.write_all(initial_history)?;
+            drop(release);
+            let Some(Action::Output(cosmic::Action::App(ParentMessage::Dialog(flushed)))) =
+                closing.next().await
+            else {
+                panic!("draining persistence must return a dialog message");
+            };
+            assert!(matches!(
+                flushed.0,
+                cosmic::Action::App(Message::PersistenceFlushed)
+            ));
+            assert!(closing.next().await.is_none());
+            assert!(std::fs::read_to_string(&history)?.contains("queued-before-picker-close.txt"));
+
+            let mut finished = task::into_stream(dialog.update(flushed.clone())).unwrap();
+            let mut closes = 0;
+            let mut results = 0;
+            while let Some(action) = finished.next().await {
+                match action {
+                    Action::Window(cosmic::iced::runtime::window::Action::Close(id)) => {
+                        assert_eq!(id, window_id);
+                        closes += 1;
+                    }
+                    Action::Output(cosmic::Action::App(ParentMessage::Result(result))) => {
+                        match completion {
+                            Completion::Save => assert!(
+                                matches!(result, DialogResult::Open(paths) if paths == [dir.path().join("new.txt")])
+                            ),
+                            Completion::Cancel | Completion::FrameworkClose => {
+                                assert!(matches!(result, DialogResult::Cancel));
+                            }
+                        }
+                        results += 1;
+                    }
+                    _ => panic!("picker completion returned an unexpected action"),
+                }
+            }
+            assert_eq!(closes, 1);
+            assert_eq!(results, 1);
+            assert_eq!(dialog.update(flushed).units(), 0);
+            assert_eq!(dialog.update(framework_close()).units(), 0);
+            std::fs::write(profile.join("drained"), b"complete")
+        }
+
+        #[test]
+        fn save_waits_for_queued_recents_before_publishing_its_result() -> io::Result<()> {
+            run_isolated(
+                "dialog::tests::picker_completion::save_waits_for_queued_recents_before_publishing_its_result",
+                Completion::Save,
+            )
+        }
+
+        #[test]
+        fn cancel_waits_for_queued_recents_before_publishing_its_result() -> io::Result<()> {
+            run_isolated(
+                "dialog::tests::picker_completion::cancel_waits_for_queued_recents_before_publishing_its_result",
+                Completion::Cancel,
+            )
+        }
+
+        #[test]
+        fn framework_close_waits_for_queued_recents_before_publishing_its_result() -> io::Result<()>
+        {
+            run_isolated(
+                "dialog::tests::picker_completion::framework_close_waits_for_queued_recents_before_publishing_its_result",
+                Completion::FrameworkClose,
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn a_picker_result_waits_for_persistence_before_closing() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "new.txt");
+        let checked = task_result(app.update(Message::Save(false))).await;
+        let completion = task_result(app.update(checked)).await;
+        assert!(matches!(completion, Message::PersistenceFlushed));
+        let _ = app.update(Message::Cancel);
+        assert!(
+            matches!(&app.result_opt, Some(DialogResult::Open(paths)) if paths == &[dir.path().join("new.txt")])
+        );
+        assert!(app.update(completion).units() > 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_picker_leaves_unmounted_parent_paths() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let nested = dir.path().join("child");
+        std::fs::create_dir(&nested)?;
+        let mut app = save_dialog(&dir, "new.txt");
+        app.tab.location = crate::location::Location::Path(nested);
+        let navigation = app.navigation.begin();
+        let save = app.save_request.begin();
+        let _ = app.leave_unmounted_paths(&[dir.path().to_path_buf()]);
+        assert_eq!(app.tab.location.path_opt(), Some(&crate::home_dir()));
+        assert!(!app.navigation.is_current(&navigation));
+        assert!(!app.save_request.is_current(&save));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn save_navigation_intent_invalidates_an_earlier_save_check() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "new.txt");
+        app.tab.edit_location =
+            Some(crate::location::Location::Path(dir.path().join("other")).into());
+        let checked = task_result(app.update(Message::Save(false))).await;
+        let _ = app.update(Message::TabMessage(crate::tab::Message::EditLocationSubmit));
+        let _ = app.update(checked);
+        assert!(app.result_opt.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_edit_back_to_the_same_name_cannot_revive_a_confirmation() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        std::fs::write(dir.path().join("report.pdf"), b"pdf")?;
+        let mut app = save_dialog(&dir, "report.pdf");
+        let checked = task_result(app.update(Message::Save(false))).await;
+        let _ = app.update(checked);
+        assert_eq!(app.dialog_pages.len(), 1);
+        let _ = app.update(Message::Filename("other.pdf".into()));
+        let _ = app.update(Message::Filename("report.pdf".into()));
+        assert_eq!(app.update(Message::DialogComplete).units(), 0);
+        assert!(app.result_opt.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repeated_save_checks_create_only_one_confirmation() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        std::fs::write(dir.path().join("report.pdf"), b"pdf")?;
+        let mut app = save_dialog(&dir, "report.pdf");
+        let old = task_result(app.update(Message::Save(false))).await;
+        let current = task_result(app.update(Message::Save(false))).await;
+        let _ = app.update(current);
+        let _ = app.update(old);
+        assert_eq!(app.dialog_pages.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_save_check_cannot_survive_an_edit_back_to_the_same_name() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.pdf");
+        let old = task_result(app.update(Message::Save(false))).await;
+        let _ = app.update(Message::Filename("other.pdf".into()));
+        let _ = app.update(Message::Filename("report.pdf".into()));
+        let _ = app.update(old);
+        assert!(app.result_opt.is_none());
+        assert!(app.dialog_pages.is_empty());
+        Ok(())
     }
 
     #[tokio::test]
@@ -2288,6 +2611,166 @@ mod tests {
         Ok(())
     }
 
+    /// The picker's listing is filtered to the selected file types, so a name it does not hold
+    /// may still exist on disk. Deciding here would miss it; the decision waits for the stat.
+    #[test]
+    fn save_defers_the_decision_instead_of_reading_the_listing() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        std::fs::write(dir.path().join("report.pdf"), b"pdf")?;
+        let mut app = save_dialog(&dir, "report.pdf");
+
+        let _task = app.update(Message::Save(false));
+
+        assert!(
+            app.dialog_pages.is_empty(),
+            "Save prompted before anything had established whether the file exists"
+        );
+        assert!(
+            app.result_opt.is_none(),
+            "Save accepted before anything had established whether the file exists"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn save_checked_prompts_before_replacing_a_file() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.pdf");
+
+        let request = app.save_request.begin();
+        let _task = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: dir.path().join("report.pdf"),
+            existing: Some(false),
+        });
+
+        assert!(matches!(
+            app.dialog_pages.front(),
+            Some(DialogPage::Replace { filename, .. }) if filename == "report.pdf"
+        ));
+        assert!(app.result_opt.is_none(), "the file was accepted unprompted");
+        Ok(())
+    }
+
+    #[test]
+    fn save_checked_accepts_a_name_nothing_holds() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.pdf");
+        let path = dir.path().join("report.pdf");
+
+        let request = app.save_request.begin();
+        let _task = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: path.clone(),
+            existing: None,
+        });
+
+        assert!(app.dialog_pages.is_empty());
+        assert!(matches!(
+            app.result_opt,
+            Some(DialogResult::Open(ref paths)) if paths == &[path]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn save_checked_accepts_a_file_once_replacing_is_confirmed() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.pdf");
+        let path = dir.path().join("report.pdf");
+
+        let request = app.save_request.begin();
+        let _task = app.update(Message::SaveChecked {
+            request,
+            replace: true,
+            path: path.clone(),
+            existing: Some(false),
+        });
+
+        assert!(
+            app.dialog_pages.is_empty(),
+            "confirming the replacement prompted for it again"
+        );
+        assert!(matches!(
+            app.result_opt,
+            Some(DialogResult::Open(ref paths)) if paths == &[path]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn save_checked_enters_a_directory_of_that_name() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let nested = dir.path().join("report.pdf");
+        std::fs::create_dir(&nested)?;
+        let mut app = save_dialog(&dir, "report.pdf");
+
+        let request = app.save_request.begin();
+        let _task = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: nested,
+            existing: Some(true),
+        });
+
+        assert!(app.dialog_pages.is_empty(), "entering a directory prompted");
+        assert!(
+            app.result_opt.is_none(),
+            "entering a directory returned it as the saved file"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_save_check_for_an_edited_filename_is_ignored() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "first.txt");
+        let request = app.save_request.begin();
+        let _ = app.update(Message::Filename("second.txt".into()));
+        let _ = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: dir.path().join("first.txt"),
+            existing: Some(false),
+        });
+        assert!(app.dialog_pages.is_empty());
+        assert!(app.result_opt.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_save_check_after_cancellation_cannot_accept_a_file() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.txt");
+        let request = app.save_request.begin();
+        let _ = app.update(Message::Cancel);
+        let _ = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: dir.path().join("report.txt"),
+            existing: None,
+        });
+        assert!(matches!(app.result_opt, Some(DialogResult::Cancel)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_save_check_for_another_directory_is_ignored() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.txt");
+        let request = app.save_request.begin();
+        let _ = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: dir.path().join("elsewhere/report.txt"),
+            existing: None,
+        });
+        assert!(app.result_opt.is_none());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn submitting_a_picker_location_opens_the_requested_directory() -> io::Result<()> {
         use crate::location::Location;
@@ -2329,6 +2812,26 @@ mod tests {
             )),
         });
         assert_eq!(app.tab.location, original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn confirming_a_replacement_cannot_switch_to_an_edited_name() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "first.txt");
+        let first = dir.path().join("first.txt");
+        std::fs::write(&first, b"first")?;
+        let request = app.save_request.begin();
+        let _ = app.update(Message::SaveChecked {
+            request,
+            replace: false,
+            path: first,
+            existing: Some(false),
+        });
+        let _ = app.update(Message::Filename("second.txt".into()));
+        let task = app.update(Message::DialogComplete);
+        assert!(cosmic::iced::runtime::task::into_stream(task).is_none());
+        assert!(app.result_opt.is_none());
         Ok(())
     }
 }
