@@ -42,7 +42,7 @@ mod spawn_detached;
 pub mod tab;
 mod thumbnail_cacher;
 mod thumbnailer;
-pub(crate) mod trash;
+pub mod trash;
 mod watcher;
 mod zoom;
 
