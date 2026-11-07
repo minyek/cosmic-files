@@ -1,0 +1,33 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-drag)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 10s
+     Running tests/drag_selection.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/drag_selection-c36c0dee52e44bfb)
+
+running 2 tests
+test list_drag_selection_survives_culled_rows ... FAILED
+test grid_drag_selection_survives_culled_rows ... FAILED
+
+failures:
+
+---- list_drag_selection_survives_culled_rows stdout ----
+
+thread 'list_drag_selection_survives_culled_rows' (3923752) panicked at tests/drag_selection.rs:203:5:
+assertion `left == right` failed: drag must select exactly the visible targets in List
+  left: ["file00001.txt", "file00002.txt"]
+ right: ["file00011.txt", "file00012.txt"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- grid_drag_selection_survives_culled_rows stdout ----
+
+thread 'grid_drag_selection_survives_culled_rows' (3923751) panicked at tests/drag_selection.rs:203:5:
+assertion `left == right` failed: drag must select exactly the visible targets in Grid
+  left: ["file00006.txt", "file00007.txt"]
+ right: ["file00024.txt", "file00025.txt"]
+
+
+failures:
+    grid_drag_selection_survives_culled_rows
+    list_drag_selection_survives_culled_rows
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `--test drag_selection`

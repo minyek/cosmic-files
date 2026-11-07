@@ -1,0 +1,39 @@
+Linux 7.2.7-200.fc44.x86_64 x86_64 GNU/Linux
+rustc 1.98.1 (48a229cea 2026-09-01) (Fedora 1.98.1-1.fc44)
+00f02e7b85947b56b0f07a29ed9d6a66c1d6fad899730bc20e175e7c0976ce5f  /mnt/work/projects/cosmic-de/cosmic-files/.worktrees/main-preparation/target/debug/examples/scroll_frame_probe
+repeat=1 directory=/mnt/logs/agent/sqmerge-frame-measurement-3511613/small
+scan entries=1000 elapsed_ms=8.842
+content_height=48999.0 greatest_offset=48299.0
+view=List frames=600 median_us=448.217 p95_us=485.287 p99_us=577.774 max_us=747.448
+content_height=18000.0 greatest_offset=17300.0
+view=Grid frames=600 median_us=597.111 p95_us=698.174 p99_us=725.436 max_us=835.797
+repeat=1 directory=/mnt/logs/agent/sqmerge-frame-measurement-3511613/large
+scan entries=20000 elapsed_ms=73.285
+content_height=979999.0 greatest_offset=979299.0
+view=List frames=600 median_us=645.353 p95_us=893.948 p99_us=1163.132 max_us=1598.373
+content_height=360000.0 greatest_offset=359300.0
+view=Grid frames=600 median_us=939.585 p95_us=1231.683 p99_us=1940.898 max_us=2498.753
+repeat=2 directory=/mnt/logs/agent/sqmerge-frame-measurement-3511613/small
+scan entries=1000 elapsed_ms=9.094
+content_height=48999.0 greatest_offset=48299.0
+view=List frames=600 median_us=441.403 p95_us=489.074 p99_us=724.724 max_us=885.562
+content_height=18000.0 greatest_offset=17300.0
+view=Grid frames=600 median_us=591.029 p95_us=683.315 p99_us=908.336 max_us=973.279
+repeat=2 directory=/mnt/logs/agent/sqmerge-frame-measurement-3511613/large
+scan entries=20000 elapsed_ms=72.166
+content_height=979999.0 greatest_offset=979299.0
+view=List frames=600 median_us=653.849 p95_us=894.188 p99_us=1407.950 max_us=1717.170
+content_height=360000.0 greatest_offset=359300.0
+view=Grid frames=600 median_us=965.204 p95_us=1262.221 p99_us=1746.736 max_us=2413.881
+repeat=3 directory=/mnt/logs/agent/sqmerge-frame-measurement-3511613/small
+scan entries=1000 elapsed_ms=9.229
+content_height=48999.0 greatest_offset=48299.0
+view=List frames=600 median_us=448.977 p95_us=482.812 p99_us=554.079 max_us=674.137
+content_height=18000.0 greatest_offset=17300.0
+view=Grid frames=600 median_us=596.510 p95_us=687.403 p99_us=695.649 max_us=862.547
+repeat=3 directory=/mnt/logs/agent/sqmerge-frame-measurement-3511613/large
+scan entries=20000 elapsed_ms=71.249
+content_height=979999.0 greatest_offset=979299.0
+view=List frames=600 median_us=647.035 p95_us=911.942 p99_us=1282.009 max_us=1608.532
+content_height=360000.0 greatest_offset=359300.0
+view=Grid frames=600 median_us=942.981 p95_us=1143.364 p99_us=1222.585 max_us=1512.369

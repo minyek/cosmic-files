@@ -1,0 +1,7 @@
+install -Dm0755 target/release/cosmic-files /mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/bin/cosmic-files
+install -Dm0755 target/release/cosmic-files-thumbnailer /mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/bin/cosmic-files-thumbnailer
+install -Dm0755 target/release/cosmic-files-applet /mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/bin/cosmic-files-applet
+install -Dm0644 target/xdgen/com.system76.CosmicFiles.desktop /mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/share/applications/com.system76.CosmicFiles.desktop
+install -Dm0644 target/xdgen/com.system76.CosmicFiles.metainfo.xml /mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/share/metainfo/com.system76.CosmicFiles.metainfo.xml
+install -Dm0644 res/com.system76.CosmicFiles.thumbnailer /mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/share/thumbnailers/com.system76.CosmicFiles.thumbnailer
+for size in `ls res/icons/hicolor`; do install -Dm0644 "res/icons/hicolor/$size/apps/com.system76.CosmicFiles.svg" "/mnt/logs/agent/sqmerge-main-release-3924635/install-root/usr/share/icons/hicolor/$size/apps/com.system76.CosmicFiles.svg"; done

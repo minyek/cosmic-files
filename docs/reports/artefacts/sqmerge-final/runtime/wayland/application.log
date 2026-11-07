@@ -1,0 +1,112 @@
+  [2m2026-10-02T18:35:12.137908Z[0m [33m WARN[0m  [33mfailed to add recents file `/home/agent/.local/share/recently-used.xbel` to watcher: No path was found. about ["/home/agent/.local/share/recently-used.xbel"][0m
+    [2;3mat[0m src/app.rs:7557 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:12.138643Z[0m [33m WARN[0m  [33mcould not find any valid trash bins to watch: Unknown { description: "The 'home trash' either does not exist or is not a directory (or a link pointing to a dir)" }[0m
+    [2;3mat[0m src/app.rs:7497 [2;3mon[0m tokio-rt-worker
+
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA-EGL: warning: MESA-LOADER: failed to retrieve device information
+MESA-EGL: warning: failed to get driver name for fd -1
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+MESA: error: ZINK: failed to choose pdev
+MESA-EGL: warning: egl: failed to create dri2 screen
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA-EGL: warning: MESA-LOADER: failed to retrieve device information
+MESA-EGL: warning: failed to get driver name for fd -1
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+MESA: error: ZINK: failed to choose pdev
+MESA-EGL: warning: egl: failed to create dri2 screen
+  [2m2026-10-02T18:35:13.123833Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures") None[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main
+
+  [2m2026-10-02T18:35:13.126038Z[0m [33m WARN[0m  [33mfailed to parse /home/agent/gui-fixtures/invalid.desktop: InvalidEntry[0m
+    [2;3mat[0m src/tab.rs:618 [2;3mon[0m
+
+  [2m2026-10-02T18:35:13.147026Z[0m [33m WARN[0m  [33mfailed to parse /home/agent/gui-fixtures/invalid.desktop: InvalidEntry[0m
+    [2;3mat[0m src/tab.rs:600 [2;3mon[0m
+
+  [2m2026-10-02T18:35:13.158297Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158325Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158298Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158337Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158361Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158362Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158372Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158349Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158426Z[0m [33m WARN[0m  [33mfailed to read directory /home/agent/.local/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158440Z[0m [33m WARN[0m  [33mfailed to read directory /home/agent/.local/share/flatpak/exports/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158448Z[0m [33m WARN[0m  [33mfailed to read directory /var/lib/flatpak/exports/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158455Z[0m [33m WARN[0m  [33mfailed to read directory /usr/local/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:13.158689Z[0m [32m INFO[0m  [32mloaded thumbnailer cache in 277.329µs[0m
+    [2;3mat[0m src/thumbnailer.rs:160 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:35:24.601755Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures/large/") Some(["/home/agent/gui-fixtures/"])[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main
+
+  [2m2026-10-02T18:35:30.893353Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures/large/") None[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main
+
+  [2m2026-10-02T18:35:32.893834Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures/large/") None[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main

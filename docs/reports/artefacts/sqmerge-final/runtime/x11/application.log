@@ -1,0 +1,76 @@
+  [2m2026-10-02T18:34:27.804439Z[0m [33m WARN[0m  [33mfailed to add recents file `/home/agent/.local/share/recently-used.xbel` to watcher: No path was found. about ["/home/agent/.local/share/recently-used.xbel"][0m
+    [2;3mat[0m src/app.rs:7557 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:27.804995Z[0m [33m WARN[0m  [33mcould not find any valid trash bins to watch: Unknown { description: "The 'home trash' either does not exist or is not a directory (or a link pointing to a dir)" }[0m
+    [2;3mat[0m src/app.rs:7497 [2;3mon[0m tokio-rt-worker
+
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+MESA-EGL: warning: DRI3 error: Could not get DRI3 device
+MESA-EGL: warning: Ensure your X server supports DRI3 to get accelerated rendering
+  [2m2026-10-02T18:34:28.331695Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures") None[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main
+
+  [2m2026-10-02T18:34:28.333639Z[0m [33m WARN[0m  [33mfailed to parse /home/agent/gui-fixtures/invalid.desktop: InvalidEntry[0m
+    [2;3mat[0m src/tab.rs:618 [2;3mon[0m
+
+  [2m2026-10-02T18:34:28.350908Z[0m [33m WARN[0m  [33mfailed to parse /home/agent/gui-fixtures/invalid.desktop: InvalidEntry[0m
+    [2;3mat[0m src/tab.rs:600 [2;3mon[0m
+
+  [2m2026-10-02T18:34:28.384598Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384627Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384651Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384600Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384666Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384598Z[0m [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384684Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384638Z[0m [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384794Z[0m [33m WARN[0m  [33mfailed to read directory /home/agent/.local/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384810Z[0m [33m WARN[0m  [33mfailed to read directory /home/agent/.local/share/flatpak/exports/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384833Z[0m [33m WARN[0m  [33mfailed to read directory /var/lib/flatpak/exports/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.384848Z[0m [33m WARN[0m  [33mfailed to read directory /usr/local/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:28.385189Z[0m [32m INFO[0m  [32mloaded thumbnailer cache in 413.45µs[0m
+    [2;3mat[0m src/thumbnailer.rs:160 [2;3mon[0m tokio-rt-worker
+
+  [2m2026-10-02T18:34:39.032748Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures/large/") Some(["/home/agent/gui-fixtures/"])[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main
+
+  [2m2026-10-02T18:34:45.309177Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures/large/") None[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main
+
+  [2m2026-10-02T18:34:47.309747Z[0m [32m INFO[0m  [32mrescan_tab Entity(1v1) Path("/home/agent/gui-fixtures/large/") None[0m
+    [2;3mat[0m src/app.rs:1854 [2;3mon[0m main

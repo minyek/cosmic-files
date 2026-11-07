@@ -1,0 +1,9 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-drag)
+    Finished `test` profile [optimized + debuginfo] target(s) in 47.61s
+     Running tests/drag_selection.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/drag_selection-c36c0dee52e44bfb)
+
+running 2 tests
+test grid_drag_selection_survives_culled_rows ... ok
+test list_drag_selection_survives_culled_rows ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s

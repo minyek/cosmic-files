@@ -1,0 +1,17 @@
+accept-real.sh, 2026-10-28, real rpm/rpmbuild 6.1.0, run under umask 022, one fresh clone per case.
+"entries" for the failing case counts the unpacked source tree, so it grows with the commit's file
+count (519 at c96bf5b, 522 once this directory exists). <clone> stands for the case's scratch clone.
+
+Before (master f6ae0a3):
+failing: exit 1; entries 519; not group-writable 519
+passing: exit 0; entries 15; not group-writable 15
+unreadable-dir: exit 0; entries 17; not group-writable 14
+
+After (c96bf5b):
+failing: exit 1; entries 519; not group-writable 0
+passing: exit 0; entries 15; not group-writable 0
+unreadable-dir: exit 0; entries 17; not group-writable 0
+  Warning: could not give group write to everything under <clone>/target/rpm
+
+Mutant (c96bf5b without the trap's warning fallback):
+unreadable-dir: exit 1; entries 17; not group-writable 0

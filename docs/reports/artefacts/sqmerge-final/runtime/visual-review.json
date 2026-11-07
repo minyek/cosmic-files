@@ -1,0 +1,36 @@
+{
+  "review": "PASS",
+  "method": "direct visual inspection of each named screenshot; process survival is supplementary",
+  "screenshots": {
+    "x11": {
+      "directory-menu": "folder.desktop retains directory actions, including Open in new tab",
+      "launcher-menu-ready": "parsed launcher has the compact launcher menu",
+      "invalid-launcher-menu": "invalid.desktop retains ordinary file actions",
+      "image-details": "photo.png displays the blue image and dimensions 320x180",
+      "large-list-end": "entry-19999.txt is visible and selected",
+      "large-grid-end": "entry-19999.txt is visible and selected",
+      "watcher-created": "00000-watcher-created.txt appears ahead of entry-00000.txt",
+      "watcher-removed": "the created item is absent and entry-00000.txt leads the list",
+      "large-list-scrolled": "wheel input advances the visible first complete row to entry-00147.txt",
+      "large-grid-scrolled": "wheel input advances the first visible row to entry-00400.txt"
+    },
+    "wayland": {
+      "directory-menu": "folder.desktop retains directory actions, including Open in new tab",
+      "launcher-menu-ready": "parsed launcher has the compact launcher menu",
+      "invalid-launcher-menu": "invalid.desktop retains ordinary file actions",
+      "image-details": "photo.png displays the blue image and dimensions 320x180",
+      "large-list-end": "entry-19999.txt is visible and selected",
+      "large-grid-end": "entry-19999.txt is visible and selected",
+      "watcher-created": "00000-watcher-created.txt appears ahead of entry-00000.txt",
+      "watcher-removed": "the created item is absent and entry-00000.txt leads the list",
+      "large-list-scrolled": "wheel input advances the visible first complete row to entry-00147.txt",
+      "large-grid-scrolled": "wheel input advances the first visible row to entry-00400.txt"
+    },
+    "picker": {
+      "picker-large-end": "descending list reaches selected entry-00000.txt",
+      "picker-watcher-created": "00000-picker-created.txt appears in the current directory",
+      "picker-watcher-removed": "created item disappears and entry-19999.txt leads the descending list",
+      "picker-selected-result": "picker closes and example displays the selected entry-00000.txt path"
+    }
+  }
+}

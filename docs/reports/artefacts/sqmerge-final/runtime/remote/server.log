@@ -1,0 +1,44 @@
+/mnt/logs/temp/cosmic-acceptance/remote/venv/lib/python3.14/site-packages/pyftpdlib/authorizers.py:99: RuntimeWarning: write permissions assigned to anonymous user.
+  self._check_permissions(username, perm)
+[I 2026-10-02 19:34:25] concurrency model: async
+[I 2026-10-02 19:34:25] masquerade (NAT) address: None
+[I 2026-10-02 19:34:25] passive ports: None
+[I 2026-10-02 19:34:25] >>> starting FTP server on 127.0.0.1:38285, pid=1637052 <<<
+[I 2026-10-02 19:34:25] 127.0.0.1:38538-[] FTP session opened (connect)
+[I 2026-10-02 19:34:25] 127.0.0.1:38538-[] FTP session closed (disconnect).
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[] FTP session opened (connect)
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] USER 'anonymous' logged in.
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/nested 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/nested/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/nested 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/nested/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/nested 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/nested 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/.hidden 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/renamed-root.txt 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/renamed-root.txt 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/renamed-root.txt 550 'No such file or directory.'
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] RNFR /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/root-file.txt 350
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] RNTO /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root/renamed-root.txt 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] CWD /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/server-root 250
+[I 2026-10-02 19:34:25] 127.0.0.1:38550-[anonymous] FTP session closed (disconnect).
+/home/agent/.local/share/uv/python/cpython-3.14.5-linux-x86_64-gnu/lib/python3.14/multiprocessing/resource_tracker.py:475: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown: {'/mp-1mtm57jx', '/mp-bfokej_k', '/mp-po7dnqc8', '/mp-b6eats57', '/mp-b3z34vuf', '/mp-sxo_fkd9'}
+  warnings.warn(

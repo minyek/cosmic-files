@@ -1,0 +1,42 @@
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gtk.vfs.Daemon' requested by ':1.0' (uid=1001 pid=1637248 comm="python3 /mnt/work/projects/cosmic-de/cosmic-files/" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gtk.vfs.Daemon'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.freedesktop.secrets' requested by ':1.4' (uid=1001 pid=1637340 comm="/usr/libexec/gvfsd-ftp --spawner :1.1 /org/gtk/gvf" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+** Message: 19:34:25.560: couldn't access control socket: /mnt/logs/agent/sqmerge-runtime-acceptance-1633613/remote/runtime/keyring/control: No such file or directory
+discover_other_daemon: 0dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.freedesktop.secrets'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gtk.vfs.AfcVolumeMonitor' requested by ':1.7' (uid=1001 pid=1637391 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gtk.vfs.AfcVolumeMonitor'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gtk.vfs.GoaVolumeMonitor' requested by ':1.7' (uid=1001 pid=1637391 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gnome.OnlineAccounts' requested by ':1.9' (uid=1001 pid=1637425 comm="/usr/libexec/gvfs-goa-volume-monitor" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+goa-daemon-Message: 19:34:25.639: goa-daemon version 3.58.1 starting
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gnome.Identity' requested by ':1.10' (uid=1001 pid=1637434 comm="/usr/libexec/goa-daemon" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gnome.OnlineAccounts'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gtk.vfs.GoaVolumeMonitor'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gtk.vfs.GPhoto2VolumeMonitor' requested by ':1.7' (uid=1001 pid=1637391 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gnome.Identity'
+
+(process:1637562): libgoaidentity-WARNING **: 19:34:25.648: GoaKerberosIdentityManager: Using polling for change notification for credential cache type 'KCM'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gtk.vfs.GPhoto2VolumeMonitor'
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Activating service name='org.gtk.vfs.MTPVolumeMonitor' requested by ':1.7' (uid=1001 pid=1637391 comm="/mnt/work/projects/cosmic-de/cosmic-files/.worktre" label="unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023")
+dbus-daemon[1637247]: [session uid=1001 pid=1637247 pidfd=5] Successfully activated service 'org.gtk.vfs.MTPVolumeMonitor'
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.692: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.699: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.724: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.730: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.755: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.764: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.788: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.795: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.806: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+
+(process:1637340): GLib-GIO-CRITICAL **: 19:34:25.806: g_file_info_get_file_type: assertion 'G_IS_FILE_INFO (info)' failed
+A connection to the bus can't be made
+A connection to the bus can't be made
