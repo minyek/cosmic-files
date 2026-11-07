@@ -25,7 +25,7 @@ use notify_debouncer_full::{DebouncedEvent, Debouncer, RecommendedCache, new_deb
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{self, Instant};
 use std::{env, fmt, fs};
 
@@ -631,6 +631,18 @@ impl App {
         })
     }
 
+    /// Whether `name` exists in `parent` and whether it is a directory, read from the picker's
+    /// scanned listing: `view` calls this every frame, where a `stat` would block on a slow
+    /// mount. The listing is filtered to the picker's file types and may not be showing
+    /// `parent` at all, so `None` means "not found here", not "does not exist" -- anything that
+    /// overwrites or creates has to establish that for itself.
+    fn existing_entry_in_dir(&self, parent: &Path, name: &str) -> Option<bool> {
+        self.tab
+            .lists_directory(parent)
+            .then(|| self.tab.find_entry_is_dir(name))
+            .flatten()
+    }
+
     fn button_view(&self) -> Element<'_, Message> {
         let cosmic_theme::Spacing {
             space_xxxs,
@@ -1215,21 +1227,24 @@ impl Application for App {
                     dialog = dialog.tertiary_action(widget::text::body(fl!("name-no-slashes")));
                     None
                 } else {
-                    let path = parent.join(name);
-                    if path.exists() {
-                        if path.is_dir() {
+                    match self.existing_entry_in_dir(parent, name) {
+                        Some(true) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("folder-already-exists")));
-                        } else {
+                            None
+                        }
+                        Some(false) => {
                             dialog = dialog
                                 .tertiary_action(widget::text::body(fl!("file-already-exists")));
+                            None
                         }
-                        None
-                    } else {
-                        if name.starts_with('.') {
-                            dialog = dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                        None => {
+                            if name.starts_with('.') {
+                                dialog =
+                                    dialog.tertiary_action(widget::text::body(fl!("name-hidden")));
+                            }
+                            Some(Message::DialogComplete)
                         }
-                        Some(Message::DialogComplete)
                     }
                 };
 

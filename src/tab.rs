@@ -922,6 +922,22 @@ impl Tab {
         }
     }
 
+    /// Whether this tab's listing is exactly the contents of `dir`, so it can answer whether a
+    /// name in `dir` is taken. A search tab is listing matches from anywhere below its root, so
+    /// a name it holds may belong to a subdirectory.
+    pub fn lists_directory(&self, dir: &Path) -> bool {
+        !matches!(self.location, Location::Search(..))
+            && self.location.path_opt().map(PathBuf::as_path) == Some(dir)
+    }
+
+    /// Returns the directory flag from the cached listing, without filesystem I/O.
+    pub fn find_entry_is_dir(&self, name: &str) -> Option<bool> {
+        self.items_opt.as_ref()?.iter().find_map(|item| {
+            let item_name = item.path_opt()?.file_name()?.to_str()?;
+            (item_name == name).then(|| item.metadata.is_dir())
+        })
+    }
+
     pub fn selected_paths_with_dir(&self) -> Vec<(PathBuf, bool)> {
         let Some(ref items) = self.items_opt else {
             return Vec::new();
@@ -5868,6 +5884,26 @@ mod tests {
 
         let up = Location::Path(PathBuf::from("~/..")).normalize();
         assert_eq!(up.path_opt().unwrap(), &home.join(".."));
+    }
+
+    #[test]
+    fn a_search_tab_cannot_say_whether_a_name_in_its_root_is_taken() -> io::Result<()> {
+        let fs = TempDir::new()?;
+        let root = fs.path().to_owned();
+
+        let listing = tab_at(Location::Path(root.clone()));
+        let searching = tab_at(Location::Search(
+            SearchLocation::Path(root.clone()),
+            "report".to_string(),
+            false,
+            Instant::now(),
+        ));
+
+        // Both tabs answer to the same path, but a search tab's entries come from anywhere
+        // below it, so a name it holds may belong to a subdirectory rather than the root.
+        assert!(listing.lists_directory(&root));
+        assert!(!searching.lists_directory(&root));
+        Ok(())
     }
 
     #[test]
