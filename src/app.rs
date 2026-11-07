@@ -139,6 +139,28 @@ fn retry_extract_with_password<C, E>(
     })
 }
 
+/// The text a failed operation shows and copies, or `None` when it has left the
+/// failed-operations history.
+fn failed_operation_text<C, E: fmt::Display>(
+    failed_operations: &BTreeMap<u64, (Operation, C, E)>,
+    id: u64,
+) -> Option<String> {
+    let (operation, _, err) = failed_operations.get(&id)?;
+    //TODO: nice description of error
+    Some(format!("{operation:#?}\n{err}"))
+}
+
+/// The same text for several failed operations, skipping any that have left the history.
+fn failed_operations_text<C, E: fmt::Display>(
+    failed_operations: &BTreeMap<u64, (Operation, C, E)>,
+    ids: &[u64],
+) -> String {
+    ids.iter()
+        .filter_map(|id| failed_operation_text(failed_operations, *id))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// What a batch of watcher events did to a tab's listing.
 enum ListingChange {
     /// Entries were added, removed or renamed: the listing has to be read again.
@@ -478,6 +500,7 @@ pub enum Message {
     Config(Config),
     Copy(Option<Entity>),
     CopyPath(Option<Entity>),
+    CopyText(String),
     CopyTo(Option<Entity>),
     CopyToResult(DialogResult),
     CosmicSettings(&'static str),
@@ -3329,6 +3352,9 @@ impl Application for App {
                 let path_strings: Vec<String> =
                     paths.into_iter().map(|p| p.display().to_string()).collect();
                 let text = path_strings.join("\n");
+                return clipboard::write(text);
+            }
+            Message::CopyText(text) => {
                 return clipboard::write(text);
             }
             Message::CopyTo(entity_opt) => {
@@ -6232,35 +6258,33 @@ impl Application for App {
                 ),
             DialogPage::FailedOperation(id) => {
                 //TODO: try next dialog page (making sure index is used by Dialog messages)?
-                let (operation, _, err) = self.failed_operations.get(id)?;
-
-                //TODO: nice description of error
+                let error_text = failed_operation_text(&self.failed_operations, *id)?;
                 widget::dialog()
                     .title("Failed operation")
-                    .body(format!("{operation:#?}\n{err}"))
+                    .body(error_text.clone())
                     .icon(icon::from_name("dialog-error").size(64))
                     //TODO: retry action
                     .primary_action(
                         widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
                     )
+                    .secondary_action(
+                        widget::button::standard(fl!("copy-to-clipboard"))
+                            .on_press(Message::CopyText(error_text)),
+                    )
             }
             DialogPage::FailedOperations(ids) => {
-                let errors: Vec<String> = ids
-                    .iter()
-                    .filter_map(|id| match self.failed_operations.get(id) {
-                        Some((operation, _, err)) => Some(format!("{operation:#?}\n{err}")),
-                        _ => None,
-                    })
-                    .collect();
-
-                //TODO: nice description of error
+                let error_text = failed_operations_text(&self.failed_operations, ids);
                 widget::dialog()
                     .title("Failed operations")
-                    .body(errors.join("\n\n"))
+                    .body(error_text.clone())
                     .icon(icon::from_name("dialog-error").size(64))
                     //TODO: retry action
                     .primary_action(
                         widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
+                    )
+                    .secondary_action(
+                        widget::button::standard(fl!("copy-to-clipboard"))
+                            .on_press(Message::CopyText(error_text)),
                     )
             }
             DialogPage::ExtractPassword { id, password } => widget::dialog()
@@ -7908,7 +7932,8 @@ mod tests {
 
     use super::{
         ListingChange, MAX_OPERATION_HISTORY, Mime, OpenTargets, Operation, cap_operation_history,
-        classify_events, retry_extract_with_password,
+        classify_events, failed_operation_text, failed_operations_text,
+        retry_extract_with_password,
     };
 
     fn event(kind: EventKind, path: &str) -> DebouncedEvent {
@@ -8115,6 +8140,67 @@ mod tests {
         }
     }
 
+    fn delete_failure(id: u64, err: &str) -> BTreeMap<u64, (Operation, (), String)> {
+        let mut failed = BTreeMap::new();
+        failed.insert(
+            id,
+            (
+                Operation::Delete {
+                    paths: vec![PathBuf::from("doc.txt")],
+                },
+                (),
+                err.to_string(),
+            ),
+        );
+        failed
+    }
+
+    #[test]
+    fn a_failed_operation_carries_both_the_operation_and_its_error() {
+        let failed = delete_failure(7, "Permission denied");
+
+        let text = failed_operation_text(&failed, 7).expect("text for a failure still in history");
+
+        assert!(text.contains("Delete"));
+        assert!(text.contains("doc.txt"));
+        assert!(text.ends_with("Permission denied"));
+    }
+
+    #[test]
+    fn a_failure_no_longer_in_the_history_has_no_text() {
+        let failed: BTreeMap<u64, (Operation, (), String)> = BTreeMap::new();
+
+        assert!(failed_operation_text(&failed, 7).is_none());
+    }
+
+    #[test]
+    fn several_failures_read_as_one_blank_line_separated_block() {
+        let mut failed = delete_failure(7, "Permission denied");
+        failed.extend(delete_failure(8, "Read-only file system"));
+
+        let text = failed_operations_text(&failed, &[7, 8]);
+
+        assert_eq!(
+            text,
+            [
+                failed_operation_text(&failed, 7).expect("the first failure"),
+                failed_operation_text(&failed, 8).expect("the second failure"),
+            ]
+            .join("\n\n")
+        );
+    }
+
+    #[test]
+    fn failures_no_longer_in_the_history_are_skipped_rather_than_left_blank() {
+        let failed = delete_failure(7, "Permission denied");
+
+        let text = failed_operations_text(&failed, &[6, 7, 8]);
+
+        assert_eq!(
+            text,
+            failed_operation_text(&failed, 7).expect("the only failure still in history")
+        );
+    }
     #[test]
     fn pasted_files_preserve_existing_content() -> std::io::Result<()> {
         let dir = tempfile::TempDir::new()?;
