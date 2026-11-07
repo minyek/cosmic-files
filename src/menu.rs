@@ -7,7 +7,6 @@ use cosmic::widget::menu::key_bind::KeyBind;
 use cosmic::widget::menu::{self, ItemHeight, ItemWidth, MenuBar};
 use cosmic::widget::{self, responsive_menu_bar};
 use cosmic::{Element, theme};
-use i18n_embed::LanguageLoader;
 use mime_guess::Mime;
 use std::collections::HashMap;
 use std::path::Path;
@@ -48,6 +47,41 @@ impl MenuAction for TabAction {
     }
 }
 
+pub(crate) struct MenuSnapshot<Message> {
+    open: bool,
+    items: std::cell::RefCell<Option<Vec<menu::Tree<Message>>>>,
+}
+
+impl<Message: Clone + 'static> MenuSnapshot<Message> {
+    pub(crate) fn new() -> Self {
+        Self {
+            open: false,
+            items: std::cell::RefCell::new(None),
+        }
+    }
+
+    pub(crate) fn set_open(&mut self, open: bool) {
+        if open && !self.open {
+            self.items.get_mut().take();
+        }
+        self.open = open;
+    }
+
+    pub(crate) fn view(
+        &self,
+        build: impl FnOnce() -> Vec<menu::Tree<Message>>,
+    ) -> Vec<menu::Tree<Message>> {
+        if crate::is_wayland() {
+            return build();
+        }
+        let mut items = self.items.borrow_mut();
+        if !self.open || items.is_none() {
+            *items = Some(build());
+        }
+        items.as_ref().unwrap().clone()
+    }
+}
+
 pub(crate) fn lone_desktop_entry(items: &[crate::item::Item]) -> Option<&Path> {
     let mut selected = items.iter().filter(|item| item.state.selected);
     let only = selected.next()?;
@@ -64,6 +98,52 @@ pub(crate) fn lone_desktop_entry(items: &[crate::item::Item]) -> Option<&Path> {
         }
         _ => None,
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct DesktopAction {
+    pub name: String,
+    pub exec: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct DesktopEntryActions {
+    pub id: u64,
+    pub actions: Vec<DesktopAction>,
+}
+
+impl DesktopEntryActions {
+    pub fn new(actions: Vec<DesktopAction>) -> Self {
+        Self {
+            id: crate::item::next_work_id(),
+            actions,
+        }
+    }
+
+    #[cfg(feature = "desktop")]
+    pub fn from_entry(entry: cosmic::desktop::DesktopEntryData) -> Self {
+        Self::new(
+            entry
+                .desktop_actions
+                .into_iter()
+                .map(|action| DesktopAction {
+                    name: action.name,
+                    exec: action.exec,
+                })
+                .collect(),
+        )
+    }
+}
+
+pub(crate) fn desktop_entry_actions(tab: &Tab) -> Option<&DesktopEntryActions> {
+    let items = tab.items_opt()?;
+    let selected_path = lone_desktop_entry(items)?;
+    let (path, work_id, actions) = tab.context_menu_desktop_entry.as_ref()?;
+    (path == selected_path
+        && items
+            .iter()
+            .any(|item| item.state.selected && item.state.work_id == *work_id))
+    .then_some(actions)
 }
 
 pub fn context_menu(
@@ -99,7 +179,6 @@ pub fn context_menu(
     let mut selected_dir = 0;
     let mut selected = 0;
     let mut selected_trash_only = false;
-    let selected_desktop_entry = tab.items_opt().and_then(|items| lone_desktop_entry(items));
     let mut selected_types: Vec<Mime> = vec![];
     let mut selected_mount_point = 0;
     let mut any_trash_item = false;
@@ -135,18 +214,7 @@ pub fn context_menu(
             .map(|(i, action)| menu_item(action.name.clone(), Action::RunContextAction(i)))
             .collect::<Vec<_>>()
     };
-    // Parse the desktop entry if it is the only selection
-    #[cfg(feature = "desktop")]
-    let selected_desktop_entry = selected_desktop_entry.and_then(|path| {
-        if selected == 1 {
-            let lang_id = crate::localize::LANGUAGE_LOADER.current_language();
-            let language = lang_id.language.as_str();
-            // Cache?
-            cosmic::desktop::load_desktop_file(&[language.into()], path.into())
-        } else {
-            None
-        }
-    });
+    let desktop_actions = desktop_entry_actions(tab);
 
     let mut children: Vec<menu::Item<TabAction, String>> = Vec::new();
     match (&tab.mode, &tab.location) {
@@ -164,18 +232,16 @@ pub fn context_menu(
                 if !Trash::is_empty() {
                     children.push(menu_item(fl!("empty-trash"), Action::EmptyTrash));
                 }
-            } else if let Some(entry) = selected_desktop_entry {
+            } else if let Some(snapshot) = desktop_actions {
                 children.push(menu_item(fl!("open"), Action::Open));
                 #[cfg(feature = "desktop")]
                 {
-                    children.extend(
-                        entry
-                            .desktop_actions
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, action)| menu_item(action.name, Action::ExecEntryAction(i))),
-                    );
+                    children.extend(snapshot.actions.iter().enumerate().map(|(i, action)| {
+                        menu_item(action.name.clone(), Action::ExecEntryAction(snapshot.id, i))
+                    }));
                 }
+                #[cfg(not(feature = "desktop"))]
+                let _ = snapshot;
                 children.push(menu::Item::Divider);
                 children.push(menu_item(fl!("rename"), Action::Rename));
                 children.push(menu_item(fl!("cut"), Action::Cut));
@@ -867,6 +933,191 @@ mod tests {
         Ok(())
     }
 
+    fn desktop_tab(dir: &TempDir) -> io::Result<crate::tab::Tab> {
+        path_tab(dir, "editor.desktop")
+    }
+
+    fn path_tab(dir: &TempDir, name: &str) -> io::Result<crate::tab::Tab> {
+        Ok(tab_showing(dir, selected_items(dir, &[name])?))
+    }
+
+    fn tab_showing(dir: &TempDir, items: Vec<Item>) -> crate::tab::Tab {
+        tab_at(
+            crate::location::Location::Path(dir.path().to_path_buf()),
+            items,
+        )
+    }
+
+    fn tab_at(location: crate::location::Location, items: Vec<Item>) -> crate::tab::Tab {
+        let mut tab = crate::tab::Tab::new(
+            location,
+            Default::default(),
+            Default::default(),
+            None,
+            cosmic::widget::Id::unique(),
+            None,
+        );
+        tab.set_items(items);
+        tab.items_opt.as_mut().unwrap()[0].state.selected = true;
+        tab
+    }
+
+    fn actions(names: &[&str]) -> super::DesktopEntryActions {
+        super::DesktopEntryActions::new(
+            names
+                .iter()
+                .map(|name| super::DesktopAction {
+                    name: (*name).into(),
+                    exec: format!("test-{name}"),
+                })
+                .collect(),
+        )
+    }
+
+    fn action_names(tab: &crate::tab::Tab) -> Option<Vec<String>> {
+        super::desktop_entry_actions(tab).map(|snapshot| {
+            snapshot
+                .actions
+                .iter()
+                .map(|action| action.name.clone())
+                .collect()
+        })
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn a_desktop_action_keeps_the_command_shown_in_its_menu() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        let path = dir.path().join("editor.desktop");
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
+        let modifiers = cosmic::iced::keyboard::Modifiers::empty();
+        std::fs::write(
+            &path,
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor\nActions=edit;\n\n[Desktop Action edit]\nName=Original\nExec=original-command\n",
+        )?;
+        let original = cosmic::desktop::load_desktop_file(&[], path.clone()).unwrap();
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(
+                path.clone(),
+                work_id,
+                Some(super::DesktopEntryActions::from_entry(original)),
+            ),
+            modifiers,
+        );
+        std::fs::write(
+            &path,
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor\nActions=edit;\n\n[Desktop Action edit]\nName=Changed\nExec=changed-command\n",
+        )?;
+        let snapshot = super::desktop_entry_actions(&tab).unwrap().id;
+        let commands = tab.update(crate::tab::Message::ExecEntryAction(snapshot, 0), modifiers);
+        let command = commands.into_iter().find_map(|command| match command {
+            crate::tab::Command::ExecEntryAction(command) => Some(command),
+            _ => None,
+        });
+        assert_eq!(command.as_deref(), Some("original-command"));
+        Ok(())
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn an_obsolete_menu_cannot_run_a_new_snapshots_action() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        let path = dir.path().join("editor.desktop");
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
+        let modifiers = cosmic::iced::keyboard::Modifiers::empty();
+        let original = actions(&["Original"]);
+        let old_id = original.id;
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(path.clone(), work_id, Some(original)),
+            modifiers,
+        );
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(path, work_id, Some(actions(&["Changed"]))),
+            modifiers,
+        );
+        assert!(
+            tab.update(crate::tab::Message::ExecEntryAction(old_id, 0), modifiers)
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_open_menu_keeps_its_layout_until_the_next_invocation() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        let mut snapshot = super::MenuSnapshot::new();
+        let keys = std::collections::HashMap::new();
+        let modifiers = cosmic::iced::keyboard::Modifiers::empty();
+        let before = snapshot
+            .view(|| super::context_menu(&tab, &keys, &modifiers, false, &[]))
+            .len();
+        snapshot.set_open(true);
+        snapshot.view(|| super::context_menu(&tab, &keys, &modifiers, false, &[]));
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(
+                dir.path().join("editor.desktop"),
+                work_id,
+                Some(actions(&[])),
+            ),
+            modifiers,
+        );
+        let after = super::context_menu(&tab, &keys, &modifiers, false, &[]).len();
+        assert_ne!(before, after);
+        assert_eq!(
+            snapshot
+                .view(|| super::context_menu(&tab, &keys, &modifiers, false, &[]))
+                .len(),
+            before
+        );
+        snapshot.set_open(false);
+        assert_eq!(
+            snapshot
+                .view(|| super::context_menu(&tab, &keys, &modifiers, false, &[]))
+                .len(),
+            after
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pending_and_failed_desktop_parses_keep_the_ordinary_menu() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        assert!(super::desktop_entry_actions(&tab).is_none());
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(
+                dir.path().join("editor.desktop"),
+                work_id,
+                None,
+            ),
+            cosmic::iced::keyboard::Modifiers::empty(),
+        );
+        assert!(super::desktop_entry_actions(&tab).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_valid_desktop_entry_without_actions_still_gets_its_launcher_menu() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        let work_id = tab.items_opt().unwrap()[0].state.work_id;
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(
+                dir.path().join("editor.desktop"),
+                work_id,
+                Some(actions(&[])),
+            ),
+            cosmic::iced::keyboard::Modifiers::empty(),
+        );
+        assert_eq!(action_names(&tab), Some(vec![]));
+        Ok(())
+    }
+
     #[test]
     #[cfg(unix)]
     fn a_desktop_suffixed_socket_is_not_a_launcher() -> io::Result<()> {
@@ -876,6 +1127,51 @@ mod tests {
         let mut item = item_from_path(&path, IconSizes::default()).unwrap();
         item.state.selected = true;
         assert_eq!(lone_desktop_entry(&[item]), None);
+        Ok(())
+    }
+
+    #[test]
+    fn an_obsolete_desktop_parse_cannot_erase_the_selected_launchers_actions() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        let old_path = dir.path().join("editor.desktop");
+        let other = selected_items(&dir, &["viewer.desktop"])?;
+        tab.items_opt.as_mut().unwrap()[0].state.selected = false;
+        tab.items_opt.as_mut().unwrap().extend(other);
+        let old_id = tab.items_opt().unwrap()[0].state.work_id;
+        let current_id = tab.items_opt().unwrap()[1].state.work_id;
+        let modifiers = cosmic::iced::keyboard::Modifiers::empty();
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(
+                dir.path().join("viewer.desktop"),
+                current_id,
+                Some(actions(&["View"])),
+            ),
+            modifiers,
+        );
+        for result in [Some(actions(&["Edit"])), None] {
+            tab.update(
+                crate::tab::Message::DesktopEntryParsed(old_path.clone(), old_id, result),
+                modifiers,
+            );
+            assert_eq!(action_names(&tab), Some(vec!["View".into()]));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_desktop_parse_cannot_apply_to_a_replacement_item() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut tab = desktop_tab(&dir)?;
+        let path = dir.path().join("editor.desktop");
+        let old = tab.items_opt().unwrap()[0].state.work_id;
+        tab.set_items(vec![item_from_path(&path, IconSizes::default()).unwrap()]);
+        tab.items_opt.as_mut().unwrap()[0].state.selected = true;
+        tab.update(
+            crate::tab::Message::DesktopEntryParsed(path, old, Some(actions(&["Old action"]))),
+            cosmic::iced::keyboard::Modifiers::empty(),
+        );
+        assert!(super::desktop_entry_actions(&tab).is_none());
         Ok(())
     }
 }

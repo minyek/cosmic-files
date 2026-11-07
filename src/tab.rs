@@ -18,7 +18,6 @@ use cosmic::widget::menu::action::MenuAction;
 use cosmic::widget::menu::key_bind::KeyBind;
 use cosmic::widget::{self, DndDestination, DndSource, Id, RcElementWrapper, Widget, space};
 use cosmic::{Apply, Element, cosmic_theme, font, theme};
-use i18n_embed::LanguageLoader;
 use icu::datetime::{DateTimeFormatter, fieldsets};
 use mime_guess::{Mime, mime};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -363,12 +362,13 @@ pub enum Command {
     ClearRecents,
     EmptyTrash,
     #[cfg(feature = "desktop")]
-    ExecEntryAction(cosmic::desktop::DesktopEntryData, usize),
+    ExecEntryAction(String),
     Iced(TaskWrapper),
     OpenFile(Vec<PathBuf>),
     OpenInNewTab(PathBuf),
     OpenInNewWindow(PathBuf),
     OpenTrash,
+    ParseDesktopEntry(PathBuf, u64),
     Preview(PreviewKind),
     RunContextAction(usize),
     SetOpenWith(Mime, String),
@@ -389,7 +389,9 @@ pub enum Message {
     Config(TabConfig),
     ContextAction(Action),
     RightClickBackground,
+    ContextMenuOpen(bool),
     Surface(cosmic::surface::Action<Message>),
+    DesktopEntryParsed(PathBuf, u64, Option<menu::DesktopEntryActions>),
     LocationContextMenuIndex(Option<usize>),
     LocationMenuAction(LocationMenuAction),
     Drag(Option<Rectangle>),
@@ -403,7 +405,7 @@ pub enum Message {
     ClearRecents,
     EmptyTrash,
     #[cfg(feature = "desktop")]
-    ExecEntryAction(Option<PathBuf>, usize),
+    ExecEntryAction(u64, usize),
     Gallery(bool),
     GalleryPrevious,
     GalleryNext,
@@ -609,6 +611,8 @@ pub struct Tab {
     pub location_title: String,
     /// Breadcrumb whose context menu is open, drawn as active while it shows
     pub location_context_menu_index: Option<usize>,
+    pub context_menu_desktop_entry: Option<(PathBuf, u64, menu::DesktopEntryActions)>,
+    context_menu_snapshot: menu::MenuSnapshot<Message>,
     pub mode: Mode,
     pub scroll_opt: Option<AbsoluteOffset>,
     pub size_opt: Cell<Option<Size>>,
@@ -715,6 +719,8 @@ impl Tab {
             location,
             location_ancestors,
             location_title,
+            context_menu_desktop_entry: None,
+            context_menu_snapshot: menu::MenuSnapshot::new(),
             location_context_menu_index: None,
             mode: Mode::App,
             scroll_opt: None,
@@ -1614,6 +1620,7 @@ impl Tab {
             Message::RunContextAction(action) => {
                 commands.push(Command::RunContextAction(action));
             }
+            Message::ContextMenuOpen(open) => self.context_menu_snapshot.set_open(open),
             Message::RightClickBackground => {
                 self.edit_location = None;
 
@@ -1624,6 +1631,30 @@ impl Tab {
                     for item in items.iter_mut() {
                         item.state.selected = false;
                     }
+                }
+
+                if menu::desktop_entry_actions(self).is_none()
+                    && let Some(items) = self.items_opt.as_ref()
+                    && let Some(path) = crate::menu::lone_desktop_entry(items)
+                    && let Some(item) = items.iter().find(|item| item.state.selected)
+                {
+                    commands.push(Command::ParseDesktopEntry(
+                        path.to_path_buf(),
+                        item.state.work_id,
+                    ));
+                }
+            }
+            Message::DesktopEntryParsed(path, work_id, actions) => {
+                if self.items_opt.as_ref().is_some_and(|items| {
+                    crate::menu::lone_desktop_entry(items) == Some(path.as_path())
+                        && items.iter().any(|item| {
+                            item.state.selected
+                                && item.state.work_id == work_id
+                                && item.path_opt() == Some(&path)
+                        })
+                }) {
+                    self.context_menu_desktop_entry =
+                        actions.map(|actions| (path, work_id, actions));
                 }
             }
             Message::Surface(action) => {
@@ -1775,25 +1806,12 @@ impl Tab {
                 commands.push(Command::EmptyTrash);
             }
             #[cfg(feature = "desktop")]
-            Message::ExecEntryAction(path, action) => {
-                let lang_id = crate::localize::LANGUAGE_LOADER.current_language();
-                let language = lang_id.language.as_str();
-                match path.map_or_else(
-                    || {
-                        let items = self.items_opt.as_deref()?;
-                        items
-                            .iter()
-                            .find(|&item| item.state.selected)
-                            .and_then(|item| {
-                                let location = item.location_opt.as_ref()?;
-                                let path = location.path_opt()?;
-                                cosmic::desktop::load_desktop_file(&[language.into()], path.into())
-                            })
-                    },
-                    |path| cosmic::desktop::load_desktop_file(&[language.into()], path),
-                ) {
-                    Some(entry) => commands.push(Command::ExecEntryAction(entry, action)),
-                    None => log::warn!("Invalid desktop entry path passed to ExecEntryAction"),
+            Message::ExecEntryAction(snapshot_id, action) => {
+                if let Some(snapshot) = menu::desktop_entry_actions(self)
+                    && snapshot.id == snapshot_id
+                    && let Some(action) = snapshot.actions.get(action)
+                {
+                    commands.push(Command::ExecEntryAction(action.exec.clone()));
                 }
             }
             Message::Gallery(gallery) => {
@@ -4477,15 +4495,19 @@ impl Tab {
         // Wrap the scrollable, not its content, so the popup anchors in window coordinates
         let mut context_menu = widget::context_menu(
             items_area,
-            Some(menu::context_menu(
-                self,
-                key_binds,
-                modifiers,
-                clipboard_paste_available,
-                context_actions,
-            )),
+            Some(self.context_menu_snapshot.view(|| {
+                menu::context_menu(
+                    self,
+                    key_binds,
+                    modifiers,
+                    clipboard_paste_available,
+                    context_actions,
+                )
+            })),
         )
         .item_width(cosmic::widget::menu::ItemWidth::Uniform(360))
+        .on_open(Message::ContextMenuOpen(true))
+        .on_close(Message::ContextMenuOpen(false))
         .on_surface_action(Message::Surface);
         if let Some(window_id) = self.window_id {
             context_menu = context_menu.window_id(window_id);

@@ -38,6 +38,8 @@ use cosmic::widget::menu::key_bind::KeyBind;
 use cosmic::widget::segmented_button::{self, Entity, ReorderEvent};
 use cosmic::widget::{self, icon, settings, space};
 use cosmic::{Application, ApplicationExt, Element, cosmic_theme, executor, surface, theme};
+#[cfg(feature = "desktop")]
+use i18n_embed::LanguageLoader;
 use mime_guess::Mime;
 use notify_debouncer_full::notify::event::{EventKind, ModifyKind};
 use notify_debouncer_full::notify::{self, RecommendedWatcher};
@@ -193,7 +195,7 @@ pub enum Action {
     Eject,
     EmptyTrash,
     #[cfg(feature = "desktop")]
-    ExecEntryAction(usize),
+    ExecEntryAction(u64, usize),
     ExtractHere,
     ExtractTo,
     Gallery,
@@ -268,9 +270,10 @@ impl Action {
             Self::ExtractHere => Message::ExtractHere(entity_opt),
             Self::ExtractTo => Message::ExtractTo(entity_opt),
             #[cfg(feature = "desktop")]
-            Self::ExecEntryAction(action) => {
-                Message::TabMessage(entity_opt, tab::Message::ExecEntryAction(None, *action))
-            }
+            Self::ExecEntryAction(snapshot, action) => Message::TabMessage(
+                entity_opt,
+                tab::Message::ExecEntryAction(*snapshot, *action),
+            ),
             Self::Gallery => Message::TabMessage(entity_opt, tab::Message::GalleryToggle),
             Self::HistoryNext => Message::TabMessage(entity_opt, tab::Message::GoNext),
             Self::HistoryPrevious => Message::TabMessage(entity_opt, tab::Message::GoPrevious),
@@ -1032,23 +1035,12 @@ impl App {
     }
 
     #[cfg(feature = "desktop")]
-    fn exec_entry_action(entry: &cosmic::desktop::DesktopEntryData, action: usize) {
-        if let Some(action) = entry.desktop_actions.get(action) {
-            // Largely copied from COSMIC app library
-            let mut exec = shlex::Shlex::new(&action.exec);
-            match exec.next() {
-                Some(cmd) if !cmd.contains('=') => {
-                    let mut proc = tokio::process::Command::new(cmd);
-                    proc.args(exec.filter(|arg| !arg.starts_with('%')));
-                    let _ = proc.spawn();
-                }
-                _ => (),
-            }
-        } else {
-            log::warn!(
-                "Invalid actions index `{action}` for desktop entry {}",
-                entry.name
-            );
+    fn exec_entry_action(command: &str) {
+        let mut exec = shlex::Shlex::new(command);
+        if let Some(cmd) = exec.next().filter(|cmd| !cmd.contains('=')) {
+            let mut proc = tokio::process::Command::new(cmd);
+            proc.args(exec.filter(|arg| !arg.starts_with('%')));
+            let _ = proc.spawn();
         }
     }
 
@@ -4580,6 +4572,40 @@ impl Application for App {
                                 self.update_tab(entity, tab_path, selection_paths),
                             ]));
                         }
+                        tab::Command::ParseDesktopEntry(path, work_id) => {
+                            #[cfg(feature = "desktop")]
+                            {
+                                let lang_id = crate::localize::LANGUAGE_LOADER.current_language();
+                                let language = lang_id.language.as_str().to_string();
+                                commands.push(Task::future(async move {
+                                    let parsed = tokio::task::spawn_blocking(move || {
+                                        let actions = cosmic::desktop::load_desktop_file(
+                                            &[language],
+                                            path.clone(),
+                                        )
+                                        .map(menu::DesktopEntryActions::from_entry);
+                                        (path, actions)
+                                    })
+                                    .await
+                                    .ok();
+                                    match parsed {
+                                        Some((path, actions)) => {
+                                            cosmic::action::app(Message::TabMessage(
+                                                Some(entity),
+                                                tab::Message::DesktopEntryParsed(
+                                                    path, work_id, actions,
+                                                ),
+                                            ))
+                                        }
+                                        None => cosmic::action::none(),
+                                    }
+                                }));
+                            }
+                            #[cfg(not(feature = "desktop"))]
+                            {
+                                let _ = (path, work_id);
+                            }
+                        }
                         tab::Command::Surface(action) => {
                             // re-type the tab's surface action the way its messages are re-typed
                             let action = action
@@ -4605,8 +4631,8 @@ impl Application for App {
                             );
                         }
                         #[cfg(feature = "desktop")]
-                        tab::Command::ExecEntryAction(entry, action) => {
-                            Self::exec_entry_action(&entry, action);
+                        tab::Command::ExecEntryAction(command) => {
+                            Self::exec_entry_action(&command);
                         }
                         tab::Command::RunContextAction(action) => {
                             let paths: Box<[_]> = self.selected_paths(Some(entity)).collect();
