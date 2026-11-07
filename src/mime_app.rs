@@ -238,6 +238,9 @@ pub struct MimeAppCache {
     apps: Vec<Arc<MimeApp>>,
     cache: FxHashMap<Mime, Vec<Arc<MimeApp>>>,
     terminals: Vec<Arc<MimeApp>>,
+    // Resolved during `reload`, which runs off-thread: `terminal` is called from the GUI
+    // thread, which must not spawn `xdg-mime`.
+    default_terminal_id: Option<String>,
 }
 
 /// IDs can contain an internal `.desktop` segment, as in `org.gnome.desktop.Terminal`.
@@ -253,6 +256,7 @@ impl MimeAppCache {
             apps: Vec::new(),
             cache: FxHashMap::default(),
             terminals: Vec::new(),
+            default_terminal_id: None,
         }
     }
 
@@ -506,6 +510,8 @@ impl MimeAppCache {
             );
         }
 
+        self.default_terminal_id = Self::query_default_terminal();
+
         let elapsed = start.elapsed();
         tracing::info!(target: "mime-apps", "loaded mime app cache in {elapsed:?}");
     }
@@ -524,7 +530,7 @@ impl MimeAppCache {
             .map_or_else(Vec::new, |apps| apps.iter().map(|app| app.icon()).collect())
     }
 
-    fn get_default_terminal(&self) -> Option<String> {
+    fn query_default_terminal() -> Option<String> {
         let output = process::Command::new("xdg-mime")
             .args(["query", "default", "x-scheme-handler/terminal"])
             .output()
@@ -543,18 +549,14 @@ impl MimeAppCache {
         //TODO: consider rules in https://github.com/Vladimir-csp/xdg-terminal-exec
         // The current approach works but might not adhere to the spec (yet)
 
-        // Look for and return preferred terminals
-        //TODO: fallback order beyond cosmic-term?
-
-        let mut preference_order = vec!["com.system76.CosmicTerm".to_string()];
-
-        if let Some(id) = self.get_default_terminal() {
-            preference_order.insert(0, id);
-        }
-
-        for id in &preference_order {
+        for id in self
+            .default_terminal_id
+            .as_deref()
+            .into_iter()
+            .chain(std::iter::once("com.system76.CosmicTerm"))
+        {
             for terminal in &self.terminals {
-                if &terminal.id == id {
+                if terminal.id == id {
                     return Some(terminal);
                 }
             }
@@ -699,6 +701,50 @@ impl Default for MimeAppCache {
 #[cfg(test)]
 mod tests {
     use super::{desktop_id, exec_to_command};
+
+    fn terminal_cache(ids: &[&str], preferred: Option<&str>) -> super::MimeAppCache {
+        let mut cache = super::MimeAppCache::empty();
+        cache.default_terminal_id = preferred.map(str::to_owned);
+        cache.terminals = ids
+            .iter()
+            .map(|id| {
+                std::sync::Arc::new(super::MimeApp {
+                    id: (*id).to_owned(),
+                    path: None,
+                    name: (*id).to_owned(),
+                    exec: None,
+                    icon_name: "terminal".into(),
+                    icon: std::sync::OnceLock::new(),
+                    is_default: Default::default(),
+                    no_display: Default::default(),
+                })
+            })
+            .collect();
+        cache
+    }
+
+    #[test]
+    fn an_empty_cache_has_no_terminal() {
+        assert!(super::MimeAppCache::empty().terminal().is_none());
+    }
+
+    #[test]
+    fn the_cached_default_terminal_outranks_the_fallback() {
+        let cache = terminal_cache(&["com.system76.CosmicTerm", "preferred"], Some("preferred"));
+        assert_eq!(cache.terminal().unwrap().id, "preferred");
+    }
+
+    #[test]
+    fn an_uninstalled_default_uses_the_preferred_fallback() {
+        let cache = terminal_cache(&["other", "com.system76.CosmicTerm"], Some("missing"));
+        assert_eq!(cache.terminal().unwrap().id, "com.system76.CosmicTerm");
+    }
+
+    #[test]
+    fn any_installed_terminal_is_a_last_resort() {
+        let cache = terminal_cache(&["other"], None);
+        assert_eq!(cache.terminal().unwrap().id, "other");
+    }
 
     #[test]
     fn keys_within_words() {
