@@ -240,6 +240,11 @@ pub struct MimeAppCache {
     terminals: Vec<Arc<MimeApp>>,
 }
 
+/// IDs can contain an internal `.desktop` segment, as in `org.gnome.desktop.Terminal`.
+fn desktop_id(raw: &str) -> &str {
+    raw.strip_suffix(".desktop").unwrap_or(raw)
+}
+
 impl MimeAppCache {
     /// An empty cache that has not scanned desktop entries yet. Cheap and non-blocking, so it
     /// can be built on the GUI thread while [`MimeAppCache::new`] runs in a background task.
@@ -456,7 +461,7 @@ impl MimeAppCache {
                 .flatten()
                 .chain(aliased_defaults.into_iter().flatten())
             {
-                let default = default.strip_suffix(".desktop").unwrap_or(default.as_ref());
+                let default = desktop_id(default.as_ref());
                 let mut found_any = false;
                 apps.retain(|app| {
                     let found = app.id.as_str() == default;
@@ -531,7 +536,7 @@ impl MimeAppCache {
 
         String::from_utf8(output.stdout)
             .ok()
-            .map(|string| string.trim().replace(".desktop", ""))
+            .map(|stdout| desktop_id(stdout.trim()).to_string())
     }
 
     pub fn terminal(&self) -> Option<&Arc<MimeApp>> {
@@ -693,7 +698,7 @@ impl Default for MimeAppCache {
 
 #[cfg(test)]
 mod tests {
-    use super::exec_to_command;
+    use super::{desktop_id, exec_to_command};
 
     #[test]
     fn keys_within_words() {
@@ -977,6 +982,30 @@ mod tests {
                 .chain(args_trailing.iter())
                 .zip(command.get_args())
                 .all(|(&expected, actual)| expected == actual.to_string_lossy())
+        );
+    }
+
+    #[test]
+    fn a_trailing_desktop_suffix_is_dropped() {
+        assert_eq!(
+            desktop_id("org.gnome.Terminal.desktop"),
+            "org.gnome.Terminal"
+        );
+    }
+
+    #[test]
+    fn a_desktop_segment_inside_an_id_is_kept() {
+        assert_eq!(
+            desktop_id("org.gnome.desktop.Terminal"),
+            "org.gnome.desktop.Terminal"
+        );
+    }
+
+    #[test]
+    fn an_id_without_the_suffix_is_unchanged() {
+        assert_eq!(
+            desktop_id("com.system76.CosmicTerm"),
+            "com.system76.CosmicTerm"
         );
     }
     #[cfg(all(feature = "desktop", unix))]
