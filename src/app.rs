@@ -68,7 +68,7 @@ use crate::config::{
     TimeConfig, TypeToSearch,
 };
 use crate::dialog::{Dialog, DialogKind, DialogMessage, DialogResult, DialogSettings};
-use crate::item::{Item, ItemMetadata, folder_icon_symbolic, item_from_path};
+use crate::item::{Item, ItemMetadata, item_from_path};
 use crate::key_bind::key_binds;
 use crate::localize::LANGUAGE_SORTER;
 use crate::location::{Location, SearchLocation};
@@ -426,6 +426,11 @@ pub enum Message {
     NavBarClose(Entity),
     NavBarContext(Entity),
     NavMenuAction(NavMenuAction),
+    NavigationResolved {
+        entity: Entity,
+        request: widget::Id,
+        target: Option<(Location, Option<PathBuf>)>,
+    },
     NetworkAuth(MounterKey, String, MounterAuth, mpsc::Sender<MounterAuth>),
     NetworkDriveInput(String),
     NetworkDriveOpenEntityAfterMount {
@@ -776,6 +781,7 @@ pub struct App {
     core: Core,
     about: About,
     nav_bar_context_id: segmented_button::Entity,
+    navigation: crate::navigation::PendingRequest,
     nav_model: segmented_button::SingleSelectModel,
     tab_model: segmented_button::Model<segmented_button::SingleSelect>,
     config_handler: Option<cosmic_config::Config>,
@@ -1205,6 +1211,9 @@ impl App {
         scrollable_id: widget::Id,
         window_id: Option<window::Id>,
     ) -> (Entity, Task<Message>) {
+        if activate {
+            self.navigation.invalidate();
+        }
         let mut tab = Tab::new(
             location.clone(),
             self.config.tab,
@@ -1723,6 +1732,7 @@ impl App {
         term_opt: Option<String>,
         selection_paths: Option<Vec<PathBuf>>,
     ) -> Task<Message> {
+        self.navigation.invalidate();
         let mut title_location_opt = None;
         if let Some(tab) = self.tab_model.data_mut::<Tab>(tab) {
             let location_opt = match term_opt {
@@ -1881,15 +1891,10 @@ impl App {
             if let Some(path) = favorite.path_opt() {
                 let name = favorite.display_name().unwrap_or_else(|| fl!("filesystem"));
                 nav_model = nav_model.insert(move |b| {
+                    // Favorites are directories; use the folder icon without stat-ing the
+                    // path, which would block the GUI thread on slow/network mounts.
                     b.text(name.clone())
-                        .icon(
-                            icon::icon(if path.is_dir() {
-                                folder_icon_symbolic(&path, 16)
-                            } else {
-                                icon::from_name("text-x-generic-symbolic").size(16).handle()
-                            })
-                            .size(16),
-                        )
+                        .icon(icon::icon(crate::item::folder_icon_symbolic(&path, 16)).size(16))
                         .data(match favorite {
                             Favorite::Network { uri, name, path } => {
                                 Location::Network(uri.clone(), name.clone(), Some(path.to_owned()))
@@ -1999,6 +2004,40 @@ impl App {
         } else {
             Task::none()
         }
+    }
+
+    fn leave_unmounted_paths(&mut self, unmounted: &[PathBuf]) -> Task<Message> {
+        let mut commands = Vec::new();
+        {
+            let home_location = Location::Path(home_dir());
+            let entities: Box<[_]> = self.tab_model.iter().collect();
+            for entity in entities {
+                let title_opt = self.tab_model.data_mut::<Tab>(entity).and_then(|tab| {
+                    unmounted
+                        .iter()
+                        .any(|unmounted| {
+                            tab.location
+                                .path_opt()
+                                .is_some_and(|location| location.starts_with(unmounted))
+                        })
+                        .then(|| {
+                            tab.change_location(&home_location, None);
+                            tab.title()
+                        })
+                });
+                if let Some(title) = title_opt {
+                    self.navigation.invalidate();
+                    self.tab_model.text_set(entity, title);
+                    commands.push(self.update_tab(entity, home_location.clone(), None));
+                }
+            }
+            if !commands.is_empty() {
+                commands.push(self.update_title());
+                commands.push(self.update_watcher());
+            }
+        }
+
+        Task::batch(commands)
     }
 
     fn update_watcher(&mut self) -> Task<Message> {
@@ -2535,6 +2574,7 @@ impl Application for App {
             core,
             about,
             nav_bar_context_id: segmented_button::Entity::null(),
+            navigation: crate::navigation::PendingRequest::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
             tab_model: segmented_button::ModelBuilder::default().build(),
             config_handler: flags.config_handler,
@@ -3634,35 +3674,7 @@ impl Application for App {
                     }
                 }
 
-                // Go back to home in any tabs that were unmounted
-                let mut commands = Vec::new();
-                {
-                    let home_location = Location::Path(home_dir());
-                    let entities: Box<[_]> = self.tab_model.iter().collect();
-                    for entity in entities {
-                        let title_opt = self.tab_model.data_mut::<Tab>(entity).and_then(|tab| {
-                            unmounted
-                                .iter()
-                                .any(|unmounted| {
-                                    tab.location
-                                        .path_opt()
-                                        .is_some_and(|location| location.starts_with(unmounted))
-                                })
-                                .then(|| {
-                                    tab.change_location(&home_location, None);
-                                    tab.title()
-                                })
-                        });
-                        if let Some(title) = title_opt {
-                            self.tab_model.text_set(entity, title);
-                            commands.push(self.update_tab(entity, home_location.clone(), None));
-                        }
-                    }
-                    if !commands.is_empty() {
-                        commands.push(self.update_title());
-                        commands.push(self.update_watcher());
-                    }
-                }
+                let mut commands = vec![self.leave_unmounted_paths(&unmounted)];
 
                 // Insert new items
                 self.mounter_items.insert(mounter_key, mounter_items);
@@ -4519,6 +4531,7 @@ impl Application for App {
                 return self.update_config();
             }
             Message::TabActivate(entity) => {
+                self.navigation.invalidate();
                 let mut tasks = vec![];
 
                 // Activate new tab
@@ -4571,6 +4584,7 @@ impl Application for App {
                 }
             }
             Message::TabClose(entity_opt) => {
+                self.navigation.invalidate();
                 let mut tasks = Vec::with_capacity(2);
 
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
@@ -4619,6 +4633,12 @@ impl Application for App {
                 return self.update(Message::TabConfig(config));
             }
             Message::TabMessage(entity_opt, tab_message) => {
+                if matches!(
+                    &tab_message,
+                    tab::Message::EditLocation(_) | tab::Message::EditLocationEnable
+                ) {
+                    self.navigation.invalidate();
+                }
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
                 // The context menu opens on right-button release, so refresh paste availability now
                 let right_click = matches!(tab_message, tab::Message::RightClick(..));
@@ -4661,6 +4681,7 @@ impl Application for App {
                             }
                         }
                         tab::Command::ChangeLocation(tab_title, tab_path, selection_paths) => {
+                            self.navigation.invalidate();
                             self.activate_nav_model_location(&tab_path);
 
                             self.tab_model.text_set(entity, tab_title);
@@ -4671,6 +4692,25 @@ impl Application for App {
                                 self.update_watcher(),
                                 self.update_tab(entity, tab_path, selection_paths),
                             ]));
+                        }
+                        tab::Command::EditLocationSubmit(edit_location, typed_uri) => {
+                            let request = self.navigation.begin();
+                            commands.push(Task::future(async move {
+                                let target = tokio::task::spawn_blocking(move || {
+                                    crate::navigation::resolve_edit_location(
+                                        edit_location,
+                                        typed_uri,
+                                    )
+                                })
+                                .await
+                                .ok()
+                                .flatten();
+                                cosmic::action::app(Message::NavigationResolved {
+                                    entity,
+                                    request,
+                                    target,
+                                })
+                            }));
                         }
                         tab::Command::ParseDesktopEntry(path, work_id) => {
                             #[cfg(feature = "desktop")]
@@ -5158,6 +5198,7 @@ impl Application for App {
                     .is_some_and(|(loc, i)| *loc == location && i.elapsed() >= HOVER_DURATION)
                 {
                     self.nav_dnd_hover = None;
+                    self.navigation.invalidate();
                     let entity = self.tab_model.active();
                     let title_opt = match self.tab_model.data_mut::<Tab>(entity) {
                         Some(tab) => {
@@ -5242,6 +5283,22 @@ impl Application for App {
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(tab_entity) {
                     // Close location editing if enabled
                     tab.edit_location = None;
+                }
+            }
+            Message::NavigationResolved {
+                entity,
+                request,
+                target,
+            } => {
+                if !self.navigation.finish(&request) {
+                    return Task::none();
+                }
+                if let Some((location, selected)) = target {
+                    let message = match selected {
+                        Some(path) => tab::Message::LocationSelect(location, vec![path]),
+                        None => tab::Message::Location(location),
+                    };
+                    return self.update(Message::TabMessage(Some(entity), message));
                 }
             }
             Message::NavMenuAction(action) => match action {
@@ -7708,6 +7765,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unmounted_path_invalidates_pending_navigation() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        let _ = app.leave_unmounted_paths(&[dir.path().to_path_buf()]);
+        let _ = app.update(super::Message::NavigationResolved {
+            entity,
+            request,
+            target: Some((
+                crate::location::Location::Path(dir.path().to_path_buf()),
+                None,
+            )),
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .location
+                .path_opt(),
+            Some(&crate::home_dir())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidebar_drop_navigation_invalidates_pending_location_resolution() -> std::io::Result<()>
+    {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let target = crate::location::Location::Path(dir.path().join("target"));
+        std::fs::create_dir(target.path_opt().unwrap())?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let request = app.navigation.begin();
+        app.nav_dnd_hover = Some((
+            target.clone(),
+            std::time::Instant::now() - super::HOVER_DURATION,
+        ));
+        let _ = app.update(super::Message::DndHoverLocTimeout(target.clone()));
+        let _ = app.update(super::Message::NavigationResolved {
+            entity,
+            request,
+            target: Some((
+                crate::location::Location::Path(dir.path().to_path_buf()),
+                None,
+            )),
+        });
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .location,
+            target
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn review_an_old_scan_cannot_replace_a_newer_listing() -> std::io::Result<()> {
         use cosmic::Application;
         let dir = tempfile::TempDir::new()?;
@@ -7790,6 +7907,19 @@ mod tests {
                 .scans
                 .defer_if_running()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn opening_a_new_tab_invalidates_pending_navigation() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let request = app.navigation.begin();
+        let previous_tab = app.tab_model.active();
+        let _ = app.update(super::Message::TabNew);
+        assert_ne!(app.tab_model.active(), previous_tab);
+        assert!(!app.navigation.is_current(&request));
         Ok(())
     }
 

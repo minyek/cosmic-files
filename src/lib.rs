@@ -33,6 +33,7 @@ mod mime_app;
 pub mod mime_icon;
 mod mounter;
 mod mouse_area;
+mod navigation;
 pub mod operation;
 pub mod scan;
 mod spawn_detached;
