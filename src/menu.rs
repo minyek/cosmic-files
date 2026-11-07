@@ -10,6 +10,7 @@ use cosmic::{Element, theme};
 use i18n_embed::LanguageLoader;
 use mime_guess::Mime;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use crate::app::{Action, Message};
@@ -47,6 +48,24 @@ impl MenuAction for TabAction {
     }
 }
 
+pub(crate) fn lone_desktop_entry(items: &[crate::item::Item]) -> Option<&Path> {
+    let mut selected = items.iter().filter(|item| item.state.selected);
+    let only = selected.next()?;
+    if selected.next().is_some()
+        || !matches!(&only.metadata, crate::item::ItemMetadata::Path { metadata, .. } if metadata.is_file())
+    {
+        return None;
+    }
+    match &only.location_opt {
+        Some(Location::Path(path))
+            if path.extension().and_then(|extension| extension.to_str()) == Some("desktop") =>
+        {
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
 pub fn context_menu(
     tab: &Tab,
     key_binds: &HashMap<KeyBind, Action>,
@@ -80,7 +99,7 @@ pub fn context_menu(
     let mut selected_dir = 0;
     let mut selected = 0;
     let mut selected_trash_only = false;
-    let mut selected_desktop_entry = None;
+    let selected_desktop_entry = tab.items_opt().and_then(|items| lone_desktop_entry(items));
     let mut selected_types: Vec<Mime> = vec![];
     let mut selected_mount_point = 0;
     let mut any_trash_item = false;
@@ -95,12 +114,6 @@ pub fn context_menu(
                 match &item.location_opt {
                     Some(Location::Trash) | Some(Location::Search(SearchLocation::Trash, ..)) => {
                         selected_trash_only = true
-                    }
-                    Some(Location::Path(path))
-                        if selected == 1
-                            && path.extension().and_then(|s| s.to_str()) == Some("desktop") =>
-                    {
-                        selected_desktop_entry = Some(&**path);
                     }
                     _ => (),
                 }
@@ -778,4 +791,91 @@ pub fn location_context_menu(ancestor_index: usize) -> Vec<menu::Tree<tab::Messa
             ),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use tempfile::TempDir;
+
+    use super::lone_desktop_entry;
+    use crate::config::IconSizes;
+    use crate::item::{Item, item_from_path};
+
+    fn selected_items(dir: &TempDir, names: &[&str]) -> io::Result<Vec<Item>> {
+        let mut items = Vec::new();
+        for name in names {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"")?;
+            let mut item = item_from_path(&path, IconSizes::default())
+                .expect("a written file should resolve to an item");
+            item.state.selected = true;
+            items.push(item);
+        }
+        Ok(items)
+    }
+
+    #[test]
+    fn a_lone_desktop_entry_is_offered_its_own_menu() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let items = selected_items(&dir, &["editor.desktop"])?;
+
+        assert_eq!(
+            lone_desktop_entry(&items),
+            Some(dir.path().join("editor.desktop").as_path())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_desktop_entry_among_several_selected_items_is_not() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let items = selected_items(&dir, &["editor.desktop", "notes.txt"])?;
+
+        assert_eq!(lone_desktop_entry(&items), None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_lone_selected_file_that_is_not_a_desktop_entry_is_not() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let items = selected_items(&dir, &["notes.txt"])?;
+
+        assert_eq!(lone_desktop_entry(&items), None);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unselected_desktop_entry_is_not() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut items = selected_items(&dir, &["editor.desktop"])?;
+        items[0].state.selected = false;
+
+        assert_eq!(lone_desktop_entry(&items), None);
+        Ok(())
+    }
+
+    #[test]
+    fn review_a_directory_with_a_desktop_suffix_keeps_its_folder_menu() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("backups.desktop");
+        std::fs::create_dir(&path)?;
+        let mut item = item_from_path(&path, IconSizes::default()).unwrap();
+        item.state.selected = true;
+        assert_eq!(lone_desktop_entry(&[item]), None);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_desktop_suffixed_socket_is_not_a_launcher() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("service.desktop");
+        let _socket = std::os::unix::net::UnixListener::bind(&path)?;
+        let mut item = item_from_path(&path, IconSizes::default()).unwrap();
+        item.state.selected = true;
+        assert_eq!(lone_desktop_entry(&[item]), None);
+        Ok(())
+    }
 }
