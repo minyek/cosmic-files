@@ -1,7 +1,6 @@
 // Copyright 2023 System76 <info@system76.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::scan::has_recents;
 use crate::trash::TrashItem;
 use cosmic::app::{self, Core, Task, context_drawer};
 use cosmic::core::Auto;
@@ -455,6 +454,7 @@ pub enum Message {
     MoveToResult(DialogResult),
     NavBarClose(Entity),
     NavBarContext(Entity),
+    NavContextInfoLoaded(Entity, widget::Id, NavContextInfo),
     NavMenuAction(NavMenuAction),
     NavSelectChecked {
         entity: Entity,
@@ -812,6 +812,16 @@ struct Window {
     modifiers: Modifiers,
 }
 
+/// Filesystem facts about the sidebar entry whose context menu is open, computed off-thread
+/// when the menu opens: `nav_context_menu` is rebuilt every frame and must never stat the
+/// entry's path on the GUI thread.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NavContextInfo {
+    is_file: bool,
+    is_dir: bool,
+    has_recents: bool,
+}
+
 impl Window {
     fn new(kind: WindowKind) -> Self {
         Self {
@@ -826,6 +836,8 @@ pub struct App {
     core: Core,
     about: About,
     nav_bar_context_id: segmented_button::Entity,
+    nav_context_info: Option<(segmented_button::Entity, NavContextInfo)>,
+    nav_context_request: crate::navigation::PendingRequest,
     navigation: crate::navigation::PendingRequest,
     nav_model: segmented_button::SingleSelectModel,
     tab_model: segmented_button::Model<segmented_button::SingleSelect>,
@@ -886,6 +898,111 @@ pub struct App {
 }
 
 impl App {
+    fn nav_context_items(&self, entity: Entity) -> Vec<widget::menu::Item<NavMenuAction, String>> {
+        let favorite_index_opt = self.nav_model.data::<FavoriteIndex>(entity);
+        let location_opt = self.nav_model.data::<Location>(entity);
+
+        let info = self
+            .nav_context_info
+            .filter(|(cached_entity, _)| *cached_entity == entity)
+            .map(|(_, info)| info);
+
+        let mut items = Vec::with_capacity(7);
+
+        if info.is_some_and(|info| info.is_file) {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("open"),
+                None,
+                NavMenuAction::Open(entity),
+            ));
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("menu-open-with"),
+                None,
+                NavMenuAction::OpenWith(entity),
+            ));
+        } else if info.is_some_and(|info| info.is_dir)
+            || location_opt.is_some_and(|location| location.path_opt().is_none())
+        {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("open-in-new-tab"),
+                None,
+                NavMenuAction::OpenInNewTab(entity),
+            ));
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("open-in-new-window"),
+                None,
+                NavMenuAction::OpenInNewWindow(entity),
+            ));
+        }
+        if location_opt.and_then(Location::path_opt).is_some() {
+            let action_items: Vec<_> = self
+                .config
+                .context_actions
+                .iter()
+                .enumerate()
+                .filter(|(_, action)| {
+                    action.selection == crate::context_action::ContextActionSelection::Any
+                        || info.is_some_and(|info| {
+                            (info.is_file || info.is_dir)
+                                && action.matches_selection(1, usize::from(info.is_dir))
+                        })
+                })
+                .map(|(i, action)| {
+                    cosmic::widget::menu::Item::Button(
+                        action.name.clone(),
+                        None,
+                        NavMenuAction::RunContextAction(entity, i),
+                    )
+                })
+                .collect();
+
+            if !action_items.is_empty() {
+                items.push(cosmic::widget::menu::Item::Divider);
+                items.extend(action_items);
+            }
+        }
+        items.push(cosmic::widget::menu::Item::Divider);
+        if matches!(location_opt, Some(Location::Path(..))) {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("show-details"),
+                None,
+                NavMenuAction::Preview(entity),
+            ));
+        }
+        items.push(cosmic::widget::menu::Item::Divider);
+        if favorite_index_opt.is_some() {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("change-sidebar-label"),
+                None,
+                NavMenuAction::ChangeSidebarLabel(entity),
+            ));
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("remove-from-sidebar"),
+                None,
+                NavMenuAction::RemoveFromSidebar(entity),
+            ));
+        }
+
+        if matches!(location_opt, Some(Location::Recents))
+            && info.is_some_and(|info| info.has_recents)
+        {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("clear-recents-history"),
+                None,
+                NavMenuAction::ClearRecents,
+            ));
+        }
+
+        if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
+            items.push(cosmic::widget::menu::Item::Button(
+                fl!("empty-trash"),
+                None,
+                NavMenuAction::EmptyTrash,
+            ));
+        }
+        items
+    }
+
     /// Returns true if the clipboard cache contains pasteable content
     fn clipboard_has_content(&self) -> bool {
         !matches!(self.clipboard_cache, ClipboardCache::Empty)
@@ -2662,6 +2779,8 @@ impl Application for App {
             core,
             about,
             nav_bar_context_id: segmented_button::Entity::null(),
+            nav_context_info: None,
+            nav_context_request: crate::navigation::PendingRequest::default(),
             navigation: crate::navigation::PendingRequest::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
             tab_model: segmented_button::ModelBuilder::default().build(),
@@ -2814,99 +2933,10 @@ impl Application for App {
     }
 
     fn nav_context_menu(&self) -> Option<Vec<widget::menu::Tree<cosmic::Action<Self::Message>>>> {
-        let items = self.nav_model.iter().map(|entity| {
-            let favorite_index_opt = self.nav_model.data::<FavoriteIndex>(entity);
-            let location_opt = self.nav_model.data::<Location>(entity);
-
-            let mut items: Vec<widget::menu::Item<NavMenuAction, String>> = Vec::with_capacity(7);
-
-            if location_opt
-                .and_then(Location::path_opt)
-                .is_some_and(|x| x.is_file())
-            {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("open"),
-                    None,
-                    NavMenuAction::Open(entity),
-                ));
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("menu-open-with"),
-                    None,
-                    NavMenuAction::OpenWith(entity),
-                ));
-            } else {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("open-in-new-tab"),
-                    None,
-                    NavMenuAction::OpenInNewTab(entity),
-                ));
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("open-in-new-window"),
-                    None,
-                    NavMenuAction::OpenInNewWindow(entity),
-                ));
-            }
-            if let Some(path) = location_opt.and_then(Location::path_opt) {
-                let selected_dir = usize::from(path.is_dir());
-                let action_items: Vec<_> = self
-                    .config
-                    .context_actions
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, action)| action.matches_selection(1, selected_dir))
-                    .map(|(i, action)| {
-                        cosmic::widget::menu::Item::Button(
-                            action.name.clone(),
-                            None,
-                            NavMenuAction::RunContextAction(entity, i),
-                        )
-                    })
-                    .collect();
-
-                if !action_items.is_empty() {
-                    items.push(cosmic::widget::menu::Item::Divider);
-                    items.extend(action_items);
-                }
-            }
-            items.push(cosmic::widget::menu::Item::Divider);
-            if matches!(location_opt, Some(Location::Path(..))) {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("show-details"),
-                    None,
-                    NavMenuAction::Preview(entity),
-                ));
-            }
-            items.push(cosmic::widget::menu::Item::Divider);
-            if favorite_index_opt.is_some() {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("change-sidebar-label"),
-                    None,
-                    NavMenuAction::ChangeSidebarLabel(entity),
-                ));
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("remove-from-sidebar"),
-                    None,
-                    NavMenuAction::RemoveFromSidebar(entity),
-                ));
-            }
-
-            if matches!(location_opt, Some(Location::Recents)) && has_recents() {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("clear-recents-history"),
-                    None,
-                    NavMenuAction::ClearRecents,
-                ));
-            }
-
-            if matches!(location_opt, Some(Location::Trash)) && !Trash::is_empty_cached() {
-                items.push(cosmic::widget::menu::Item::Button(
-                    fl!("empty-trash"),
-                    None,
-                    NavMenuAction::EmptyTrash,
-                ));
-            }
-            items
-        });
+        let items = self
+            .nav_model
+            .iter()
+            .map(|entity| self.nav_context_items(entity));
 
         Some(cosmic::widget::menu::nav_context(
             &HashMap::new(),
@@ -5335,10 +5365,39 @@ impl Application for App {
             Message::NavBarContext(entity) => {
                 self.nav_bar_context_id = entity;
 
+                self.nav_context_info = None;
+                let request = self.nav_context_request.begin();
+                let location_opt = self.nav_model.data::<Location>(entity).cloned();
+                let path_opt = location_opt
+                    .as_ref()
+                    .and_then(|location| location.path_opt().cloned());
+                let is_recents = matches!(location_opt, Some(Location::Recents));
+                let info_task = Task::future(async move {
+                    let info = tokio::task::spawn_blocking(move || {
+                        let (is_file, is_dir) = path_opt
+                            .as_ref()
+                            .map_or((false, false), |path| (path.is_file(), path.is_dir()));
+                        NavContextInfo {
+                            is_file,
+                            is_dir,
+                            has_recents: is_recents && crate::scan::has_recents(),
+                        }
+                    })
+                    .await
+                    .unwrap_or_default();
+                    cosmic::action::app(Message::NavContextInfoLoaded(entity, request, info))
+                });
+
                 let tab_entity = self.tab_model.active();
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(tab_entity) {
                     // Close location editing if enabled
                     tab.edit_location = None;
+                }
+                return info_task;
+            }
+            Message::NavContextInfoLoaded(entity, request, info) => {
+                if self.nav_context_request.finish(&request) && entity == self.nav_bar_context_id {
+                    self.nav_context_info = Some((entity, info));
                 }
             }
             Message::NavigationResolved {
@@ -8024,6 +8083,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sidebar_metadata_from_an_older_menu_cannot_replace_current_facts()
+    -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("favorite");
+        std::fs::write(&path, b"file")?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Favorite")
+            .data(crate::location::Location::Path(path.clone()))
+            .id();
+        let old = task_result(app.update(super::Message::NavBarContext(entity))).await;
+        std::fs::remove_file(&path)?;
+        std::fs::create_dir(&path)?;
+        let current = task_result(app.update(super::Message::NavBarContext(entity))).await;
+        let _ = app.update(current);
+        let _ = app.update(old);
+        assert!(app.nav_context_info.as_ref().unwrap().1.is_dir);
+        assert!(!app.nav_context_info.as_ref().unwrap().1.is_file);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn an_unmounted_path_invalidates_pending_navigation() -> std::io::Result<()> {
         use cosmic::Application;
         let dir = tempfile::TempDir::new()?;
@@ -8166,6 +8250,111 @@ mod tests {
                 .scans
                 .defer_if_running()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn review_a_pending_sidebar_stat_does_not_offer_directory_actions() -> std::io::Result<()>
+    {
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, b"notes")?;
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Notes")
+            .data(crate::location::Location::Path(path))
+            .id();
+        app.config.context_actions = [
+            crate::context_action::ContextActionSelection::Files,
+            crate::context_action::ContextActionSelection::Folders,
+            crate::context_action::ContextActionSelection::Any,
+        ]
+        .into_iter()
+        .map(|selection| crate::context_action::ContextActionPreset {
+            name: "Action".into(),
+            selection,
+            ..Default::default()
+        })
+        .collect();
+        app.nav_context_info = None;
+        let items = app.nav_context_items(entity);
+        assert!(!items.iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(
+                _,
+                _,
+                super::NavMenuAction::OpenInNewTab(_)
+                    | super::NavMenuAction::OpenInNewWindow(_)
+                    | super::NavMenuAction::RunContextAction(_, 0 | 1)
+            )
+        )));
+        assert!(items.iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::Preview(_))
+        )));
+        assert!(items.iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::RunContextAction(_, 2))
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sidebar_actions_follow_loaded_file_and_folder_metadata() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Favorite")
+            .data(crate::location::Location::Path(dir.path().to_path_buf()))
+            .id();
+        app.nav_context_info = Some((
+            entity,
+            super::NavContextInfo {
+                is_file: true,
+                ..Default::default()
+            },
+        ));
+        assert!(app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenWith(_))
+        )));
+        assert!(!app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenInNewTab(_))
+        )));
+        app.nav_context_info = Some((
+            entity,
+            super::NavContextInfo {
+                is_dir: true,
+                ..Default::default()
+            },
+        ));
+        assert!(app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenInNewTab(_))
+        )));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn virtual_sidebar_locations_do_not_wait_for_path_metadata() -> std::io::Result<()> {
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app
+            .nav_model
+            .insert()
+            .text("Recent")
+            .data(crate::location::Location::Recents)
+            .id();
+        app.nav_context_info = None;
+        assert!(app.nav_context_items(entity).iter().any(|item| matches!(
+            item,
+            cosmic::widget::menu::Item::Button(_, _, super::NavMenuAction::OpenInNewTab(_))
+        )));
         Ok(())
     }
 
