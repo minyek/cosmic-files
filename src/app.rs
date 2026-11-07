@@ -380,6 +380,35 @@ impl MenuAction for NavMenuAction {
     }
 }
 
+/// How a set of paths is to be opened, decided by sniffing their MIME types.
+#[derive(Clone, Debug)]
+pub enum OpenTargets {
+    /// Every path is a supported archive, in the order they were given, for the extract dialog.
+    Archives(Vec<PathBuf>),
+    /// Paths grouped by MIME type, so one app can be passed a whole group at once.
+    ByMime(FxHashMap<Mime, Vec<PathBuf>>),
+}
+
+impl OpenTargets {
+    /// Sorts `paths` into what can open them, given the `mimes` sniffed for them in the same
+    /// order. Grouping loses the caller's order, so the all-archive case keeps `paths` whole:
+    /// the extract dialog presents them in the order they were selected.
+    fn classify(paths: Vec<PathBuf>, mimes: Vec<Mime>) -> Self {
+        let supported_archive_types = crate::archive::SUPPORTED_ARCHIVE_TYPES;
+        if mimes
+            .iter()
+            .all(|mime| supported_archive_types.iter().copied().any(|t| *mime == t))
+        {
+            return Self::Archives(paths);
+        }
+        let mut groups: FxHashMap<Mime, Vec<PathBuf>> = FxHashMap::default();
+        for (mime, path) in mimes.into_iter().zip(paths) {
+            groups.entry(mime).or_default().push(path);
+        }
+        Self::ByMime(groups)
+    }
+}
+
 /// Messages that are used specifically by our [`App`].
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -447,6 +476,7 @@ pub enum Message {
     NotifyEvents(Vec<DebouncedEvent>),
     NotifyWatcher(WatcherWrapper),
     OpenTerminal(Option<Entity>),
+    OpenFileClassified(OpenTargets),
     OpenLaunchLocations(Vec<(Location, Option<Vec<PathBuf>>)>),
     OpenInNewTab(Option<Entity>),
     OpenInNewWindow(Option<Entity>),
@@ -852,31 +882,37 @@ impl App {
         }
     }
 
-    fn open_file(&mut self, paths: &[impl AsRef<Path>]) -> Task<Message> {
-        let mut tasks = Vec::new();
+    fn open_file(paths: &[impl AsRef<Path>]) -> Task<Message> {
+        // Associate all paths to its MIME type. This allows handling paths as groups if
+        // possible, such as launching a single video player that is passed every path.
+        //
+        // mime_for_path stats and reads each file's header to sniff its type, which blocks on
+        // slow/network mounts; classify off-thread and launch in Message::OpenFileClassified.
+        let paths: Vec<PathBuf> = paths.iter().map(|path| path.as_ref().to_owned()).collect();
+        Task::future(async move {
+            let targets = tokio::task::spawn_blocking(move || {
+                let mimes: Vec<Mime> = paths
+                    .iter()
+                    .map(|path| mime_icon::mime_for_path(path, None, false))
+                    .collect();
+                OpenTargets::classify(paths, mimes)
+            })
+            .await
+            .unwrap_or_else(|err| {
+                log::warn!("failed to classify paths for opening: {err}");
+                OpenTargets::ByMime(FxHashMap::default())
+            });
+            cosmic::action::app(Message::OpenFileClassified(targets))
+        })
+    }
 
-        // Associate all paths to its MIME type
-        // This allows handling paths as groups if possible, such as launching a single video
-        // player that is passed every path.
-        let mut groups: FxHashMap<Mime, Vec<PathBuf>> = FxHashMap::default();
-        let mut all_archives = true;
-        let supported_archive_types = crate::archive::SUPPORTED_ARCHIVE_TYPES;
-        for (mime, path) in paths.iter().map(|path| {
-            (
-                mime_icon::mime_for_path(path, None, false),
-                path.as_ref().to_owned(),
-            )
-        }) {
-            if all_archives && !supported_archive_types.iter().copied().any(|t| mime == t) {
-                all_archives = false;
-            }
-            groups.entry(mime).or_default().push(path);
-        }
-
-        if all_archives {
+    fn open_classified(&mut self, targets: OpenTargets) -> Task<Message> {
+        let groups = match targets {
             // Use extract to dialog if all selected paths are supported archives
-            return self.extract_to(paths);
-        }
+            OpenTargets::Archives(paths) => return self.extract_to(&paths),
+            OpenTargets::ByMime(groups) => groups,
+        };
+        let mut tasks = Vec::new();
 
         'outer: for (mime, paths) in groups {
             log::debug!("Attempting to launch app\n\tfor: {mime}\n\twith: {paths:?}");
@@ -3919,6 +3955,9 @@ impl Application for App {
                     }
                 }
             }
+            Message::OpenFileClassified(targets) => {
+                return self.open_classified(targets);
+            }
             Message::OpenLaunchLocations(locations) => {
                 if locations.is_empty() && self.tab_model.entity_at(0).is_none() {
                     // Resolving them failed; init left the default tab to this handler.
@@ -4798,7 +4837,7 @@ impl Application for App {
                                 cosmic::action::app(Message::TabMessage(Some(entity), x))
                             }));
                         }
-                        tab::Command::OpenFile(paths) => commands.push(self.open_file(&paths)),
+                        tab::Command::OpenFile(paths) => commands.push(Self::open_file(&paths)),
                         tab::Command::OpenInNewTab(path) => {
                             commands.push(self.open_tab(Location::Path(path), false, None));
                         }
@@ -5319,7 +5358,7 @@ impl Application for App {
                         .and_then(Location::path_opt)
                         .cloned()
                     {
-                        return self.open_file(&[path]);
+                        return Self::open_file(&[path]);
                     }
                 }
                 NavMenuAction::OpenWith(entity) => {
@@ -7568,7 +7607,7 @@ mod tests {
         AccessKind, CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode,
     };
 
-    use super::{ListingChange, classify_events};
+    use super::{ListingChange, Mime, OpenTargets, classify_events};
 
     fn event(kind: EventKind, path: &str) -> DebouncedEvent {
         DebouncedEvent::new(
@@ -7680,6 +7719,36 @@ mod tests {
             classify(EventKind::Create(CreateKind::File), "/elsewhere/file.log"),
             ListingChange::None
         ));
+    }
+
+    fn archive_paths(names: &[&str]) -> (Vec<PathBuf>, Vec<Mime>) {
+        let zip: Mime = "application/zip".parse().expect("a valid mime");
+        (
+            names.iter().map(PathBuf::from).collect(),
+            vec![zip; names.len()],
+        )
+    }
+
+    #[test]
+    fn archives_open_in_the_order_they_were_given() {
+        let (paths, mimes) = archive_paths(&["/b.zip", "/a.zip", "/c.zip"]);
+
+        match OpenTargets::classify(paths.clone(), mimes) {
+            OpenTargets::Archives(ordered) => assert_eq!(ordered, paths),
+            OpenTargets::ByMime(_) => panic!("archives should not be grouped by mime"),
+        }
+    }
+
+    #[test]
+    fn one_non_archive_groups_every_path_by_mime() {
+        let (mut paths, mut mimes) = archive_paths(&["/a.zip"]);
+        paths.push(PathBuf::from("/notes.txt"));
+        mimes.push("text/plain".parse().expect("a valid mime"));
+
+        match OpenTargets::classify(paths, mimes) {
+            OpenTargets::ByMime(groups) => assert_eq!(groups.len(), 2),
+            OpenTargets::Archives(_) => panic!("a text file is not an archive"),
+        }
     }
 
     fn test_app(dir: &tempfile::TempDir) -> super::App {
