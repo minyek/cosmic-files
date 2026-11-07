@@ -23,7 +23,7 @@ pub struct ItemState {
 impl Default for ItemState {
     fn default() -> Self {
         Self {
-            button_id: widget::Id::unique(),
+            button_id: next_button_id(),
             work_id: next_work_id(),
             checksums: ChecksumState::default(),
             cut: false,
@@ -34,6 +34,18 @@ impl Default for ItemState {
             selected: false,
         }
     }
+}
+
+/// Identifies an item's button across widget-tree reconciliation.
+///
+/// Widget reconciliation reuses unnamed IDs by position. Named IDs preserve item identity
+/// as virtualized rows move.
+pub(crate) fn next_button_id() -> widget::Id {
+    static NEXT: atomic::AtomicU64 = atomic::AtomicU64::new(0);
+    widget::Id::new(format!(
+        "item-button-{}",
+        NEXT.fetch_add(1, atomic::Ordering::Relaxed)
+    ))
 }
 
 pub(crate) fn next_work_id() -> u64 {
