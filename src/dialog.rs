@@ -477,6 +477,7 @@ enum Message {
     NewFolder,
     NotifyEvents(Vec<DebouncedEvent>),
     NotifyWatcher(WatcherWrapper),
+    WatcherUpdated(WatcherWrapper, FxHashSet<PathBuf>),
     Open,
     Preview,
     PersistenceFlushed,
@@ -586,6 +587,7 @@ struct App {
         Debouncer<RecommendedWatcher, RecommendedCache>,
         FxHashSet<PathBuf>,
     )>,
+    watcher_update_pending: bool,
     auto_scroll_speed: Option<i16>,
     type_select_prefix: String,
     type_select_last_key: Option<Instant>,
@@ -1007,6 +1009,10 @@ impl App {
         self.set_window_title(self.title.clone(), self.flags.window_id)
     }
 
+    fn watched_paths(&self) -> FxHashSet<PathBuf> {
+        self.tab.location.path_opt().cloned().into_iter().collect()
+    }
+
     fn leave_unmounted_paths(&mut self, unmounted: &[PathBuf]) -> Task<Message> {
         if self
             .tab
@@ -1023,46 +1029,29 @@ impl App {
     }
 
     fn update_watcher(&mut self) -> Task<Message> {
-        if let Some((mut watcher, old_paths)) = self.watcher_opt.take() {
-            let mut new_paths = FxHashSet::default();
-            if let Some(path) = &self.tab.location.path_opt() {
-                new_paths.insert((*path).clone());
-            }
-
-            // Unwatch paths no longer used
-            for path in &old_paths {
-                if !new_paths.contains(path) {
-                    match watcher.unwatch(path) {
-                        Ok(()) => {
-                            log::debug!("unwatching {}", path.display());
-                        }
-                        Err(err) => {
-                            log::debug!("failed to unwatch {}: {}", path.display(), err);
-                        }
-                    }
+        let Some((watcher, old_paths)) = self.watcher_opt.take() else {
+            self.watcher_update_pending = true;
+            return Task::none();
+        };
+        let new_paths = self.watched_paths();
+        Task::future(async move {
+            match tokio::task::spawn_blocking(move || {
+                crate::watcher::reconcile(watcher, old_paths, new_paths)
+            })
+            .await
+            {
+                Ok((watcher, paths)) => cosmic::action::app(Message::WatcherUpdated(
+                    WatcherWrapper {
+                        watcher_opt: Some(watcher),
+                    },
+                    paths,
+                )),
+                Err(err) => {
+                    log::warn!("failed to update watcher: {err}");
+                    cosmic::action::none()
                 }
             }
-
-            // Watch new paths
-            for path in &new_paths {
-                if !old_paths.contains(path) {
-                    //TODO: should this be recursive?
-                    match watcher.watch(path, notify::RecursiveMode::NonRecursive) {
-                        Ok(()) => {
-                            log::debug!("watching {}", path.display());
-                        }
-                        Err(err) => {
-                            log::debug!("failed to watch {}: {}", path.display(), err);
-                        }
-                    }
-                }
-            }
-
-            self.watcher_opt = Some((watcher, new_paths));
-        }
-
-        //TODO: should any of this run in a command?
-        Task::none()
+        })
     }
 }
 
@@ -1142,6 +1131,7 @@ impl Application for App {
             tab,
             key_binds,
             watcher_opt: None,
+            watcher_update_pending: false,
             auto_scroll_speed: None,
             type_select_prefix: String::new(),
             type_select_last_key: None,
@@ -1683,6 +1673,16 @@ impl Application for App {
                     log::warn!("message did not contain notify watcher");
                 }
             },
+            Message::WatcherUpdated(mut wrapper, paths) => {
+                if let Some(watcher) = wrapper.watcher_opt.take() {
+                    let stale = paths != self.watched_paths();
+                    self.watcher_opt = Some((watcher, paths));
+                    if stale || self.watcher_update_pending {
+                        self.watcher_update_pending = false;
+                        return self.update_watcher();
+                    }
+                }
+            }
             Message::Open => {
                 let paths = self.tab.selected_paths_with_dir();
 
@@ -2832,6 +2832,48 @@ mod tests {
         let task = app.update(Message::DialogComplete);
         assert!(cosmic::iced::runtime::task::into_stream(task).is_none());
         assert!(app.result_opt.is_none());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn picker_watch_updates_reconcile_navigation_during_the_worker() -> io::Result<()> {
+        use crate::location::Location;
+        use cosmic::iced::futures::StreamExt;
+
+        let dir = TempDir::new()?;
+        let target = dir.path().join("nested");
+        std::fs::create_dir(&target)?;
+        let mut app = save_dialog(&dir, "report.txt");
+        let watcher = notify_debouncer_full::new_debouncer(
+            std::time::Duration::from_millis(100),
+            None,
+            |_events| {},
+        )
+        .expect("a watcher should be available for the temporary directory");
+        app.watcher_opt = Some((watcher, Default::default()));
+        let first = app.update_watcher();
+        assert!(app.watcher_opt.is_none());
+        app.tab.location = Location::Path(target.clone());
+        let _ = app.update_watcher();
+        let mut stream = cosmic::iced::runtime::task::into_stream(first).unwrap();
+        let cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) =
+            stream.next().await.unwrap()
+        else {
+            panic!("expected the watch update result");
+        };
+        let second = app.update(message);
+        assert!(app.watcher_opt.is_none());
+        let mut stream = cosmic::iced::runtime::task::into_stream(second).unwrap();
+        let cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) =
+            stream.next().await.unwrap()
+        else {
+            panic!("expected the reconciled watch update result");
+        };
+        let _ = app.update(message);
+        let (_, watched) = app
+            .watcher_opt
+            .as_ref()
+            .expect("the watcher should be restored");
+        assert_eq!(watched, &std::iter::once(target).collect());
         Ok(())
     }
 }

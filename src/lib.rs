@@ -43,6 +43,7 @@ pub mod tab;
 mod thumbnail_cacher;
 mod thumbnailer;
 pub(crate) mod trash;
+mod watcher;
 mod zoom;
 
 pub(crate) type FxOrderMap<K, V> = ordermap::OrderMap<K, V, rustc_hash::FxBuildHasher>;
