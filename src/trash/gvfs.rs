@@ -136,10 +136,11 @@ pub fn item_from_trash_entry(entry: TrashItem, size: TrashItemSize, sizes: IconS
         }
     };
 
-    let image_dimensions = (mime.type_() == mime::IMAGE)
-        .then(|| image::image_dimensions(&entry.original_path).ok())
-        .flatten();
     let trashed_path_opt = location_opt.as_ref().and_then(Location::path_opt);
+    // The original path no longer holds the file, so the dimensions come from the trashed copy.
+    let image_dimensions = trashed_path_opt
+        .filter(|_| mime.type_() == mime::IMAGE)
+        .and_then(|path| image::image_dimensions(path).ok());
     let is_symlink_dir = matches!(size, TrashItemSize::Entries(_))
         && trashed_path_opt.is_some_and(|path| path.is_symlink());
 

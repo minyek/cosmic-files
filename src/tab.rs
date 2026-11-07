@@ -5454,6 +5454,8 @@ mod tests {
     };
     use crate::location::{Location, SearchLocation};
     use crate::scan::scan_path;
+    #[cfg(feature = "gvfs")]
+    use crate::trash::item_from_trash_entry;
 
     // Boilerplate for tab tests. Checks if simulated clicks selected items.
     fn tab_selects_item(
@@ -6097,6 +6099,27 @@ mod tests {
             Modifiers::empty(),
         );
         assert_eq!(tab.items_opt().unwrap()[0].image_dimensions, None);
+        Ok(())
+    }
+
+    // Trash entries exist only with the gvfs trash backend.
+    #[cfg(feature = "gvfs")]
+    #[test]
+    fn trash_item_reads_image_dimensions_from_the_trashed_file() -> io::Result<()> {
+        let fs_dir = TempDir::new()?;
+        let trashed = fs_dir.path().join("photo.png");
+        write_test_png(&trashed, 7, 3)?;
+
+        let size = crate::trash::TrashItemSize::Bytes(0);
+        // The path the file was deleted from no longer holds it.
+        let entry = crate::trash::TrashItem::for_test(
+            trashed,
+            fs_dir.path().join("albums").join("photo.png"),
+            size,
+        );
+        let item = item_from_trash_entry(entry, size, IconSizes::default());
+
+        assert_eq!(item.image_dimensions, Some((7, 3)));
         Ok(())
     }
 
