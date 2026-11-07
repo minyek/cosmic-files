@@ -3702,7 +3702,7 @@ impl Tab {
         let mut drag_e_i = 0;
         let mut drag_s_i = 0;
 
-        let mut column = widget::column::with_capacity(2);
+        let mut column = widget::column::with_capacity(4);
         if let Some(items) = self.column_sort() {
             let mut count = 0;
             let mut col = 0;
@@ -3803,15 +3803,6 @@ impl Tab {
                         .on_enter(move || Message::HighlightActivate(i))
                         .on_exit(move || Message::HighlightDeactivate(i));
                     grid_elements[row].push(Element::from(mouse_area));
-                } else {
-                    // Add a spacer if the row is empty, so scroll works
-                    if grid_elements[row].is_empty() {
-                        grid_elements[row].push(Element::from(
-                            widget::column::with_capacity(0)
-                                .width(Length::Fill)
-                                .height(Length::Fixed(item_height as f32)),
-                        ));
-                    }
                 }
 
                 count += 1;
@@ -3835,11 +3826,31 @@ impl Tab {
                 }
             }
 
-            for row_elements in grid_elements {
-                for element in row_elements {
-                    grid = grid.push(element);
+            // Rows are laid out at a fixed pitch, so the runs of rows above and below the
+            // viewport can be replaced by one spacer each, outside the grid. Rows the grid does
+            // carry keep their place: a spacer stands in for any hole between them.
+            let row_pitch = (item_height + grid_spacing as usize) as f32;
+            let first_row = grid_elements.iter().position(|row| !row.is_empty());
+            let last_row = grid_elements.iter().rposition(|row| !row.is_empty());
+            let rows_above = first_row.unwrap_or(grid_elements.len());
+            let rows_below = last_row.map_or(0, |last| grid_elements.len() - last - 1);
+
+            if let (Some(first_row), Some(last_row)) = (first_row, last_row) {
+                for row_elements in grid_elements.drain(first_row..=last_row) {
+                    if row_elements.is_empty() {
+                        grid =
+                            grid.push(space::vertical().height(Length::Fixed(item_height as f32)));
+                    }
+                    for element in row_elements {
+                        grid = grid.push(element);
+                    }
+                    grid = grid.insert_row();
                 }
-                grid = grid.insert_row();
+            }
+
+            if rows_above > 0 {
+                column = column
+                    .push(space::vertical().height(Length::Fixed(rows_above as f32 * row_pitch)));
             }
 
             if count == 0 {
@@ -3847,6 +3858,10 @@ impl Tab {
             }
 
             column = column.push(grid);
+            if rows_below > 0 {
+                column = column
+                    .push(space::vertical().height(Length::Fixed(rows_below as f32 * row_pitch)));
+            }
 
             //TODO: HACK If we don't reach the bottom of the view, go ahead and add a spacer to do that
             {
@@ -4011,6 +4026,8 @@ impl Tab {
         if let Some(items) = self.column_sort() {
             let mut count = 0;
             let mut hidden = 0;
+            // Accumulating off-screen rows keeps widget count proportional to visible rows.
+            let mut culled_height = 0.0;
             for (i, item) in items {
                 if item.hidden && !show_hidden {
                     item.state.pos_opt.set(None);
@@ -4019,21 +4036,33 @@ impl Tab {
                     continue;
                 }
 
-                if count > 0 {
-                    column = column
-                        .push(widget::container(rule::horizontal(1)).padding([0, rule_padding]));
-                    y += 1.0;
-                }
+                let separator_height = if count > 0 { 1.0 } else { 0.0 };
 
                 item.state.pos_opt.set(Some((count, 0)));
                 let item_rect = Rectangle::new(
-                    Point::new(f32::from(space_s), y),
+                    Point::new(f32::from(space_s), y + separator_height),
                     Size::new(size.width - f32::from(2 * space_s), f32::from(row_height)),
                 );
                 item.state.rect_opt.set(Some(item_rect));
 
-                // Only build elements if visible (for performance)
-                let button_row = if item_rect.intersects(&visible_rect) {
+                count += 1;
+                y += separator_height + f32::from(row_height);
+
+                if !item_rect.intersects(&visible_rect) {
+                    culled_height += separator_height + f32::from(row_height);
+                    continue;
+                }
+
+                if culled_height > 0.0 {
+                    column = column.push(space::vertical().height(culled_height));
+                    culled_height = 0.0;
+                }
+                if separator_height > 0.0 {
+                    column = column
+                        .push(widget::container(rule::horizontal(1)).padding([0, rule_padding]));
+                }
+
+                let button_row = {
                     let modified_text = match &item.metadata {
                         ItemMetadata::Path { metadata, .. } => match metadata.modified() {
                             Ok(time) => self.format_time(time).to_string(),
@@ -4289,16 +4318,13 @@ impl Tab {
                     }
 
                     button_row
-                } else {
-                    widget::column::with_capacity(0)
-                        .width(Length::Fill)
-                        .height(Length::Fixed(f32::from(row_height)))
-                        .into()
                 };
 
-                count += 1;
-                y += f32::from(row_height);
                 column = column.push(button_row);
+            }
+
+            if culled_height > 0.0 {
+                column = column.push(space::vertical().height(culled_height));
             }
 
             if count == 0 {
@@ -5440,7 +5466,9 @@ mod tests {
     use tempfile::TempDir;
     use test_log::test;
 
-    use cosmic::iced::{Size, Subscription};
+    use cosmic::iced::advanced::widget::Tree;
+    use cosmic::iced::widget::scrollable::AbsoluteOffset;
+    use cosmic::iced::{Point, Rectangle, Size, Subscription};
 
     use super::{EntryRefresh, HeadingOptions, Instant, Message, Tab, respond_to_scroll_direction};
     use crate::app::test_utils::{
@@ -5454,6 +5482,7 @@ mod tests {
     };
     use crate::location::{Location, SearchLocation};
     use crate::scan::scan_path;
+    use crate::tab::View;
     #[cfg(feature = "gvfs")]
     use crate::trash::item_from_trash_entry;
 
@@ -6286,6 +6315,154 @@ mod tests {
         Ok(())
     }
 
+    fn tree_len(tree: &Tree) -> usize {
+        1 + tree.children.iter().map(tree_len).sum::<usize>()
+    }
+
+    fn list_view_tree(tab: &Tab) -> Tree {
+        Tree::new(&tab.list_view().1)
+    }
+
+    #[test]
+    fn list_view_widget_count_follows_viewport_not_directory_size() -> io::Result<()> {
+        let (_small_dir, small) = tab_with_files(20)?;
+        let (_large_dir, large) = tab_with_files(2000)?;
+
+        let small_len = tree_len(&list_view_tree(&small));
+        let large_len = tree_len(&list_view_tree(&large));
+
+        assert!(
+            large_len < small_len * 2,
+            "a 2000 entry directory built {large_len} widgets against {small_len} for 20 entries"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn grid_view_widget_count_follows_viewport_not_directory_size() -> io::Result<()> {
+        let (_small_dir, mut small) = tab_with_files(20)?;
+        let (_large_dir, mut large) = tab_with_files(2000)?;
+        small.config.view = View::Grid;
+        large.config.view = View::Grid;
+
+        let small_len = tree_len(&Tree::new(&small.grid_view().1));
+        let large_len = tree_len(&Tree::new(&large.grid_view().1));
+
+        assert!(
+            large_len < small_len * 2,
+            "a 2000 entry directory built {large_len} widgets against {small_len} for 20 entries"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn grid_view_content_height_covers_every_row() -> io::Result<()> {
+        let (_dir, mut tab) = tab_with_files(500)?;
+        tab.config.view = View::Grid;
+
+        for scroll in [0.0, 500.0, 5000.0] {
+            tab.scroll_opt = Some(AbsoluteOffset { x: 0.0, y: scroll });
+            let _ = tab.grid_view();
+            let content_height = tab
+                .content_height_opt
+                .get()
+                .expect("grid_view should record the height of its content");
+            let last_bottom = tab
+                .items_opt()
+                .expect("tab should be populated")
+                .iter()
+                .filter_map(|item| item.state.rect_opt.get())
+                .map(|rect| rect.y + rect.height)
+                .fold(0.0_f32, f32::max);
+            assert_eq!(content_height, last_bottom.ceil(), "at scroll {scroll}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn list_view_content_height_covers_every_row() -> io::Result<()> {
+        let (_dir, tab) = tab_with_files(500)?;
+        let _ = tab.list_view();
+
+        let content_height = tab
+            .content_height_opt
+            .get()
+            .expect("list_view should record the height of its content");
+        let items = tab.items_opt().expect("tab should be populated");
+        let last_bottom = items
+            .iter()
+            .filter_map(|item| item.state.rect_opt.get())
+            .map(|rect| rect.y + rect.height)
+            .fold(0.0_f32, f32::max);
+
+        assert_eq!(content_height, last_bottom);
+        Ok(())
+    }
+
+    #[test]
+    fn scrolled_row_keeps_its_button_id() -> io::Result<()> {
+        let (_dir, mut tab) = tab_with_files(500)?;
+
+        let mut tree = list_view_tree(&tab);
+        tab.scroll_opt = Some(AbsoluteOffset { x: 0.0, y: 600.0 });
+        let mut scrolled = tab.list_view().1;
+        tree.diff(scrolled.as_widget_mut());
+
+        let visible_rect = Rectangle::new(Point::new(0.0, 600.0), Size::new(800.0, 300.0));
+        let on_screen: Vec<&Item> = tab
+            .items_opt()
+            .expect("tab should be populated")
+            .iter()
+            .filter(|item| {
+                item.state
+                    .rect_opt
+                    .get()
+                    .is_some_and(|rect| rect.intersects(&visible_rect))
+            })
+            .collect();
+        assert!(
+            !on_screen.is_empty(),
+            "scrolling should leave rows on screen"
+        );
+
+        for item in on_screen {
+            assert!(
+                tree.find(&item.state.button_id).is_some(),
+                "{} lost its button id after scrolling",
+                item.name
+            );
+        }
+        Ok(())
+    }
+
+    /// Arrow-keying to a row the viewport culled names a button that does not exist yet;
+    /// the scroll from select_focus_scroll has to bring it into the rebuilt tree.
+    #[test]
+    fn focusing_a_culled_row_scrolls_it_into_the_tree() -> io::Result<()> {
+        let (_dir, mut tab) = tab_with_files(500)?;
+        let mut tree = list_view_tree(&tab);
+
+        tab.select_focus = Some(400);
+        let focus_id = tab
+            .select_focus_id()
+            .expect("the focused item should have an id");
+        assert!(
+            tree.find(&focus_id).is_none(),
+            "row 400 should start off screen with no widget"
+        );
+
+        tab.select_focus_scroll()
+            .expect("focusing an off-screen row should move the scroll");
+        let mut scrolled = tab.list_view().1;
+        tree.diff(scrolled.as_widget_mut());
+
+        assert!(
+            tree.find(&focus_id).is_some(),
+            "the focused row is missing from the scrolled tree"
+        );
+        Ok(())
+    }
+
     #[test]
     fn scan_path_leaves_child_counts_for_the_visible_rows() -> io::Result<()> {
         let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
@@ -6689,6 +6866,108 @@ mod tests {
         let item = &tab.items_opt().unwrap()[0];
         assert_eq!(item.fingerprint(), fingerprint);
         assert!(matches!(item.dir_size, DirSize::Calculating(_)));
+        Ok(())
+    }
+
+    #[cfg(not(feature = "wgpu"))]
+    #[test]
+    fn virtual_rows_match_actual_layout_at_each_scroll_position() -> io::Result<()> {
+        use cosmic::iced::advanced::widget::{Operation, operation::Focusable};
+        use cosmic::iced::advanced::{Layout, layout};
+        #[derive(Default)]
+        struct ButtonBounds(Vec<(widget::Id, Rectangle)>);
+        impl Operation for ButtonBounds {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+                visit(self);
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: Rectangle,
+                _: &mut dyn Focusable,
+            ) {
+                if let Some(id) = id {
+                    self.0.push((id.clone(), bounds));
+                }
+            }
+        }
+        let renderer =
+            cosmic::Renderer::new(cosmic::iced::Font::default(), cosmic::iced::Pixels(14.0));
+        let (_dir, mut tab) = tab_with_files(500)?;
+        tab.config.show_hidden = false;
+        tab.items_opt.as_mut().unwrap()[2].hidden = true;
+        for view in [View::List, View::Grid] {
+            tab.config.view = view;
+            for width in [800.0, 400.0] {
+                tab.size_opt.set(Some(Size::new(width, 300.0)));
+                match view {
+                    View::List => {
+                        let _ = tab.list_view();
+                    }
+                    View::Grid => {
+                        let _ = tab.grid_view();
+                    }
+                }
+                let last_scroll = (tab.content_height_opt.get().unwrap() - 300.0).max(0.0);
+                for scroll in [0.0, 500.0, last_scroll] {
+                    tab.scroll_opt = Some(AbsoluteOffset { x: 0.0, y: scroll });
+                    let mut element = match view {
+                        View::List => tab.list_view().1,
+                        View::Grid => tab.grid_view().1,
+                    };
+                    let mut tree = Tree::new(&element);
+                    let node = element.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY)),
+                    );
+                    let mut bounds = ButtonBounds::default();
+                    element.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut bounds,
+                    );
+                    let viewport = Rectangle::new(Point::new(0.0, scroll), Size::new(width, 300.0));
+                    let visible: Vec<_> = tab
+                        .items_opt()
+                        .unwrap()
+                        .iter()
+                        .filter(|item| {
+                            item.state
+                                .rect_opt
+                                .get()
+                                .is_some_and(|rect| rect.intersects(&viewport))
+                        })
+                        .collect();
+                    assert!(!visible.is_empty());
+                    for item in visible {
+                        let bounds = bounds
+                            .0
+                            .iter()
+                            .find(|(id, _)| *id == item.state.button_id)
+                            .map(|(_, bounds)| *bounds)
+                            .unwrap_or_else(|| {
+                                panic!("{} has no button in the laid-out viewport", item.name)
+                            });
+                        let expected = item.state.rect_opt.get().unwrap();
+                        match view {
+                            View::List => {
+                                assert_eq!(bounds.y, expected.y, "{} at scroll {scroll}", item.name)
+                            }
+                            View::Grid => assert!(
+                                bounds.y >= expected.y
+                                    && bounds.y + bounds.height <= expected.y + expected.height,
+                                "{}: {bounds:?} outside {expected:?}",
+                                item.name
+                            ),
+                        }
+                    }
+                    let height = tab.content_height_opt.get().unwrap();
+                    assert_eq!(node.size().height, height, "{view:?} at scroll {scroll}");
+                }
+            }
+        }
         Ok(())
     }
 
