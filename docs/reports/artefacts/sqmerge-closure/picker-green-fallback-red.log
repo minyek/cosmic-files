@@ -1,0 +1,19 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-lifecycle)
+    Finished `test` profile [optimized + debuginfo] target(s) in 41.26s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 1 test
+
+thread 'app::tests::failed_launch_resolution_opens_a_usable_tab_in_a_tabless_app' (4107416) panicked at src/app.rs:8341:14:
+a fallback tab must open
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test app::tests::failed_launch_resolution_opens_a_usable_tab_in_a_tabless_app ... FAILED
+
+failures:
+
+failures:
+    app::tests::failed_launch_resolution_opens_a_usable_tab_in_a_tabless_app
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p cosmic-files --lib`

@@ -1,0 +1,58 @@
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-archive)
+    Finished `test` profile [optimized + debuginfo] target(s) in 40.54s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 2 tests
+
+thread 'operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file' (3502452) panicked at src/operation/test_faults.rs:63:5:
+fault test child failed: exit status: 101
+
+running 1 test
+test operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file ... FAILED
+
+failures:
+
+failures:
+    operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 244 filtered out; finished in 0.01s
+
+
+ZipWriter::drop: failed to finalize archive: Io(Os { code: 27, kind: FileTooLarge, message: "File too large" })
+thread 'operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file' (3502456) panicked at src/operation/mod.rs:1506:18:
+archive finalization should report the write failure: OperationSelection { ignored: [], selected: ["/mnt/logs/temp/.tmpFuzIGH/archive.zip"] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file ... FAILED
+
+thread 'operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file' (3502451) panicked at src/operation/test_faults.rs:63:5:
+fault test child failed: exit status: 101
+
+running 1 test
+test operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file ... FAILED
+
+failures:
+
+failures:
+    operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 244 filtered out; finished in 0.03s
+
+
+
+thread 'operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file' (3502455) panicked at src/operation/mod.rs:1506:18:
+archive finalization should report the write failure: OperationSelection { ignored: [], selected: ["/mnt/logs/temp/.tmpaF0mQk/archive.tgz"] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file ... FAILED
+
+failures:
+
+failures:
+    operation::tests::tgz_finalization_failure_leaves_no_destination_or_staging_file
+    operation::tests::zip_finalization_failure_leaves_no_destination_or_staging_file
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 243 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p cosmic-files --lib`

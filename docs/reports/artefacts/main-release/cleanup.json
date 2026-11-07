@@ -1,0 +1,17 @@
+{
+  "removed": [
+    "closure-archive",
+    "closure-drag",
+    "closure-lifecycle",
+    "symlink-folder-badges",
+    "integration-testing",
+    "main-squash",
+    "main-preparation"
+  ],
+  "preserved": [],
+  "retained_legacy_worktrees": [
+    "gui-thread-blocking",
+    "preexisting-bugs",
+    "large-directory-scroll"
+  ]
+}

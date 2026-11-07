@@ -1,0 +1,59 @@
+{
+  "source_commit": "9b5379c381e1824ec83d69e1a7d95a9107e5d34b",
+  "stage_exit_codes": {
+    "ACCEPTANCE_EXIT": 0,
+    "NO_DEFAULT_EXIT": 0,
+    "DEFAULT_EXIT": 0,
+    "ALL_FEATURES_EXIT": 0,
+    "RELEASE_EXIT": 0,
+    "EXAMPLES_EXIT": 0,
+    "FRAME_PROBE_EXIT": 0,
+    "DIFF_CHECK_EXIT": 0,
+    "GATE_EXIT": 0
+  },
+  "tests": {
+    "no_default_features": {
+      "unit": 235,
+      "integration": 7
+    },
+    "default": {
+      "unit": 250,
+      "integration": 8
+    },
+    "all_features": {
+      "unit": 250,
+      "integration": 8
+    }
+  },
+  "complete_log_sha256": "85064aefbf0901469aa6c5bafb916bda91a8844b821eaa19e841c47c91bbed95",
+  "test_result_lines": [
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+    "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 234 filtered out; finished in 0.01s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 234 filtered out; finished in 0.00s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 234 filtered out; finished in 0.00s",
+    "test result: ok. 235 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+    "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.01s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.00s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.00s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.01s",
+    "test result: ok. 250 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+    "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.01s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.01s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.01s",
+    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 0.01s",
+    "test result: ok. 250 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+    "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ]
+}

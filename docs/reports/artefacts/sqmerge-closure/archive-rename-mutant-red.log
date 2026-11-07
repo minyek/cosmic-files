@@ -1,0 +1,35 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.41s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 1 test
+
+thread 'operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported' (3503081) panicked at src/operation/test_faults.rs:63:5:
+fault test child failed: exit status: 101
+
+running 1 test
+test operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported ... FAILED
+
+failures:
+
+failures:
+    operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 244 filtered out; finished in 0.00s
+
+
+
+thread 'operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported' (3503092) panicked at src/operation/mod.rs:1832:18:
+unsupported atomic rename should fail closed: OperationSelection { ignored: ["/mnt/logs/temp/.tmpkXaU6a/source"], selected: ["/mnt/logs/temp/.tmpkXaU6a/target"] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported ... FAILED
+
+failures:
+
+failures:
+    operation::tests::rename_fails_closed_when_atomic_rename_is_unsupported
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 244 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p cosmic-files --lib`

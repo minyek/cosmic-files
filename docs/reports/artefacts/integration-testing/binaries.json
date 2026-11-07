@@ -1,0 +1,17 @@
+[
+  {
+    "binary": "target/release/cosmic-files",
+    "bytes": 66213536,
+    "sha256": "a7d22b26e36d2f16c6d74b2ca717aa6cab60c5f8029d517077f4b1f6956af668"
+  },
+  {
+    "binary": "target/release/cosmic-files-applet",
+    "bytes": 51845856,
+    "sha256": "98a556c4212113ff76dba635cf88a1966df1ec695e57eca0b2a346555675b705"
+  },
+  {
+    "binary": "target/release/cosmic-files-thumbnailer",
+    "bytes": 6388728,
+    "sha256": "59991ba29054f8d59845922433f493f143ed7f3f685d5712989cdc4d5a37dfe5"
+  }
+]

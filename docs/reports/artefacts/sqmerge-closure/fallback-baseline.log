@@ -1,0 +1,7 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 4.71s
+     Running unittests src/lib.rs (/mnt/logs/temp/cosmic-sqmerge-target/debug/deps/cosmic_files-70a83567f602e0f2)
+
+running 1 test
+test app::tests::failed_launch_resolution_opens_a_usable_tab_in_a_tabless_app ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.04s

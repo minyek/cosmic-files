@@ -1,0 +1,58 @@
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+Xlib:  extension "GLX" missing on display ":97".
+MESA-EGL: warning: DRI3 error: Could not get DRI3 device
+MESA-EGL: warning: Ensure your X server supports DRI3 to get accelerated rendering
+  [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33m/home/agent/.cache/thumbnails/x-large is not a directory, creating one now[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:36 [2;3mon[0m tokio-rt-worker
+
+  [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33mfailed to read directory /home/agent/.local/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [31mERROR[0m  [31m/home/agent/.cache/thumbnails/x-large failed to create directory, this error can be expected on first run[0m
+    [2;3mat[0m src/thumbnail_cacher.rs:40 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33mfailed to read directory /home/agent/.local/share/flatpak/exports/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33mfailed to read directory /var/lib/flatpak/exports/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [33m WARN[0m  [33mfailed to read directory /usr/local/share/thumbnailers: No such file or directory (os error 2)[0m
+    [2;3mat[0m src/thumbnailer.rs:110 [2;3mon[0m tokio-rt-worker
+
+  [32m INFO[0m  [32mloaded thumbnailer cache in 350.379µs[0m
+    [2;3mat[0m src/thumbnailer.rs:160 [2;3mon[0m tokio-rt-worker
+
+  [32m INFO[0m  [32mtab completed /mnt/work/projects/cosmic-de/cosmic-files/.worktrees/main-preparation/ in 305.714µs[0m
+    [2;3mat[0m src/tab.rs:7673 [2;3mon[0m tokio-rt-worker
+
+  [32m INFO[0m  [32mtab completed /home/agent/gui-fixtures/large in 160.106µs[0m
+    [2;3mat[0m src/tab.rs:7673 [2;3mon[0m tokio-rt-worker

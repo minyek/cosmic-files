@@ -1,0 +1,7 @@
+storage exit=0
+storage-failure exit=0
+remote exit=0
+x11 exit=0
+picker exit=0
+wayland exit=0
+ACCEPTANCE_EXIT=0

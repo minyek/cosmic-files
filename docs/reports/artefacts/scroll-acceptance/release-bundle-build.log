@@ -1,0 +1,61 @@
+cargo build --release --locked --offline -j 12
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/large-directory-scroll)
+    Finished `release` profile [optimized] target(s) in 1m 00s
+cargo build --package cosmic-files-applet --release --locked --offline -j 12
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/large-directory-scroll)
+   Compiling cosmic-files-applet v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/large-directory-scroll/cosmic-files-applet)
+    Finished `release` profile [optimized] target(s) in 52.67s
+cargo build --package cosmic-files-thumbnailer --release --locked --offline -j 12
+   Compiling num-traits v0.2.19
+   Compiling memchr v2.8.3
+   Compiling stable_deref_trait v1.2.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.5
+   Compiling log v0.4.34
+   Compiling bitflags v2.13.2
+   Compiling bytemuck v1.25.2
+   Compiling libm v0.2.16
+   Compiling flate2 v1.1.10
+   Compiling as-slice v0.2.1
+   Compiling rgb v0.8.53
+   Compiling derive_pod v0.1.2
+   Compiling aligned v0.4.3
+   Compiling raw-cpuid v11.6.0
+   Compiling smallvec v1.16.1
+   Compiling dataview v1.0.2
+   Compiling qoi v0.4.1
+   Compiling no-std-compat v0.4.1
+   Compiling pelite-macros v0.1.1
+   Compiling png v0.18.1
+   Compiling no_std_io2 v0.9.4
+   Compiling nom v8.0.0
+   Compiling bitstream-io v4.10.0
+   Compiling pelite v0.10.0
+   Compiling num-integer v0.1.47
+   Compiling num-complex v0.4.6
+   Compiling moxcms v0.8.1
+   Compiling num-bigint v0.4.8
+   Compiling pulp v0.22.3
+   Compiling thiserror-impl v2.0.20
+   Compiling num-rational v0.4.2
+   Compiling thiserror v2.0.20
+   Compiling equator-macro v0.4.2
+   Compiling zerocopy-derive v0.8.57
+   Compiling profiling-procmacros v1.0.18
+   Compiling arg_enum_proc_macro v0.3.4
+   Compiling num-derive v0.4.2
+   Compiling profiling v1.0.18
+   Compiling equator v0.4.2
+   Compiling aligned-vec v0.6.4
+   Compiling v_frame v0.3.9
+   Compiling av1-grain v0.2.5
+   Compiling zerocopy v0.8.57
+   Compiling av-scenechange v0.14.1
+   Compiling rav1e v0.8.1
+   Compiling half v2.7.1
+   Compiling tiff v0.11.3
+   Compiling exr v1.74.2
+   Compiling ravif v0.13.0
+   Compiling image v0.25.10
+   Compiling cosmic-files-thumbnailer v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/large-directory-scroll/cosmic-files-thumbnailer)
+    Finished `release` profile [optimized] target(s) in 26.98s

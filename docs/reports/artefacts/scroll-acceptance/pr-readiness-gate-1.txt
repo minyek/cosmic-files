@@ -1,0 +1,31 @@
+Source: 3778fee
+Outcome: failed (release compilation)
+
+minimal.log:181:     Finished `test` profile [optimized + debuginfo] target(s) in 2m 29s
+minimal.log:212: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 0.01s
+minimal.log:419: test result: ok. 227 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.15s
+minimal.log:425: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+minimal.log:431: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+default.log:2:     Finished `test` profile [optimized + debuginfo] target(s) in 3m 34s
+default.log:53: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.03s
+default.log:254: test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.26s
+default.log:260: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+default.log:266: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+all.log:4:     Finished `test` profile [optimized + debuginfo] target(s) in 3m 42s
+all.log:35: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.01s
+all.log:256: test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+all.log:262: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+all.log:268: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+gui-build.log:2:     Finished `dev` profile [optimized + debuginfo] target(s) in 1m 27s
+frame-build.log:180:     Finished `dev` profile [optimized + debuginfo] target(s) in 51.13s
+release.log:1: cargo build --release --locked --offline -j 12
+release.log:2:    Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/large-directory-scroll)
+release.log:3: error[E0433]: cannot find `join` in `tokio`
+release.log:4:  --> src/persistence.rs:4:38
+release.log:5:   |
+release.log:6: 4 |     let (recents, defaults) = tokio::join!(
+release.log:7:   |                                      ^^^^ could not find `join` in `tokio`
+release.log:8:
+release.log:9: For more information about this error, try `rustc --explain E0433`.
+release.log:10: error: could not compile `cosmic-files` (lib) due to 1 previous error
+release.log:11: error: recipe `build-debug` failed on line 54 with exit code 101

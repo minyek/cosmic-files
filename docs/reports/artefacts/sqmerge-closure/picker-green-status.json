@@ -1,0 +1,29 @@
+{
+  "state": "passed",
+  "worktree": "/mnt/work/projects/cosmic-de/cosmic-files/.worktrees/closure-lifecycle",
+  "checks": {
+    "dialog-green": {
+      "exit_code": 0,
+      "log": "/mnt/logs/agent/sqmerge-picker-green-3656997/dialog-green.log"
+    },
+    "fallback-red": {
+      "exit_code": 101,
+      "log": "/mnt/logs/agent/sqmerge-picker-green-3656997/fallback-red.log"
+    },
+    "fallback-green": {
+      "exit_code": 0,
+      "log": "/mnt/logs/agent/sqmerge-picker-green-3656997/fallback-green.log"
+    },
+    "format-check": {
+      "exit_code": 0,
+      "log": "/mnt/logs/agent/sqmerge-picker-green-3656997/format-check.log"
+    },
+    "diff-check": {
+      "exit_code": 0,
+      "log": "/mnt/logs/agent/sqmerge-picker-green-3656997/diff-check.log"
+    }
+  },
+  "dialog_tests_passed": 29,
+  "fallback_source_restored": true,
+  "canonical_gate": "delegated to root; not run by bounded worker"
+}

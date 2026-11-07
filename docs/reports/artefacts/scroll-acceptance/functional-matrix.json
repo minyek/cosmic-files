@@ -1,0 +1,27 @@
+{
+  "result": "clean",
+  "exit_code": 0,
+  "minimal": {
+    "passed": 227,
+    "failed": 0,
+    "ignored": 0
+  },
+  "default": {
+    "passed": 241,
+    "failed": 0,
+    "ignored": 0
+  },
+  "all_features": {
+    "passed": 241,
+    "failed": 0,
+    "ignored": 0
+  },
+  "application_and_acceptance_example_builds": "passed",
+  "toolkit_revision": "34caca138738af92f4b8fc60db52a82812161345",
+  "source_commit": "2ab787e0e04b85e8ca3d2c6bc7f1f6ec204ea8fc",
+  "release_targets": [
+    "cosmic-files",
+    "cosmic-files-applet",
+    "cosmic-files-thumbnailer"
+  ]
+}

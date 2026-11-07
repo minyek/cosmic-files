@@ -1,0 +1,17 @@
+-rwxr-xr-x root:root /usr/bin/cosmic-files
+-rwxr-xr-x root:root /usr/bin/cosmic-files-applet
+-rwxr-xr-x root:root /usr/bin/cosmic-files-thumbnailer
+-rw-r--r-- root:root /usr/share/applications/com.system76.CosmicFiles.desktop
+drwxr-sr-x root:root /usr/share/doc/cosmic-files
+-rw-r--r-- root:root /usr/share/doc/cosmic-files/README.md
+-rw-r--r-- root:root /usr/share/icons/hicolor/128x128/apps/com.system76.CosmicFiles.svg
+-rw-r--r-- root:root /usr/share/icons/hicolor/16x16/apps/com.system76.CosmicFiles.svg
+-rw-r--r-- root:root /usr/share/icons/hicolor/24x24/apps/com.system76.CosmicFiles.svg
+-rw-r--r-- root:root /usr/share/icons/hicolor/256x256/apps/com.system76.CosmicFiles.svg
+-rw-r--r-- root:root /usr/share/icons/hicolor/32x32/apps/com.system76.CosmicFiles.svg
+-rw-r--r-- root:root /usr/share/icons/hicolor/48x48/apps/com.system76.CosmicFiles.svg
+-rw-r--r-- root:root /usr/share/icons/hicolor/64x64/apps/com.system76.CosmicFiles.svg
+drwxr-sr-x root:root /usr/share/licenses/cosmic-files
+-rw-r--r-- root:root /usr/share/licenses/cosmic-files/LICENSE
+-rw-r--r-- root:root /usr/share/metainfo/com.system76.CosmicFiles.metainfo.xml
+-rw-r--r-- root:root /usr/share/thumbnailers/com.system76.CosmicFiles.thumbnailer

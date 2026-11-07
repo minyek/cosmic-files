@@ -1,0 +1,26 @@
+Source: 3778fee plus the persistence-macro and desktop-only resolver patch
+Outcome: succeeded
+
+minimal.log:175:     Finished `test` profile [optimized + debuginfo] target(s) in 58.94s
+minimal.log:206: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 0.01s
+minimal.log:413: test result: ok. 227 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+minimal.log:419: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+minimal.log:425: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+default.log:2:     Finished `test` profile [optimized + debuginfo] target(s) in 1m 14s
+default.log:33: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.01s
+default.log:254: test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+default.log:260: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+default.log:266: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+all.log:2:     Finished `test` profile [optimized + debuginfo] target(s) in 1m 04s
+all.log:33: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.01s
+all.log:254: test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
+all.log:260: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+all.log:266: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+gui-build.log:2:     Finished `dev` profile [optimized + debuginfo] target(s) in 13.19s
+frame-build.log:173:     Finished `dev` profile [optimized + debuginfo] target(s) in 0.37s
+release.log:1: cargo build --release --locked --offline -j 12
+release.log:3:     Finished `release` profile [optimized] target(s) in 1m 00s
+release.log:4: cargo build --package cosmic-files-applet --release --locked --offline -j 12
+release.log:7:     Finished `release` profile [optimized] target(s) in 52.67s
+release.log:8: cargo build --package cosmic-files-thumbnailer --release --locked --offline -j 12
+release.log:61:     Finished `release` profile [optimized] target(s) in 26.98s

@@ -1,0 +1,5 @@
+empty-root: expected=0 actual=0 PASS
+empty-nested-slices: expected=0 actual=0 PASS
+live-nested-job: expected=1 actual=1 PASS
+exited-job: expected=0 actual=0 PASS
+two-compartments: expected=2 actual=2 PASS

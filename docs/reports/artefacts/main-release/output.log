@@ -1,0 +1,14 @@
+cargo build --release --locked --offline -j8
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files)
+    Finished `release` profile [optimized] target(s) in 47.41s
+cargo build --package cosmic-files-applet --release --locked --offline -j8
+   Compiling cosmic-files v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files)
+   Compiling cosmic-files-applet v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/cosmic-files-applet)
+    Finished `release` profile [optimized] target(s) in 43.23s
+cargo build --package cosmic-files-thumbnailer --release --locked --offline -j8
+   Compiling cosmic-files-thumbnailer v1.9.0 (/mnt/work/projects/cosmic-de/cosmic-files/cosmic-files-thumbnailer)
+    Finished `release` profile [optimized] target(s) in 10.14s
+RELEASE_EXIT=0
+INSTALL_CHECK_EXIT=0
+MANIFEST_EXIT=0
+MAIN_RELEASE_EXIT=0
