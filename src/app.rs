@@ -111,6 +111,34 @@ static MOUNT_ERROR_TRY_AGAIN_BUTTON_ID: LazyLock<widget::Id> =
 pub(crate) static REPLACE_BUTTON_ID: LazyLock<widget::Id> =
     LazyLock::new(|| widget::Id::new("replace-button"));
 
+/// Most recent completed/failed operations to retain for the history view.
+const MAX_OPERATION_HISTORY: usize = 256;
+
+/// Drop the oldest entries once an operation-history map exceeds [`MAX_OPERATION_HISTORY`]. The
+/// maps are keyed by an ascending operation id, so the smallest keys are the oldest.
+fn cap_operation_history<V>(history: &mut BTreeMap<u64, V>) {
+    while history.len() > MAX_OPERATION_HISTORY {
+        history.pop_first();
+    }
+}
+
+/// The retry an ExtractPassword dialog resolves to, or `None` when the failed operation
+/// cannot be retried: evicted from the capped history, or not an extract.
+fn retry_extract_with_password<C, E>(
+    failed_operations: &BTreeMap<u64, (Operation, C, E)>,
+    id: u64,
+    password: String,
+) -> Option<Operation> {
+    let (Operation::Extract { to, paths, .. }, _, _) = failed_operations.get(&id)? else {
+        return None;
+    };
+    Some(Operation::Extract {
+        to: to.clone(),
+        paths: paths.clone(),
+        password: Some(password),
+    })
+}
+
 /// What a batch of watcher events did to a tab's listing.
 enum ListingChange {
     /// Entries were added, removed or renamed: the listing has to be read again.
@@ -1681,6 +1709,7 @@ impl App {
                 }
 
                 self.complete_operations.insert(id, op);
+                cap_operation_history(&mut self.complete_operations);
             }
         }
         // Close progress notification if all relevant operations are finished
@@ -1721,6 +1750,7 @@ impl App {
                 self.progress_operations.remove(&id);
                 self.failed_operations
                     .insert(id, (op, controller, err.to_string()));
+                cap_operation_history(&mut self.failed_operations);
             }
         }
         if !failed.is_empty() {
@@ -3512,16 +3542,12 @@ impl Application for App {
                             log::warn!("TODO: retry operations");
                         }
                         DialogPage::ExtractPassword { id, password } => {
-                            let (operation, _, _err) = self.failed_operations.get(&id).unwrap();
-                            let new_op = match &operation {
-                                Operation::Extract { to, paths, .. } => Operation::Extract {
-                                    to: to.clone(),
-                                    paths: paths.clone(),
-                                    password: Some(password),
-                                },
-                                _ => unreachable!(),
-                            };
-                            tasks.push(self.operation(new_op));
+                            // The failed operation may have been evicted from the capped history.
+                            match retry_extract_with_password(&self.failed_operations, id, password)
+                            {
+                                Some(new_op) => tasks.push(self.operation(new_op)),
+                                None => log::warn!("failed operation {id} not available to retry"),
+                            }
                         }
                         DialogPage::MountError {
                             mounter_key,
@@ -7870,6 +7896,7 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::time::Instant;
 
@@ -7879,7 +7906,10 @@ mod tests {
         AccessKind, CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode,
     };
 
-    use super::{ListingChange, Mime, OpenTargets, classify_events};
+    use super::{
+        ListingChange, MAX_OPERATION_HISTORY, Mime, OpenTargets, Operation, cap_operation_history,
+        classify_events, retry_extract_with_password,
+    };
 
     fn event(kind: EventKind, path: &str) -> DebouncedEvent {
         DebouncedEvent::new(
@@ -7990,6 +8020,68 @@ mod tests {
         assert!(matches!(
             classify(EventKind::Create(CreateKind::File), "/elsewhere/file.log"),
             ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn cap_operation_history_keeps_the_newest_and_bounds_growth() {
+        let extra = 50;
+        let mut history: BTreeMap<u64, ()> = (0..(MAX_OPERATION_HISTORY as u64 + extra))
+            .map(|id| (id, ()))
+            .collect();
+
+        cap_operation_history(&mut history);
+
+        assert_eq!(history.len(), MAX_OPERATION_HISTORY);
+        assert!(!history.contains_key(&0));
+        assert!(history.contains_key(&(MAX_OPERATION_HISTORY as u64 + extra - 1)));
+    }
+
+    #[test]
+    fn retrying_an_evicted_operation_skips_instead_of_panicking() {
+        let failed: BTreeMap<u64, (Operation, (), ())> = BTreeMap::new();
+
+        assert!(retry_extract_with_password(&failed, 7, "pw".to_string()).is_none());
+    }
+
+    #[test]
+    fn retrying_a_non_extract_operation_is_refused() {
+        let mut failed = BTreeMap::new();
+        failed.insert(
+            7,
+            (
+                Operation::PermanentlyDelete {
+                    paths: Box::from([]),
+                },
+                (),
+                (),
+            ),
+        );
+
+        assert!(retry_extract_with_password(&failed, 7, "pw".to_string()).is_none());
+    }
+
+    #[test]
+    fn retrying_an_extract_carries_the_password() {
+        let mut failed = BTreeMap::new();
+        failed.insert(
+            7,
+            (
+                Operation::Extract {
+                    paths: Box::from([PathBuf::from("archive.zip")]),
+                    to: PathBuf::from("out"),
+                    password: None,
+                },
+                (),
+                (),
+            ),
+        );
+
+        let retry = retry_extract_with_password(&failed, 7, "pw".to_string());
+
+        assert!(matches!(
+            retry,
+            Some(Operation::Extract { password: Some(password), .. }) if password == "pw"
         ));
     }
 
