@@ -448,11 +448,13 @@ pub enum Message {
     TabNew,
     TabRescan(
         Entity,
+        u64,
         Location,
         Option<Box<Item>>,
         Vec<Item>,
         Option<Vec<PathBuf>>,
     ),
+    TabRescanFailed(Entity, u64),
     TabView(Option<Entity>, tab::View),
     TimeConfigChange(TimeConfig),
     ToggleContextPage(ContextPage),
@@ -1489,6 +1491,10 @@ impl App {
         selection_paths: Option<Vec<PathBuf>>,
     ) -> Task<Message> {
         log::info!("rescan_tab {entity:?} {location:?} {selection_paths:?}");
+        let Some(tab) = self.tab_model.data_mut::<Tab>(entity) else {
+            return Task::none();
+        };
+        let request = tab.scans.begin();
         let icon_sizes = self.config.tab.icon_sizes;
         let mounter_items = self.mounter_items.clone();
 
@@ -1513,6 +1519,7 @@ impl App {
 
                     cosmic::action::app(Message::TabRescan(
                         entity,
+                        request,
                         location,
                         parent_item_opt,
                         items,
@@ -1521,10 +1528,22 @@ impl App {
                 }
                 Err(err) => {
                     log::warn!("failed to rescan: {err}");
-                    cosmic::action::none()
+                    cosmic::action::app(Message::TabRescanFailed(entity, request))
                 }
             }
         })
+    }
+
+    fn rescan_tab_if_idle(&mut self, entity: Entity, location: Location) -> Option<Task<Message>> {
+        if self
+            .tab_model
+            .data_mut::<Tab>(entity)?
+            .scans
+            .defer_if_running()
+        {
+            return None;
+        }
+        Some(self.update_tab(entity, location, None))
     }
 
     fn rescan_trash(&mut self) -> Task<Message> {
@@ -1541,7 +1560,7 @@ impl App {
 
         let commands = needs_reload
             .into_iter()
-            .map(|(entity, location)| self.update_tab(entity, location, None));
+            .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
 
         Task::batch(commands)
     }
@@ -1560,7 +1579,7 @@ impl App {
 
         let commands = needs_reload
             .into_iter()
-            .map(|(entity, location)| self.update_tab(entity, location, None));
+            .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
 
         Task::batch(commands)
     }
@@ -3695,7 +3714,7 @@ impl Application for App {
 
                 let commands = needs_reload
                     .into_iter()
-                    .map(|(entity, location)| self.update_tab(entity, location, None));
+                    .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
                 return Task::batch(commands);
             }
             Message::NotifyWatcher(mut watcher_wrapper) => match watcher_wrapper.watcher_opt.take()
@@ -4663,11 +4682,42 @@ impl Application for App {
                 };
                 return self.open_tab(location, true, None);
             }
-            Message::TabRescan(entity, mut location, parent_item_opt, items, selection_paths) => {
+            Message::TabRescanFailed(entity, request) => {
+                let Some(tab) = self.tab_model.data_mut::<Tab>(entity) else {
+                    return Task::none();
+                };
+                if tab.scans.finish(request) == Some(true) {
+                    let location = tab.location.clone();
+                    return self
+                        .rescan_tab_if_idle(entity, location)
+                        .unwrap_or_else(Task::none);
+                }
+            }
+            Message::TabRescan(
+                entity,
+                request,
+                mut location,
+                parent_item_opt,
+                items,
+                selection_paths,
+            ) => {
                 location = location.normalize();
+                let selection_paths_present = selection_paths.is_some();
+
+                let mut matched = false;
+                let mut rescan_pending = false;
+                let mut current_location = None;
+
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(entity) {
+                    let Some(pending) = tab.scans.finish(request) else {
+                        return Task::none();
+                    };
+                    rescan_pending = pending;
                     tab.location = tab.location.normalize();
-                    if location == tab.location {
+                    matched = location == tab.location;
+                    current_location = Some(tab.location.clone());
+
+                    if matched {
                         tab.parent_item_opt = parent_item_opt;
                         tab.set_items(items);
                         let location_str = location.to_string();
@@ -4681,31 +4731,48 @@ impl Application for App {
                         tab.sort_name = sort.0;
                         tab.sort_direction = sort.1;
 
-                        let mut tasks = Vec::with_capacity(2);
-
                         if let Some(selection_paths) = selection_paths {
                             tab.select_paths(selection_paths);
-
-                            // Ensure selected path is scrolled to after redraw
-                            tasks.push(Task::done(cosmic::action::app(Message::TabMessage(
-                                Some(entity),
-                                tab::Message::ScrollToFocused,
-                            ))));
                         }
-
-                        tasks.push(clipboard::read_data::<ClipboardPaste>().map(|p| {
-                            cosmic::action::app(Message::CutPaths(match p {
-                                Some(s) => match s.kind {
-                                    ClipboardKind::Copy => Vec::new(),
-                                    ClipboardKind::Cut { .. } => s.paths,
-                                },
-                                None => Vec::new(),
-                            }))
-                        }));
-
-                        return Task::batch(tasks);
                     }
                 }
+
+                if !matched {
+                    // Stale rescan superseded by a location change in the meantime; if a
+                    // watcher event still wants a rescan, run it for wherever the tab is now.
+                    return match current_location {
+                        Some(location) if rescan_pending => self
+                            .rescan_tab_if_idle(entity, location)
+                            .unwrap_or_else(Task::none),
+                        _ => Task::none(),
+                    };
+                }
+
+                let mut tasks = Vec::with_capacity(3);
+
+                if selection_paths_present {
+                    // Ensure selected path is scrolled to after redraw
+                    tasks.push(Task::done(cosmic::action::app(Message::TabMessage(
+                        Some(entity),
+                        tab::Message::ScrollToFocused,
+                    ))));
+                }
+
+                tasks.push(clipboard::read_data::<ClipboardPaste>().map(|p| {
+                    cosmic::action::app(Message::CutPaths(match p {
+                        Some(s) => match s.kind {
+                            ClipboardKind::Copy => Vec::new(),
+                            ClipboardKind::Cut { .. } => s.paths,
+                        },
+                        None => Vec::new(),
+                    }))
+                }));
+
+                if rescan_pending && let Some(location) = current_location {
+                    tasks.extend(self.rescan_tab_if_idle(entity, location));
+                }
+
+                return Task::batch(tasks);
             }
             Message::TabView(entity_opt, view) => {
                 let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
@@ -7245,5 +7312,125 @@ pub(crate) mod test_utils {
             path.display(),
             tab_path.display()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    fn test_app(dir: &tempfile::TempDir) -> super::App {
+        use cosmic::Application;
+        let mut core = cosmic::app::Core::default();
+        core.set_main_window_id(Some(cosmic::iced::window::Id::unique()));
+        let location = crate::location::Location::Path(dir.path().to_path_buf());
+        let (mut app, _) = super::App::init(
+            core,
+            super::Flags {
+                config_handler: None,
+                config: crate::config::Config::default(),
+                state_handler: None,
+                state: crate::config::State::default(),
+                mode: super::Mode::App,
+                locations: vec![location.clone()],
+                uris: Vec::new(),
+            },
+        );
+        let _ = app.open_tab(location, true, None);
+        app
+    }
+
+    async fn task_result(task: super::Task<super::Message>) -> super::Message {
+        use cosmic::iced::futures::StreamExt;
+        let mut stream = cosmic::iced::runtime::task::into_stream(task).unwrap();
+        match stream.next().await.unwrap() {
+            cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) => message,
+            _ => panic!("the task must return an application message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn review_an_old_scan_cannot_replace_a_newer_listing() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let location = crate::location::Location::Path(dir.path().to_path_buf());
+        let old_result = task_result(app.rescan_tab(entity, location.clone(), None)).await;
+        std::fs::write(dir.path().join("new.txt"), b"new")?;
+        let new_result = task_result(app.rescan_tab(entity, location, None)).await;
+        let _ = app.update(new_result);
+        let _ = app.update(old_result);
+        let tab = app.tab_model.data::<crate::tab::Tab>(entity).unwrap();
+        assert_eq!(tab.items_opt().unwrap().len(), 1);
+        assert_eq!(tab.items_opt().unwrap()[0].name, "new.txt");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_direct_scan_and_watcher_scan_keep_their_own_completions() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let location = crate::location::Location::Path(dir.path().to_path_buf());
+        let initial = task_result(app.rescan_tab(entity, location.clone(), None)).await;
+        let _ = app.update(initial);
+        let old = task_result(app.rescan_tab_if_idle(entity, location.clone()).unwrap()).await;
+        std::fs::write(dir.path().join("new.txt"), b"new")?;
+        let current = task_result(app.rescan_tab(entity, location.clone(), None)).await;
+        assert!(app.rescan_tab_if_idle(entity, location.clone()).is_none());
+        let _ = app.update(current);
+        let _ = app.update(old);
+        assert!(app.rescan_tab_if_idle(entity, location).is_none());
+        assert_eq!(
+            app.tab_model
+                .data::<crate::tab::Tab>(entity)
+                .unwrap()
+                .items_opt()
+                .unwrap()[0]
+                .name,
+            "new.txt"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_scan_releases_only_its_own_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let entity = app.tab_model.active();
+        let scans = &mut app
+            .tab_model
+            .data_mut::<crate::tab::Tab>(entity)
+            .unwrap()
+            .scans;
+        let old = scans.begin();
+        let current = scans.begin();
+        let _ = app.update(super::Message::TabRescanFailed(entity, old));
+        assert!(
+            app.tab_model
+                .data_mut::<crate::tab::Tab>(entity)
+                .unwrap()
+                .scans
+                .defer_if_running()
+        );
+        let _ = app.update(super::Message::TabRescanFailed(entity, current));
+        assert_eq!(
+            app.tab_model
+                .data_mut::<crate::tab::Tab>(entity)
+                .unwrap()
+                .scans
+                .finish(current),
+            None
+        );
+        assert!(
+            app.tab_model
+                .data_mut::<crate::tab::Tab>(entity)
+                .unwrap()
+                .scans
+                .defer_if_running()
+        );
+        Ok(())
     }
 }

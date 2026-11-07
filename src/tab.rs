@@ -567,6 +567,7 @@ pub struct Tab {
     pub gallery: bool,
     pub(crate) parent_item_opt: Option<Box<Item>>,
     pub(crate) items_opt: Option<Vec<Item>>,
+    pub(crate) scans: crate::scan::ScanState,
     pub dnd_hovered: Option<(Location, Instant)>,
     pub(crate) scrollable_id: widget::Id,
     select_focus: Option<usize>,
@@ -670,6 +671,7 @@ impl Tab {
             gallery: false,
             parent_item_opt: None,
             items_opt: None,
+            scans: crate::scan::ScanState::default(),
             scrollable_id,
             select_focus: None,
             select_range: None,
@@ -5358,6 +5360,74 @@ mod tests {
 
         assert_eq!(0, path.read_dir()?.count());
         assert!(actual.is_empty());
+
+        Ok(())
+    }
+
+    fn test_tab(fs: &TempDir) -> Tab {
+        tab_at(Location::Path(fs.path().to_owned()))
+    }
+
+    fn tab_at(location: Location) -> Tab {
+        Tab::new(
+            location,
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        )
+    }
+
+    #[test]
+    fn begin_rescan_if_idle_starts_a_scan_when_idle() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        assert!(!tab.scans.defer_if_running());
+        let request = tab.scans.begin();
+        assert_eq!(tab.scans.finish(request), Some(false));
+
+        Ok(())
+    }
+
+    #[test]
+    fn begin_rescan_if_idle_coalesces_concurrent_watcher_events() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        assert!(!tab.scans.defer_if_running());
+        let request = tab.scans.begin();
+        for _ in 0..10 {
+            assert!(tab.scans.defer_if_running());
+        }
+
+        assert_eq!(tab.scans.finish(request), Some(true));
+
+        Ok(())
+    }
+
+    #[test]
+    fn finish_rescan_with_no_pending_events_does_not_request_another_scan() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        let request = tab.scans.begin();
+        assert_eq!(tab.scans.finish(request), Some(false));
+
+        Ok(())
+    }
+
+    #[test]
+    fn finish_rescan_allows_a_fresh_scan_to_start_afterwards() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let mut tab = test_tab(&fs);
+
+        let request = tab.scans.begin();
+        assert_eq!(tab.scans.finish(request), Some(false));
+        assert!(!tab.scans.defer_if_running());
+        let next = tab.scans.begin();
+        assert_eq!(tab.scans.finish(next), Some(false));
 
         Ok(())
     }

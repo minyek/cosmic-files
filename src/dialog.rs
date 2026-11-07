@@ -481,7 +481,14 @@ enum Message {
     Surface(cosmic::surface::Action<Message>),
     #[allow(clippy::enum_variant_names)]
     TabMessage(tab::Message),
-    TabRescan(Location, Option<Box<Item>>, Vec<Item>, Option<Vec<PathBuf>>),
+    TabRescan(
+        u64,
+        Location,
+        Option<Box<Item>>,
+        Vec<Item>,
+        Option<Vec<PathBuf>>,
+    ),
+    TabRescanFailed(u64),
     TabView(tab::View),
     TimeConfigChange(TimeConfig),
     ToggleFoldersFirst,
@@ -731,7 +738,8 @@ impl App {
         widget::column::with_children(children).into()
     }
 
-    fn rescan_tab(&self, selection_paths: Option<Vec<PathBuf>>) -> Task<Message> {
+    fn rescan_tab(&mut self, selection_paths: Option<Vec<PathBuf>>) -> Task<Message> {
+        let request = self.tab.scans.begin();
         let location = self.tab.location.clone();
         let icon_sizes = self.tab.config.icon_sizes;
         let mounter_items = self.mounter_items.clone();
@@ -754,6 +762,7 @@ impl App {
                         }
                     }
                     cosmic::action::app(Message::TabRescan(
+                        request,
                         location,
                         parent_item_opt,
                         items,
@@ -762,10 +771,18 @@ impl App {
                 }
                 Err(err) => {
                     log::warn!("failed to rescan: {err}");
-                    cosmic::action::none()
+                    cosmic::action::app(Message::TabRescanFailed(request))
                 }
             }
         })
+    }
+
+    fn rescan_tab_if_idle(&mut self) -> Task<Message> {
+        if self.tab.scans.defer_if_running() {
+            Task::none()
+        } else {
+            self.rescan_tab(None)
+        }
     }
 
     fn search_get(&self) -> Option<&str> {
@@ -1607,7 +1624,7 @@ impl Application for App {
                         }
                     }
                     if contains_change {
-                        return self.rescan_tab(None);
+                        return self.rescan_tab_if_idle();
                     }
                 }
             }
@@ -1808,7 +1825,16 @@ impl Application for App {
                 }
                 return Task::batch(commands);
             }
-            Message::TabRescan(location, parent_item_opt, mut items, selection_paths) => {
+            Message::TabRescanFailed(request) => {
+                if self.tab.scans.finish(request) == Some(true) {
+                    return self.rescan_tab_if_idle();
+                }
+            }
+            Message::TabRescan(request, location, parent_item_opt, mut items, selection_paths) => {
+                let Some(rescan_pending) = self.tab.scans.finish(request) else {
+                    return Task::none();
+                };
+
                 if location == self.tab.location {
                     // Filter
                     if let Some(filter_i) = self.filter_selected
@@ -1870,20 +1896,30 @@ impl Application for App {
                     }
 
                     // Reset focus on location change
-                    if self.search_get().is_some() {
-                        return widget::text_input::focus(self.search_id.clone());
-                    }
-                    if let DialogKind::SaveFile { filename } = &self.flags.kind {
-                        return Task::batch([
+                    let focus_task = if self.search_get().is_some() {
+                        widget::text_input::focus(self.search_id.clone())
+                    } else if let DialogKind::SaveFile { filename } = &self.flags.kind {
+                        Task::batch([
                             widget::text_input::focus(self.filename_id.clone()),
                             widget::text_input::select_until_last(
                                 self.filename_id.clone(),
                                 filename,
                                 '.',
                             ),
-                        ]);
-                    }
-                    return widget::text_input::focus(self.filename_id.clone());
+                        ])
+                    } else {
+                        widget::text_input::focus(self.filename_id.clone())
+                    };
+
+                    return if rescan_pending {
+                        Task::batch([focus_task, self.rescan_tab_if_idle()])
+                    } else {
+                        focus_task
+                    };
+                }
+
+                if rescan_pending {
+                    return self.rescan_tab_if_idle();
                 }
             }
             Message::TabView(view) => {
@@ -2123,5 +2159,89 @@ impl Application for App {
         }));
 
         Subscription::batch(subscriptions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use tempfile::TempDir;
+
+    use super::{App, Application, Config, Core, DialogKind, Flags, Message, window};
+
+    fn save_dialog(dir: &TempDir, filename: &str) -> App {
+        let window_id = window::Id::unique();
+        let mut core = Core::default();
+        core.set_main_window_id(Some(window_id));
+        let (app, _task) = App::init(
+            core,
+            Flags {
+                kind: DialogKind::SaveFile {
+                    filename: filename.to_string(),
+                },
+                path_opt: Some(dir.path().to_path_buf()),
+                window_id,
+                config_handler: None,
+                config: Config::default(),
+                state_handler: None,
+                state: crate::config::State::default(),
+            },
+        );
+        app
+    }
+
+    async fn task_result(task: super::Task<Message>) -> Message {
+        use cosmic::iced::futures::StreamExt;
+        let mut stream = cosmic::iced::runtime::task::into_stream(task).unwrap();
+        match stream.next().await.unwrap() {
+            cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) => message,
+            _ => panic!("the task must return an application message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn review_an_old_picker_scan_cannot_replace_a_newer_listing() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "new.txt");
+        let old_result = task_result(app.rescan_tab(None)).await;
+        std::fs::write(dir.path().join("new.txt"), b"new")?;
+        let new_result = task_result(app.rescan_tab(None)).await;
+        let _ = app.update(new_result);
+        let _ = app.update(old_result);
+        assert_eq!(app.tab.items_opt().unwrap().len(), 1);
+        assert_eq!(app.tab.items_opt().unwrap()[0].name, "new.txt");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_picker_direct_scan_cannot_release_a_newer_watcher_scan() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "new.txt");
+        let initial = task_result(app.rescan_tab(None)).await;
+        let _ = app.update(initial);
+        let old = task_result(app.rescan_tab_if_idle()).await;
+        std::fs::write(dir.path().join("new.txt"), b"new")?;
+        let current = task_result(app.rescan_tab(None)).await;
+        assert_eq!(app.rescan_tab_if_idle().units(), 0);
+        let _ = app.update(current);
+        let _ = app.update(old);
+        assert_eq!(app.rescan_tab_if_idle().units(), 0);
+        assert_eq!(app.tab.items_opt().unwrap()[0].name, "new.txt");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_picker_scan_releases_only_its_own_request() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "new.txt");
+        let old = app.tab.scans.begin();
+        let current = app.tab.scans.begin();
+        let _ = app.update(Message::TabRescanFailed(old));
+        assert!(app.tab.scans.defer_if_running());
+        let _ = app.update(Message::TabRescanFailed(current));
+        assert_eq!(app.tab.scans.finish(current), None);
+        assert!(app.tab.scans.defer_if_running());
+        Ok(())
     }
 }
