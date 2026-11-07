@@ -360,6 +360,7 @@ pub enum Command {
     Delete(Vec<PathBuf>),
     DropFiles(PathBuf, ClipboardPaste),
     ClearRecents,
+    EditLocationSubmit(EditLocation, bool),
     EmptyTrash,
     #[cfg(feature = "desktop")]
     ExecEntryAction(String),
@@ -419,6 +420,7 @@ pub enum Message {
     ItemRight,
     ItemUp,
     Location(Location),
+    LocationSelect(Location, Vec<PathBuf>),
     LocationUp,
     Open(Option<PathBuf>),
     Reload,
@@ -1407,6 +1409,10 @@ impl Tab {
     pub fn update(&mut self, message: Message, modifiers: Modifiers) -> Vec<Command> {
         let mut commands = Vec::new();
         let mut cd = None;
+        // Paths to select once `cd` finishes navigating, set only by Message::LocationSelect (a
+        // typed/completed file redirected to its parent off-thread). When None, the cd block
+        // selects the directory navigated away from.
+        let mut cd_selection: Option<Vec<PathBuf>> = None;
         let mut history_i_opt = None;
         let mod_ctrl = modifiers.contains(Modifiers::CTRL) && self.mode.multiple();
         let mod_shift = modifiers.contains(Modifiers::SHIFT) && self.mode.multiple();
@@ -1749,7 +1755,10 @@ impl Tab {
                     && !matches!(edit_location.location, Location::Network(..))
                 {
                     edit_location.selected = Some(selected);
-                    cd = edit_location.resolve();
+                    // The file-vs-directory decision (a completed file opens its parent with it
+                    // selected) stats the path, which blocks on slow mounts; resolve it off-thread
+                    // via Command::EditLocationSubmit.
+                    commands.push(Command::EditLocationSubmit(edit_location, false));
                 }
             }
             Message::EditLocationEnable => {
@@ -1782,24 +1791,10 @@ impl Tab {
                         }
                     }
 
-                    // Select first completion if current location does not exist
-                    if edit_location.selected.is_none()
-                        && edit_location
-                            .completions
-                            .as_ref()
-                            .is_some_and(|completions| !completions.is_empty())
-                        && edit_location
-                            .location
-                            .path_opt()
-                            .is_some_and(|path| !path.exists())
-                    {
-                        edit_location.selected = Some(0);
-                    }
-
-                    cd = edit_location.resolve();
-                    if cd.is_none() && typed_uri {
-                        cd = Some(edit_location.location);
-                    }
+                    // Picking a completion, resolving it and the file-vs-directory check all
+                    // stat the path; defer them off-thread via Command::EditLocationSubmit so
+                    // pressing Enter on a path on a slow mount does not block the GUI thread.
+                    commands.push(Command::EditLocationSubmit(edit_location, typed_uri));
                 }
             }
             Message::EditLocationTab => {
@@ -2198,6 +2193,13 @@ impl Tab {
                         cd = Some(location);
                     }
                 }
+            }
+            Message::LocationSelect(location, paths) => {
+                // A typed/completed file path, resolved off-thread to its parent directory plus the
+                // file to select. The parent is a directory, so navigating it needs no GUI-thread
+                // stat.
+                cd = Some(location);
+                cd_selection = Some(paths);
             }
             Message::LocationUp => {
                 // Sets location to the path's parent
@@ -2844,30 +2846,19 @@ impl Tab {
                     _ => {}
                 }
             } else {
-                // Select parent if location is not directory
-                let mut selected_paths = None;
-                if let Some(path) = location.path_opt()
-                    && !path.is_dir()
-                    && let Some(parent) = path.parent()
-                {
-                    selected_paths = Some(vec![path.clone()]);
-                    location = location.with_path(parent.to_path_buf());
-                }
-                if location != self.location || selected_paths.is_some() {
-                    if location.path_opt().is_none_or(|path| path.is_dir()) {
-                        if selected_paths.is_none() {
-                            selected_paths =
-                                self.location.path_opt().map(|path| vec![path.clone()]);
-                        }
-                        self.change_location(&location, history_i_opt);
-                        commands.push(Command::ChangeLocation(
-                            self.title(),
-                            location,
-                            selected_paths,
-                        ));
-                    } else {
-                        log::warn!("tried to cd to {location:?} which is not a directory");
-                    }
+                // `cd` always holds a directory: its senders decide file-vs-directory from cached
+                // metadata or an off-thread stat (a typed/completed file arrives redirected to its
+                // parent via Message::LocationSelect, which carries the file to select). Stat-ing
+                // here would freeze the GUI on slow mounts.
+                if location != self.location || cd_selection.is_some() {
+                    let selected_paths = cd_selection
+                        .or_else(|| self.location.path_opt().map(|path| vec![path.clone()]));
+                    self.change_location(&location, history_i_opt);
+                    commands.push(Command::ChangeLocation(
+                        self.title(),
+                        location,
+                        selected_paths,
+                    ));
                 }
             }
         }
@@ -5512,7 +5503,9 @@ mod tests {
     use cosmic::iced::widget::scrollable::AbsoluteOffset;
     use cosmic::iced::{Point, Rectangle, Size, Subscription};
 
-    use super::{EntryRefresh, HeadingOptions, Instant, Message, Tab, respond_to_scroll_direction};
+    use super::{
+        Command, EntryRefresh, HeadingOptions, Instant, Message, Tab, respond_to_scroll_direction,
+    };
     use crate::app::test_utils::{
         NAME_LEN, NUM_DIRS, NUM_FILES, NUM_HIDDEN, NUM_NESTED, assert_eq_tab_path,
         assert_eq_tab_path_contents, empty_fs, eq_path_item, filter_dirs, read_dir_sorted,
@@ -5521,7 +5514,7 @@ mod tests {
     use crate::config::{IconSizes, TabConfig, ThumbCfg};
     use crate::item::{
         ChecksumState, DirSize, FileChecksums, Item, ItemMetadata, ItemThumbnail,
-        TEXT_PREVIEW_MAX_BYTES, item_from_entry, item_from_path,
+        TEXT_PREVIEW_MAX_BYTES, folder_name, item_from_entry, item_from_path,
     };
     use crate::location::{Location, SearchLocation};
     use crate::scan::scan_path;
@@ -5768,6 +5761,122 @@ mod tests {
         assert_eq!(tab.scans.finish(next), Some(false));
 
         Ok(())
+    }
+
+    #[test]
+    fn folder_name_derives_last_path_component() {
+        // No '.' or '_' in the component, so Item::display_name leaves it untouched.
+        let (name, found_home) = folder_name("/srv/data/Projects");
+        assert_eq!(name, "Projects");
+        assert!(!found_home);
+    }
+
+    #[test]
+    fn folder_name_does_not_stat_the_path() {
+        let missing = "/this/path/does/not/exist/Documents";
+        assert!(!Path::new(missing).exists());
+
+        let (name, found_home) = folder_name(missing);
+        assert_eq!(name, "Documents");
+        assert!(!found_home);
+    }
+
+    #[test]
+    fn folder_name_flags_the_home_directory() {
+        let home = crate::home_dir();
+        // The "/" fallback (no resolvable home) has no final component to match; only assert
+        // the flag when home resolves to a named directory.
+        if home.file_name().is_some() {
+            let (_name, found_home) = folder_name(&home);
+            assert!(found_home);
+        }
+    }
+
+    #[test]
+    fn normalize_preserves_parent_segments_without_filesystem_resolution() {
+        let normalized =
+            Location::Path(PathBuf::from("/no/such/dir/../sibling/./leaf")).normalize();
+        assert_eq!(
+            normalized.path_opt().unwrap(),
+            Path::new("/no/such/dir/../sibling/leaf")
+        );
+    }
+
+    #[test]
+    fn normalize_marks_directories_with_a_trailing_separator() {
+        // The trailing separator keeps a location's string form (the persisted per-folder
+        // sort-setting key) stable, and is added without a stat.
+        let normalized = Location::Path(PathBuf::from("/no/such/dir")).normalize();
+        assert_eq!(normalized.to_string(), "/no/such/dir/");
+    }
+
+    #[test]
+    fn tab_location_select_navigates_and_carries_selection() -> io::Result<()> {
+        // A typed/completed file resolves off-thread to (parent dir, file) and arrives as
+        // Message::LocationSelect. The tab must navigate to the directory with no GUI-thread stat
+        // and forward the file to select once the off-thread rescan completes.
+        let fs = simple_fs(NUM_FILES, NUM_NESTED, NUM_DIRS, NUM_NESTED, NAME_LEN)?;
+        let path = fs.path();
+        let dir = filter_dirs(path)?
+            .next()
+            .expect("temp directory should have at least one directory");
+        let file = dir.join("selected.txt");
+        fs::write(&file, b"x")?;
+
+        let mut tab = Tab::new(
+            Location::Path(path.to_owned()),
+            TabConfig::default(),
+            ThumbCfg::default(),
+            None,
+            widget::Id::unique(),
+            None,
+        );
+
+        let commands = tab.update(
+            Message::LocationSelect(Location::Path(dir.clone()), vec![file.clone()]),
+            Modifiers::empty(),
+        );
+
+        assert_eq_tab_path(&tab, &dir);
+        let carries_selection = commands.iter().any(|command| {
+            matches!(command, Command::ChangeLocation(_, _, Some(selection)) if *selection == vec![file.clone()])
+        });
+        assert!(
+            carries_selection,
+            "LocationSelect should forward the file selection to Command::ChangeLocation"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalize_keeps_symlinks_unresolved() -> io::Result<()> {
+        // normalize() must not resolve symlinks: doing so would stat-walk every component and
+        // block the GUI thread. The kernel follows the link when the directory is read, so
+        // navigation is unaffected and the clicked path is preserved.
+        let temp = TempDir::new()?;
+        let real = temp.path().join("real");
+        fs::create_dir(&real)?;
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link)?;
+
+        let normalized = Location::Path(link.clone()).normalize();
+        // Path equality ignores the trailing separator, so this asserts the link was NOT
+        // rewritten to `real`.
+        assert_eq!(normalized.path_opt().unwrap(), link.as_path());
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_expands_a_leading_tilde() {
+        let home = dirs::home_dir().expect("a home directory");
+
+        let normalized = Location::Path(PathBuf::from("~/Documents")).normalize();
+
+        assert_eq!(normalized.path_opt().unwrap(), &home.join("Documents"));
+
+        let up = Location::Path(PathBuf::from("~/..")).normalize();
+        assert_eq!(up.path_opt().unwrap(), &home.join(".."));
     }
 
     #[test]
@@ -6909,6 +7018,45 @@ mod tests {
             "a vanished entry should ask the caller for a rescan"
         );
         Ok(())
+    }
+
+    /// Submit `typed` through the location bar and return what the off-thread resolver is
+    /// handed: the location to resolve, and whether the text was a URI.
+    fn submitted_location(tab: &mut Tab, typed: &str) -> (Location, bool) {
+        tab.edit_location = Some(Location::Path(PathBuf::from(typed)).into());
+        tab.update(Message::EditLocationSubmit, Modifiers::empty())
+            .into_iter()
+            .find_map(|command| match command {
+                Command::EditLocationSubmit(edit_location, typed_uri) => {
+                    Some((edit_location.location, typed_uri))
+                }
+                _ => None,
+            })
+            .expect("submitting the location bar should defer resolution off-thread")
+    }
+
+    #[test]
+    fn a_typed_uri_submits_as_a_network_location() {
+        let mut tab = tab_at(Location::Path(PathBuf::from("/tmp")));
+
+        let (location, typed_uri) = submitted_location(&mut tab, "sftp://host/share");
+
+        assert!(matches!(location, Location::Network(..)));
+        assert!(
+            typed_uri,
+            "a URI has nothing on disk to resolve against, so the resolver has to be told to \
+             navigate to it as entered"
+        );
+    }
+
+    #[test]
+    fn a_typed_path_submits_as_a_path() {
+        let mut tab = tab_at(Location::Path(PathBuf::from("/tmp")));
+
+        let (location, typed_uri) = submitted_location(&mut tab, "/tmp/reports");
+
+        assert!(matches!(location, Location::Path(..)));
+        assert!(!typed_uri);
     }
 
     fn entry_work_id(tab: &Tab, path: &Path) -> u64 {

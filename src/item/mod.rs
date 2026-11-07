@@ -136,12 +136,11 @@ pub fn folder_name<P: AsRef<Path>>(path: P) -> (String, bool) {
                 found_home = true;
                 fl!("home")
             } else {
-                match (get_filename_from_path(path), fs::metadata(path)) {
-                    (Ok(name), Ok(metadata)) => {
-                        let is_gvfs = FsKind::new(&metadata) == FsKind::Gvfs;
-                        display_name_for_file(path, &name, is_gvfs, false)
-                    }
-                    _ => name.to_string_lossy().into_owned(),
+                // The name comes from the path component alone: every tab title and breadcrumb
+                // calls this on the GUI thread, where a stat blocks on slow mounts.
+                match get_filename_from_path(path) {
+                    Ok(name) => display_name_for_file(path, &name, false, false),
+                    Err(_) => name.to_string_lossy().into_owned(),
                 }
             }
         }

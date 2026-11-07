@@ -1,6 +1,6 @@
-use std::path::{self, PathBuf};
+use std::fmt;
+use std::path::{self, Path, PathBuf};
 use std::time::Instant;
-use std::{fmt, fs};
 
 use crate::config::{DesktopConfig, IconSizes};
 use crate::fl;
@@ -8,6 +8,12 @@ use crate::item::{Item, folder_name, item_from_path};
 use crate::mounter::MOUNTERS;
 use crate::scan::{scan_desktop, scan_network, scan_path, scan_recents};
 use crate::trash::{Trash, TrashExt};
+
+fn lexically_normalize(path: &Path) -> PathBuf {
+    // Parent components must survive until filesystem resolution: the previous component
+    // can be a symlink whose target has a different parent.
+    path.components().collect()
+}
 
 #[derive(Clone, Debug)]
 pub struct EditLocation {
@@ -111,15 +117,13 @@ impl Location {
             } else {
                 self.clone()
             }
-        } else if let Some(mut path) = self.path_opt().cloned() {
-            // Canonicalize path, if possible
-            if let Ok(canonical) = fs::canonicalize(&path) {
-                path = canonical;
-            }
-            // Add trailing slash if location is a directory
-            if path.is_dir() {
-                path.push("");
-            }
+        } else if let Some(path) = self.path_opt() {
+            // Normalization is lexical: canonicalizing would stat every path component and
+            // symlink, blocking the GUI thread on slow mounts. The trailing separator is
+            // unconditional because a location addresses a directory, and its string form is the
+            // persisted per-folder sort-setting key.
+            let mut path = lexically_normalize(&Self::expand_tilde(path.clone()));
+            path.push("");
             self.with_path(path)
         } else {
             self.clone()

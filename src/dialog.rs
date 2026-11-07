@@ -468,6 +468,10 @@ enum Message {
     ModifiersChanged(Modifiers),
     MounterItems(MounterKey, MounterItems),
     Mouse(window::Id, mouse::Button),
+    NavigationResolved {
+        request: widget::Id,
+        target: Option<(Location, Option<PathBuf>)>,
+    },
     NewFolder,
     NotifyEvents(Vec<DebouncedEvent>),
     NotifyWatcher(WatcherWrapper),
@@ -562,6 +566,7 @@ struct App {
     modifiers: Modifiers,
     mounter_items: FxHashMap<MounterKey, MounterItems>,
     nav_model: segmented_button::SingleSelectModel,
+    navigation: crate::navigation::PendingRequest,
     result_opt: Option<DialogResult>,
     search_id: widget::Id,
     tab: Tab,
@@ -793,6 +798,7 @@ impl App {
     }
 
     fn search_set(&mut self, term_opt: Option<String>) -> Task<Message> {
+        self.navigation.invalidate();
         let location_opt = match term_opt {
             Some(term) => {
                 let search_location = if let Some(path) = self.tab.location.path_opt() {
@@ -1068,6 +1074,7 @@ impl Application for App {
             modifiers: Modifiers::empty(),
             mounter_items: FxHashMap::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
+            navigation: crate::navigation::PendingRequest::default(),
             result_opt: None,
             search_id: widget::Id::new("Dialog File Search"),
             tab,
@@ -1365,6 +1372,7 @@ impl Application for App {
         match message {
             Message::None => {}
             Message::Cancel => {
+                self.navigation.invalidate();
                 self.result_opt = Some(DialogResult::Cancel);
                 return window::close(self.flags.window_id);
             }
@@ -1567,6 +1575,7 @@ impl Application for App {
                 }
             }
             Message::NewFolder => {
+                self.navigation.invalidate();
                 if let Some(path) = self.tab.location.path_opt() {
                     self.dialog_pages.push_back(DialogPage::NewFolder {
                         parent: path.clone(),
@@ -1739,7 +1748,25 @@ impl Application for App {
             Message::SearchInput(input) => {
                 return self.search_set(Some(input));
             }
+            Message::NavigationResolved { request, target } => {
+                if !self.navigation.finish(&request) || self.result_opt.is_some() {
+                    return Task::none();
+                }
+                if let Some((location, selected)) = target {
+                    let message = match selected {
+                        Some(path) => tab::Message::LocationSelect(location, vec![path]),
+                        None => tab::Message::Location(location),
+                    };
+                    return self.update(Message::TabMessage(message));
+                }
+            }
             Message::TabMessage(tab_message) => {
+                if matches!(
+                    &tab_message,
+                    tab::Message::EditLocation(_) | tab::Message::EditLocationEnable
+                ) {
+                    self.navigation.invalidate();
+                }
                 let click_i_opt = match tab_message {
                     tab::Message::Click(click_i_opt) => click_i_opt,
                     _ => None,
@@ -1765,10 +1792,26 @@ impl Application for App {
                             commands.push(self.update(Message::from(action.message())));
                         }
                         tab::Command::ChangeLocation(_tab_title, _tab_path, selection_paths) => {
+                            self.navigation.invalidate();
                             commands.push(Task::batch([
                                 self.update_watcher(),
                                 self.rescan_tab(selection_paths),
                             ]));
+                        }
+                        tab::Command::EditLocationSubmit(edit_location, typed_uri) => {
+                            let request = self.navigation.begin();
+                            commands.push(Task::future(async move {
+                                let target = tokio::task::spawn_blocking(move || {
+                                    crate::navigation::resolve_edit_location(
+                                        edit_location,
+                                        typed_uri,
+                                    )
+                                })
+                                .await
+                                .ok()
+                                .flatten();
+                                cosmic::action::app(Message::NavigationResolved { request, target })
+                            }));
                         }
                         tab::Command::Surface(action) => {
                             let action = action.map(Message::TabMessage);
@@ -2242,6 +2285,50 @@ mod tests {
         let _ = app.update(Message::TabRescanFailed(current));
         assert_eq!(app.tab.scans.finish(current), None);
         assert!(app.tab.scans.defer_if_running());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn submitting_a_picker_location_opens_the_requested_directory() -> io::Result<()> {
+        use crate::location::Location;
+        use crate::tab;
+        use cosmic::iced::futures::StreamExt;
+
+        let dir = TempDir::new()?;
+        let target = dir.path().join("nested");
+        std::fs::create_dir(&target)?;
+        let mut app = save_dialog(&dir, "report.txt");
+        app.tab.edit_location = Some(Location::Path(target.clone()).into());
+        let task = app.update(Message::TabMessage(tab::Message::EditLocationSubmit));
+        let mut stream = cosmic::iced::runtime::task::into_stream(task)
+            .expect("submitting a location should dispatch its resolver");
+        let action = stream
+            .next()
+            .await
+            .expect("the resolver should return a result");
+        let cosmic::iced::runtime::Action::Output(cosmic::Action::App(message)) = action else {
+            panic!("expected the resolved navigation result");
+        };
+        let _ = app.update(message);
+        assert_eq!(app.tab.location.path_opt(), Some(&target));
+        Ok(())
+    }
+
+    #[test]
+    fn an_older_picker_navigation_cannot_replace_a_newer_request() -> io::Result<()> {
+        let dir = TempDir::new()?;
+        let mut app = save_dialog(&dir, "report.txt");
+        let original = app.tab.location.clone();
+        let stale = app.navigation.begin();
+        let _current = app.navigation.begin();
+        let _ = app.update(Message::NavigationResolved {
+            request: stale,
+            target: Some((
+                crate::location::Location::Path(dir.path().join("old")),
+                None,
+            )),
+        });
+        assert_eq!(app.tab.location, original);
         Ok(())
     }
 }
