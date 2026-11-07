@@ -478,6 +478,7 @@ pub enum Message {
     LaunchUrl(String),
     MaybeExit,
     PersistenceFlushed,
+    MimeAppCacheLoaded(widget::Id, MimeAppCache),
     ModifiersChanged(window::Id, Modifiers),
     MounterItems(MounterKey, MounterItems),
     MountResult(MounterKey, MounterItem, Result<bool, String>),
@@ -871,6 +872,7 @@ pub struct App {
     nav_context_info: Option<(segmented_button::Entity, NavContextInfo)>,
     nav_context_request: crate::navigation::PendingRequest,
     navigation: crate::navigation::PendingRequest,
+    mime_cache_request: crate::navigation::PendingRequest,
     nav_model: segmented_button::SingleSelectModel,
     tab_model: segmented_button::Model<segmented_button::SingleSelect>,
     config_handler: Option<cosmic_config::Config>,
@@ -1917,6 +1919,22 @@ impl App {
         })
     }
 
+    /// Rebuild the mime-app cache off-thread. Scanning every desktop entry (and resolving the
+    /// default terminal) blocks, so it must never run inline in `update`/`view`/`init`;
+    /// [`Message::MimeAppCacheLoaded`] swaps in the freshly built cache.
+    fn refresh_mime_app_cache(&mut self) -> Task<Message> {
+        let request = self.mime_cache_request.begin();
+        Task::future(async move {
+            match tokio::task::spawn_blocking(MimeAppCache::new).await {
+                Ok(cache) => cosmic::action::app(Message::MimeAppCacheLoaded(request, cache)),
+                Err(err) => {
+                    log::warn!("failed to reload mime app cache: {err}");
+                    cosmic::action::none()
+                }
+            }
+        })
+    }
+
     fn write_pasted_file(
         to: PathBuf,
         base_name: String,
@@ -2834,6 +2852,7 @@ impl Application for App {
             nav_context_info: None,
             nav_context_request: crate::navigation::PendingRequest::default(),
             navigation: crate::navigation::PendingRequest::default(),
+            mime_cache_request: crate::navigation::PendingRequest::default(),
             nav_model: segmented_button::ModelBuilder::default().build(),
             tab_model: segmented_button::ModelBuilder::default().build(),
             config_handler: flags.config_handler,
@@ -2848,7 +2867,8 @@ impl Application for App {
             dialog_text_input: widget::Id::new("Dialog Text Input"),
             key_binds,
             margin: FxHashMap::default(),
-            mime_app_cache: MimeAppCache::new(),
+            // Populated off-thread so scanning every desktop entry never blocks startup.
+            mime_app_cache: MimeAppCache::empty(),
             modifiers: Modifiers::empty(),
             mounter_items: FxHashMap::default(),
             must_save_sort_names: false,
@@ -2892,6 +2912,8 @@ impl Application for App {
             app.update(Message::CheckClipboard),
             // Compute the trash empty/full state off-thread so the nav icon never blocks init.
             App::refresh_trash_state(),
+            // Scan desktop entries off-thread so the mime-app cache never blocks init.
+            app.refresh_mime_app_cache(),
         ];
 
         // Resolving each launch location stats it (a file argument opens its parent with the
@@ -4481,7 +4503,13 @@ impl Application for App {
                 return self.operation(Operation::RemoveFromRecents { paths });
             }
             Message::ReloadMimeAppCache => {
-                self.mime_app_cache.reload();
+                return self.refresh_mime_app_cache();
+            }
+            Message::MimeAppCacheLoaded(request, cache) => {
+                if !self.mime_cache_request.finish(&request) {
+                    return Task::none();
+                }
+                self.mime_app_cache = cache;
             }
             Message::RescanRecents => {
                 return self.rescan_recents();
@@ -4924,6 +4952,7 @@ impl Application for App {
                             self.set_show_context(true);
                         }
                         tab::Command::SetOpenWith(mime, id) => {
+                            self.mime_cache_request.invalidate();
                             let completion = crate::mime_app::queue_default(mime, id);
                             commands.push(Task::future(async move {
                                 match completion.await {
@@ -8478,6 +8507,26 @@ mod tests {
                 .location,
             crate::location::Location::Trash
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_older_mime_reload_cannot_consume_the_current_request() -> std::io::Result<()> {
+        use cosmic::Application;
+        let dir = tempfile::TempDir::new()?;
+        let mut app = test_app(&dir);
+        let stale = app.mime_cache_request.begin();
+        let current = app.mime_cache_request.begin();
+        let _ = app.update(super::Message::MimeAppCacheLoaded(
+            stale,
+            crate::mime_app::MimeAppCache::empty(),
+        ));
+        assert!(app.mime_cache_request.is_current(&current));
+        let _ = app.update(super::Message::MimeAppCacheLoaded(
+            current.clone(),
+            crate::mime_app::MimeAppCache::empty(),
+        ));
+        assert!(!app.mime_cache_request.is_current(&current));
         Ok(())
     }
 

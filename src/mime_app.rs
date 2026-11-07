@@ -233,6 +233,7 @@ impl AsRef<str> for MimeApp {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct MimeAppCache {
     apps: Vec<Arc<MimeApp>>,
     cache: FxHashMap<Mime, Vec<Arc<MimeApp>>>,
@@ -240,12 +241,18 @@ pub struct MimeAppCache {
 }
 
 impl MimeAppCache {
-    pub fn new() -> Self {
-        let mut mime_app_cache = Self {
+    /// An empty cache that has not scanned desktop entries yet. Cheap and non-blocking, so it
+    /// can be built on the GUI thread while [`MimeAppCache::new`] runs in a background task.
+    pub fn empty() -> Self {
+        Self {
             apps: Vec::new(),
             cache: FxHashMap::default(),
             terminals: Vec::new(),
-        };
+        }
+    }
+
+    pub fn new() -> Self {
+        let mut mime_app_cache = Self::empty();
         mime_app_cache.reload();
         mime_app_cache
     }
