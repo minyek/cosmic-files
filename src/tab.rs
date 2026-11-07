@@ -769,10 +769,6 @@ impl Tab {
         self.items_opt.as_ref()
     }
 
-    pub const fn items_opt_mut(&mut self) -> Option<&mut Vec<Item>> {
-        self.items_opt.as_mut()
-    }
-
     pub fn set_items(&mut self, mut items: Vec<Item>) {
         let highlighted = self
             .items_opt
