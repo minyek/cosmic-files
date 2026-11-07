@@ -1,5 +1,4 @@
 use cosmic::widget;
-use image::ImageReader;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -151,31 +150,6 @@ pub fn should_use_dedicated_worker(
         );
         // Use parallel worker pool with shared budget
         (false, total_budget_mb, parallel_workers)
-    }
-}
-
-/// Get the dimensions of an image without fully decoding it
-pub fn get_image_dimensions(path: &Path) -> Option<(u32, u32)> {
-    match ImageReader::open(path) {
-        Ok(reader) => match reader.into_dimensions() {
-            Ok((width, height)) => {
-                log::debug!(
-                    "Image dimensions: {}x{} for {}",
-                    width,
-                    height,
-                    path.display()
-                );
-                Some((width, height))
-            }
-            Err(e) => {
-                log::warn!("Failed to get dimensions for {}: {}", path.display(), e);
-                None
-            }
-        },
-        Err(e) => {
-            log::warn!("Failed to open image reader for {}: {}", path.display(), e);
-            None
-        }
     }
 }
 
@@ -416,6 +390,14 @@ impl LargeImageManager {
         true
     }
 
+    pub fn invalidate(&mut self, path: &Path) {
+        self.decoding_images.remove(path);
+        self.decoded_images.remove(path);
+        self.decoded_display_sizes.remove(path);
+        self.decode_errors.remove(path);
+        self.decode_generations.remove(path);
+    }
+
     pub fn store_error(&mut self, path: PathBuf, error: String) {
         self.decode_errors.insert(path.clone(), error);
         self.decoding_images.remove(&path);
@@ -498,6 +480,7 @@ impl LargeImageManager {
         &mut self,
         path: &PathBuf,
         display_dimensions: Option<(u32, u32)>,
+        original_dimensions: (u32, u32),
     ) -> (bool, Option<(u32, u32)>, u64) {
         self.clear_error(path);
         let is_currently_decoding = self.is_decoding(path);
@@ -514,10 +497,7 @@ impl LargeImageManager {
             return (false, None, generation);
         }
 
-        let Some((width, height)) = get_image_dimensions(path) else {
-            self.store_error(path.clone(), "Failed to read image dimensions".to_string());
-            return (false, None, 0);
-        };
+        let (width, height) = original_dimensions;
 
         let target_dimensions = if let Some((display_w, display_h)) = display_dimensions {
             calculate_target_dimensions(width, height, display_w, display_h)

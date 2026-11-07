@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
+use std::time::SystemTime;
 
 use crate::config::IconSizes;
 use crate::format_time::{date_time_formatter, format_time, time_formatter};
@@ -30,6 +31,7 @@ mod thumbnail;
 pub use self::fs_kind::FsKind;
 pub use self::metadata::ItemMetadata;
 pub use self::state::ItemState;
+pub(crate) use self::state::next_work_id;
 pub use self::thumbnail::ItemThumbnail;
 
 static SPECIAL_DIRS: LazyLock<FxHashMap<PathBuf, &'static str>> = LazyLock::new(|| {
@@ -300,7 +302,6 @@ pub fn item_from_gvfs_info(path: PathBuf, file_info: gio::FileInfo, sizes: IconS
     let mut dir_size = DirSize::NotDirectory;
     if is_dir && !remote {
         dir_size = DirSize::Calculating(Controller::default());
-        //TODO: calculate children in the background (and make it cancellable?)
         match fs::read_dir(&path) {
             Ok(entries) => {
                 children_opt = Some(entries.count());
@@ -414,20 +415,11 @@ pub fn item_from_entry(
             }
         };
 
-    let mut children_opt = None;
-    let mut dir_size = DirSize::NotDirectory;
-    if metadata.is_dir() && !remote {
-        dir_size = DirSize::Calculating(Controller::default());
-        //TODO: calculate children in the background (and make it cancellable?)
-        match fs::read_dir(&path) {
-            Ok(entries) => {
-                children_opt = Some(entries.count());
-            }
-            Err(err) => {
-                log::warn!("failed to read directory {}: {}", path.display(), err);
-            }
-        }
-    }
+    let dir_size = if metadata.is_dir() && !remote {
+        DirSize::Calculating(Controller::default())
+    } else {
+        DirSize::NotDirectory
+    };
 
     let display_name = display_name_for_file(&path, &name, is_gvfs, is_desktop);
 
@@ -437,7 +429,9 @@ pub fn item_from_entry(
         is_mount_point: false,
         metadata: ItemMetadata::Path {
             metadata,
-            children_opt,
+            // Counting children costs one directory read per entry, almost all of them off
+            // screen; the count is filled in for the rows that are displayed.
+            children_opt: None,
         },
         hidden,
         location_opt: Some(Location::Path(path)),
@@ -485,6 +479,9 @@ pub struct FileChecksums {
     pub sha256: String,
 }
 
+/// Identifies an entry's content, so a rescan can tell an unchanged entry from a rewritten one.
+pub(crate) type ItemFingerprint = (Option<SystemTime>, Option<u64>);
+
 #[derive(Clone, Debug)]
 pub struct Item {
     pub name: String,
@@ -504,6 +501,10 @@ pub struct Item {
 }
 
 impl Item {
+    pub(crate) fn fingerprint(&self) -> ItemFingerprint {
+        (self.metadata.modified(), self.metadata.file_size())
+    }
+
     pub(crate) fn display_name(name: &str) -> String {
         // In order to wrap at periods and underscores, add a zero width space after each one
         name.replace('.', ".\u{200B}").replace('_', "_\u{200B}")
@@ -768,10 +769,7 @@ impl Item {
             }
         }
 
-        if let Some(path) = self.path_opt()
-            && let Ok(img) = image::image_dimensions(path)
-        {
-            let (width, height) = img;
+        if let Some((width, height)) = self.image_dimensions {
             details = details.push(widget::text::body(format!("{width}x{height}")));
         }
         column = column.push(details);

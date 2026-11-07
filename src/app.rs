@@ -39,6 +39,7 @@ use cosmic::widget::segmented_button::{self, Entity, ReorderEvent};
 use cosmic::widget::{self, icon, settings, space};
 use cosmic::{Application, ApplicationExt, Element, cosmic_theme, executor, surface, theme};
 use mime_guess::Mime;
+use notify_debouncer_full::notify::event::{EventKind, ModifyKind};
 use notify_debouncer_full::notify::{self, RecommendedWatcher};
 use notify_debouncer_full::{DebouncedEvent, Debouncer, RecommendedCache, new_debouncer};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -109,6 +110,52 @@ static MOUNT_ERROR_TRY_AGAIN_BUTTON_ID: LazyLock<widget::Id> =
 
 pub(crate) static REPLACE_BUTTON_ID: LazyLock<widget::Id> =
     LazyLock::new(|| widget::Id::new("replace-button"));
+
+/// What a batch of watcher events did to a tab's listing.
+enum ListingChange {
+    /// Entries were added, removed or renamed: the listing has to be read again.
+    Structural,
+    /// Listed entries were written to: only their own metadata is out of date.
+    Entries(Vec<PathBuf>),
+    /// Nothing the tab displays changed.
+    None,
+}
+
+/// Work out what a debounced batch of watcher events means for the tab listing `dir`.
+fn classify_events(events: &[DebouncedEvent], dir: &Path) -> ListingChange {
+    let mut written = Vec::new();
+    for event in events {
+        let touches_dir = event.paths.iter().any(|path| path.starts_with(dir));
+        if !touches_dir {
+            continue;
+        }
+        match event.kind {
+            // Opening or reading a file leaves the listing alone.
+            EventKind::Access(_) => {}
+            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {
+                if event.paths.iter().any(|path| {
+                    path.parent() == Some(dir)
+                        && path.file_name().is_some_and(|name| name == ".hidden")
+                }) {
+                    return ListingChange::Structural;
+                }
+                written.extend(
+                    event
+                        .paths
+                        .iter()
+                        .filter(|path| path.parent() == Some(dir))
+                        .cloned(),
+                );
+            }
+            _ => return ListingChange::Structural,
+        }
+    }
+    if written.is_empty() {
+        ListingChange::None
+    } else {
+        ListingChange::Entries(written)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Mode {
@@ -446,6 +493,7 @@ pub enum Message {
     TabConfig(TabConfig),
     TabMessage(Option<Entity>, tab::Message),
     TabNew,
+    TabRefreshEntries(Entity, Location, Vec<tab::EntryRefresh>),
     TabRescan(
         Entity,
         u64,
@@ -1544,6 +1592,44 @@ impl App {
             return None;
         }
         Some(self.update_tab(entity, location, None))
+    }
+
+    fn refresh_tab_entries(
+        &mut self,
+        entity: Entity,
+        paths: Vec<PathBuf>,
+    ) -> Option<Task<Message>> {
+        let tab = self.tab_model.data_mut::<Tab>(entity)?;
+        let location = tab.location.clone();
+        let sizes = tab.config.icon_sizes;
+        let requests = tab.refresh_requests(paths);
+        Some(Task::future(async move {
+            let refreshed = tokio::task::spawn_blocking(move || {
+                requests
+                    .into_iter()
+                    .map(|(path, work_id)| {
+                        let item_opt = fs::metadata(&path).ok().and_then(|metadata| {
+                            let name = path.file_name()?.to_str()?.to_owned();
+                            Some(crate::item::item_from_entry(
+                                path.clone(),
+                                name,
+                                metadata,
+                                sizes,
+                            ))
+                        });
+                        tab::EntryRefresh {
+                            path,
+                            work_id,
+                            item_opt,
+                        }
+                    })
+                    .collect()
+            })
+            .await
+            .inspect_err(|err| log::warn!("failed to refresh watched entries: {err}"))
+            .unwrap_or_default();
+            cosmic::action::app(Message::TabRefreshEntries(entity, location, refreshed))
+        }))
     }
 
     fn rescan_trash(&mut self) -> Task<Message> {
@@ -3654,68 +3740,41 @@ impl Application for App {
             Message::NotifyEvents(events) => {
                 log::debug!("{events:?}");
 
-                let mut needs_reload = Vec::new();
+                let mut work = Vec::new();
                 let entities: Box<[_]> = self.tab_model.iter().collect();
                 for entity in entities {
-                    if let Some(tab) = self.tab_model.data_mut::<Tab>(entity)
+                    if let Some(tab) = self.tab_model.data::<Tab>(entity)
                         && let Some(path) = tab.location.path_opt()
                     {
-                        let mut contains_change = false;
-                        for event in &events {
-                            for event_path in &event.paths {
-                                if event_path.starts_with(path) {
-                                    if let notify::EventKind::Modify(
-                                        notify::event::ModifyKind::Metadata(_)
-                                        | notify::event::ModifyKind::Data(_),
-                                    ) = event.kind
-                                    {
-                                        // If metadata or data changed, find the matching item and reload it
-                                        //TODO: this could be further optimized by looking at what exactly changed
-                                        if let Some(items) = &mut tab.items_opt {
-                                            for item in items.iter_mut() {
-                                                if item.path_opt() == Some(event_path) {
-                                                    //TODO: reload more, like mime types?
-                                                    match fs::metadata(event_path) {
-                                                        Ok(new_metadata) => {
-                                                            if let ItemMetadata::Path {
-                                                                metadata,
-                                                                ..
-                                                            } = &mut item.metadata
-                                                            {
-                                                                *metadata = new_metadata;
-                                                            }
-                                                        }
-
-                                                        Err(err) => {
-                                                            log::warn!(
-                                                                "failed to reload metadata for {}: {}",
-                                                                path.display(),
-                                                                err
-                                                            );
-                                                        }
-                                                    }
-                                                    //TODO item.thumbnail_opt =
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        // Any other events reload the whole tab
-                                        contains_change = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if contains_change {
-                            needs_reload.push((entity, tab.location.clone()));
-                        }
+                        work.push((entity, tab.location.clone(), classify_events(&events, path)));
                     }
                 }
 
-                let commands = needs_reload
-                    .into_iter()
-                    .filter_map(|(entity, location)| self.rescan_tab_if_idle(entity, location));
+                let commands =
+                    work.into_iter()
+                        .filter_map(|(entity, location, change)| match change {
+                            ListingChange::Structural => self.rescan_tab_if_idle(entity, location),
+                            ListingChange::Entries(paths) => {
+                                self.refresh_tab_entries(entity, paths)
+                            }
+                            ListingChange::None => None,
+                        });
                 return Task::batch(commands);
+            }
+            Message::TabRefreshEntries(entity, location, refreshed) => {
+                let Some(tab) = self.tab_model.data_mut::<Tab>(entity) else {
+                    return Task::none();
+                };
+                if tab.location != location {
+                    return Task::none();
+                }
+                if tab.refresh_entries(refreshed) {
+                    return Task::none();
+                }
+                let location = tab.location.clone();
+                return self
+                    .rescan_tab_if_idle(entity, location)
+                    .unwrap_or_else(Task::none);
             }
             Message::NotifyWatcher(mut watcher_wrapper) => match watcher_wrapper.watcher_opt.take()
             {
@@ -7317,6 +7376,128 @@ pub(crate) mod test_utils {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::time::Instant;
+
+    use notify_debouncer_full::DebouncedEvent;
+    use notify_debouncer_full::notify::EventKind;
+    use notify_debouncer_full::notify::event::{
+        AccessKind, CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode,
+    };
+
+    use super::{ListingChange, classify_events};
+
+    fn event(kind: EventKind, path: &str) -> DebouncedEvent {
+        DebouncedEvent::new(
+            notify_debouncer_full::notify::Event::new(kind).add_path(PathBuf::from(path)),
+            Instant::now(),
+        )
+    }
+
+    fn classify(kind: EventKind, path: &str) -> ListingChange {
+        classify_events(&[event(kind, path)], Path::new("/dir"))
+    }
+
+    #[test]
+    fn reading_a_listed_file_does_not_touch_the_listing() {
+        assert!(matches!(
+            classify(EventKind::Access(AccessKind::Read), "/dir/file.log"),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn writing_a_listed_file_refreshes_only_that_entry() {
+        let ListingChange::Entries(paths) = classify(
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            "/dir/file.log",
+        ) else {
+            panic!("a write to a listed file should refresh that entry");
+        };
+        assert_eq!(vec![PathBuf::from("/dir/file.log")], paths);
+
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
+                "/dir/file.log"
+            ),
+            ListingChange::Entries(_)
+        ));
+    }
+
+    #[test]
+    fn changing_hidden_names_requires_a_listing_rescan() {
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/dir/.hidden"
+            ),
+            ListingChange::Structural
+        ));
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
+                "/dir/.hidden"
+            ),
+            ListingChange::Structural
+        ));
+        assert!(matches!(
+            classify(EventKind::Access(AccessKind::Read), "/dir/.hidden"),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn writing_below_a_listed_directory_changes_nothing_on_screen() {
+        assert!(matches!(
+            classify(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/dir/sub/file.log"
+            ),
+            ListingChange::None
+        ));
+    }
+
+    #[test]
+    fn adding_removing_or_renaming_an_entry_needs_a_rescan() {
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            EventKind::Any,
+        ] {
+            assert!(
+                matches!(classify(kind, "/dir/file.log"), ListingChange::Structural),
+                "{kind:?} should rescan"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tab_path_keeps_its_trailing_separator() {
+        // Location::normalize() appends one unconditionally, so the comparison against an
+        // event path's parent has to tolerate it.
+        let dir = PathBuf::from("/dir/");
+        let change = classify_events(
+            &[event(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/dir/file.log",
+            )],
+            &dir,
+        );
+        assert!(
+            matches!(change, ListingChange::Entries(_)),
+            "a write to a listed file was not recognised against a normalized tab path"
+        );
+    }
+
+    #[test]
+    fn events_outside_the_listed_directory_are_ignored() {
+        assert!(matches!(
+            classify(EventKind::Create(CreateKind::File), "/elsewhere/file.log"),
+            ListingChange::None
+        ));
+    }
 
     fn test_app(dir: &tempfile::TempDir) -> super::App {
         use cosmic::Application;

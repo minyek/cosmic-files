@@ -67,6 +67,32 @@ impl ItemMetadata {
         }
     }
 
+    /// A directory whose child count the scan deliberately left unread.
+    pub(crate) fn children_count_pending(&self) -> bool {
+        match self {
+            Self::Path {
+                metadata,
+                children_opt,
+            } => metadata.is_dir() && children_opt.is_none(),
+            #[cfg(feature = "gvfs")]
+            Self::GvfsPath {
+                children_opt,
+                is_dir,
+                ..
+            } => *is_dir && children_opt.is_none(),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn set_children_count(&mut self, children: usize) {
+        match self {
+            Self::Path { children_opt, .. } => *children_opt = Some(children),
+            #[cfg(feature = "gvfs")]
+            Self::GvfsPath { children_opt, .. } => *children_opt = Some(children),
+            _ => {}
+        }
+    }
+
     pub fn children_count(&self) -> Option<&usize> {
         match &self {
             ItemMetadata::Path { children_opt, .. } => children_opt.as_ref(),
