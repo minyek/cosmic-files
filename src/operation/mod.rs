@@ -875,12 +875,12 @@ impl Operation {
             Self::Delete { paths } => {
                 let total = paths.len();
                 for (i, path) in paths.into_iter().enumerate() {
-                    futures::executor::block_on(async {
-                        controller
-                            .check()
-                            .await
-                            .map_err(|s| OperationError::from_state(s, &controller))
-                    })?;
+                    // The pause is awaited: this loop runs on the runtime thread every other
+                    // operation shares, so blocking here would stall them all until resume.
+                    controller
+                        .check()
+                        .await
+                        .map_err(|s| OperationError::from_state(s, &controller))?;
 
                     controller.set_progress((i as f32) / (total as f32));
 
@@ -1499,6 +1499,73 @@ mod tests {
         let handle_messages = async move { while rx.next().await.is_some() {} };
 
         future::join(handle_messages, handle_delete).await.1
+    }
+
+    /// Starts a paused delete of `path` as a task on the current runtime.
+    fn spawn_paused_delete(
+        path: PathBuf,
+        controller: &Controller,
+    ) -> compio::runtime::JoinHandle<Result<OperationSelection, OperationError>> {
+        let (tx, mut rx) = mpsc::channel(1);
+        compio::runtime::spawn(async move { while rx.next().await.is_some() {} }).detach();
+        controller.pause();
+        let controller = controller.clone();
+        compio::runtime::spawn(async move {
+            Operation::Delete { paths: vec![path] }
+                .perform(&sync::Mutex::new(tx).into(), controller)
+                .await
+        })
+    }
+
+    // A paused delete waits without holding the runtime thread, so the other operations on that
+    // runtime keep running. A delete that blocked the thread while paused hangs this test while
+    // it awaits the other operation.
+    #[test(compio::test)]
+    async fn a_paused_delete_leaves_the_runtime_free() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let controller = Controller::default();
+        let delete = spawn_paused_delete(fs.path().join("not-reached"), &controller);
+
+        compio::runtime::spawn(async {})
+            .await
+            .expect("another task runs while the delete is paused");
+
+        controller.cancel();
+        let err = delete
+            .await
+            .expect("the delete task should finish")
+            .expect_err("a delete cancelled while paused must not succeed");
+        assert_eq!(err.to_string(), fl!("cancelled"));
+        Ok(())
+    }
+
+    // Resuming from another thread, as the UI does, wakes the paused delete, which carries on to
+    // the trash step and fails there exactly as a delete of the same path that never paused.
+    #[test(compio::test)]
+    async fn a_resumed_delete_carries_on() -> io::Result<()> {
+        let fs = empty_fs()?;
+        let missing = fs.path().join("does-not-exist");
+        let controller = Controller::default();
+        let delete = spawn_paused_delete(missing.clone(), &controller);
+        // Tasks run in spawn order, so once this one has run the delete is parked on its pause.
+        compio::runtime::spawn(async {})
+            .await
+            .expect("another task runs while the delete is paused");
+
+        let resumer = controller.clone();
+        std::thread::spawn(move || resumer.unpause())
+            .join()
+            .expect("the resuming thread should not panic");
+
+        let err = delete
+            .await
+            .expect("the delete task should finish")
+            .expect_err("trashing a path that does not exist fails");
+        let unpaused = operation_delete(vec![missing])
+            .await
+            .expect_err("a delete that never paused fails on the missing path");
+        assert_eq!(err.to_string(), unpaused.to_string());
+        Ok(())
     }
 
     #[test(compio::test)]
