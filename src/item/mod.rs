@@ -865,9 +865,14 @@ impl Item {
         if let Some(path) = self.path_opt()
             && self.state.selected
         {
-            column = column.push(
-                widget::button::standard(fl!("open")).on_press(Message::Open(Some(path.clone()))),
-            );
+            // Decide navigate-vs-open from cached metadata so Message::Open's handler never
+            // stats the path on the GUI thread.
+            let message = if self.metadata.is_dir() {
+                Message::Location(Location::Path(path.clone()))
+            } else {
+                Message::Open(Some(path.clone()))
+            };
+            column = column.push(widget::button::standard(fl!("open")).on_press(message));
         }
 
         if !settings.is_empty() {

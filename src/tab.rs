@@ -920,6 +920,17 @@ impl Tab {
         }
     }
 
+    pub fn selected_paths_with_dir(&self) -> Vec<(PathBuf, bool)> {
+        let Some(ref items) = self.items_opt else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter(|item| item.state.selected)
+            .filter_map(|item| Some((item.path_opt()?.to_path_buf(), item.metadata.is_dir())))
+            .collect()
+    }
+
     pub fn select_all(&mut self) {
         if let Some(ref mut items) = self.items_opt {
             for item in items.iter_mut() {
@@ -2199,12 +2210,10 @@ impl Tab {
             }
             Message::Open(path_opt) => {
                 match path_opt {
+                    // The only sender (the preview Open button) routes directories through
+                    // Message::Location, so an explicit path here is always a file to open.
                     Some(path) => {
-                        if path.is_dir() {
-                            cd = Some(Location::Path(path));
-                        } else {
-                            commands.push(Command::OpenFile(vec![path]));
-                        }
+                        commands.push(Command::OpenFile(vec![path]));
                     }
                     // Open selected items
                     None => {
@@ -2638,15 +2647,13 @@ impl Tab {
                     Location::Desktop(to, ..)
                     | Location::Path(to)
                     | Location::Network(_, _, Some(to)) => {
-                        if let Ok(entries) = fs::read_dir(&to) {
-                            for i in entries.into_iter().filter_map(Result::ok) {
-                                let i = i.path();
-                                from.paths.retain(|p| &i != p);
-                                if from.paths.is_empty() {
-                                    log::info!("All dropped files already in target directory.");
-                                    return commands;
-                                }
-                            }
+                        // A dropped file already living directly in `to` would be copied onto
+                        // itself; comparing each path's parent to `to` skips those without
+                        // listing the directory, which would block the GUI thread on a slow mount.
+                        from.paths.retain(|p| p.parent() != Some(to.as_path()));
+                        if from.paths.is_empty() {
+                            log::info!("All dropped files already in target directory.");
+                            return commands;
                         }
                         commands.push(Command::DropFiles(to, from));
                     }
@@ -5760,6 +5767,30 @@ mod tests {
         let next = tab.scans.begin();
         assert_eq!(tab.scans.finish(next), Some(false));
 
+        Ok(())
+    }
+
+    #[test]
+    fn selected_paths_report_their_directory_flag_without_restating() -> io::Result<()> {
+        let fs = TempDir::new()?;
+        let file = fs.path().join("note.txt");
+        fs::write(&file, b"x")?;
+        let dir = fs.path().join("folder");
+        fs::create_dir(&dir)?;
+
+        let mut tab = tab_at(Location::Path(fs.path().to_owned()));
+        tab.items_opt = Some(scan_path(&fs.path().to_owned(), IconSizes::default()));
+        for item in tab.items_opt.as_mut().unwrap() {
+            item.state.selected = true;
+        }
+        // Removing the entries leaves any stat-based answer with nothing to read.
+        fs::remove_file(&file)?;
+        fs::remove_dir(&dir)?;
+
+        let mut selected = tab.selected_paths_with_dir();
+        selected.sort();
+
+        assert_eq!(selected, vec![(dir, true), (file, false)]);
         Ok(())
     }
 

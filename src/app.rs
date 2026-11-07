@@ -1794,6 +1794,16 @@ impl App {
             })
     }
 
+    // Selected paths paired with their cached directory flag, read from already-scanned
+    // metadata so deciding dir-vs-file never stats the filesystem on the GUI thread.
+    fn selected_paths_with_dir(&self, entity_opt: Option<Entity>) -> Vec<(PathBuf, bool)> {
+        let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
+        self.tab_model
+            .data::<Tab>(entity)
+            .map(Tab::selected_paths_with_dir)
+            .unwrap_or_default()
+    }
+
     fn set_cut(&mut self, entity_opt: Option<Entity>) {
         let entity = entity_opt.unwrap_or_else(|| self.tab_model.active());
         if let Some(tab) = self.tab_model.data_mut::<Tab>(entity) {
@@ -3910,8 +3920,9 @@ impl Application for App {
             }
             Message::OpenInNewTab(entity_opt) => {
                 let selected_paths: Box<[_]> = self
-                    .selected_paths(entity_opt)
-                    .filter(|p| p.is_dir())
+                    .selected_paths_with_dir(entity_opt)
+                    .into_iter()
+                    .filter_map(|(path, is_dir)| is_dir.then_some(path))
                     .collect();
                 return Task::batch(
                     selected_paths
@@ -3921,8 +3932,9 @@ impl Application for App {
             }
             Message::OpenInNewWindow(entity_opt) => match env::current_exe() {
                 Ok(exe) => self
-                    .selected_paths(entity_opt)
-                    .filter(|p| p.is_dir())
+                    .selected_paths_with_dir(entity_opt)
+                    .into_iter()
+                    .filter_map(|(path, is_dir)| is_dir.then_some(path))
                     .for_each(|path| match process::Command::new(&exe).arg(path).spawn() {
                         Ok(_child) => {}
                         Err(err) => {
@@ -4390,11 +4402,13 @@ impl Application for App {
                 if let Some(tab) = self.tab_model.data_mut::<Tab>(entity)
                     && let Some(items) = tab.items_opt()
                 {
+                    // Pair each selected path with its cached is_dir; re-stating here would
+                    // block the GUI thread on a slow mount.
                     let selected: Box<[_]> = items
                         .iter()
                         .filter_map(|item| {
                             if item.state.selected {
-                                item.path_opt().cloned()
+                                Some((item.path_opt()?.to_path_buf(), item.metadata.is_dir()))
                             } else {
                                 None
                             }
@@ -4405,10 +4419,9 @@ impl Application for App {
                         let mut last_name = String::new();
                         let tasks: Vec<_> = selected
                             .into_iter()
-                            .filter_map(|path| {
+                            .filter_map(|(path, dir)| {
                                 let parent = path.parent()?.to_path_buf();
                                 let name = path.file_name()?.to_str()?.to_string();
-                                let dir = path.is_dir();
                                 last_name = name.clone();
                                 Some(self.dialog_pages.push_back(DialogPage::RenameItem {
                                     from: path,
