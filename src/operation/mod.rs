@@ -802,17 +802,12 @@ impl Operation {
 
                                     controller.set_progress((i as f32) / total_paths as f32);
 
-                                    if let Some(relative_path) = path
+                                    let relative_path = path
                                         .strip_prefix(relative_root)
-                                        .map_err(|e| OperationError::from_err(e, &controller))?
-                                        .to_str()
-                                    {
-                                        archive
-                                            .append_path_with_name(path, relative_path)
-                                            .map_err(|e| {
-                                                OperationError::from_err(e, &controller)
-                                            })?;
-                                    }
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
+                                    archive
+                                        .append_path_with_name(path, relative_path)
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
                                 }
 
                                 archive
@@ -844,76 +839,74 @@ impl Operation {
                                             password.as_deref().unwrap(),
                                         );
                                     }
-                                    if let Some(relative_path) = path
+                                    let relative_path = path
                                         .strip_prefix(relative_root)
-                                        .map_err(|e| OperationError::from_err(e, &controller))?
-                                        .to_str()
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
+                                    let relative_path =
+                                        relative_path.to_str().ok_or_else(|| {
+                                            let message = format!(
+                                                "path {} cannot be represented in a ZIP archive",
+                                                path.display()
+                                            );
+                                            OperationError::from_err(message, &controller)
+                                        })?;
+                                    let mut file = fs::File::open(path)
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
+                                    let metadata = file
+                                        .metadata()
+                                        .map_err(|e| OperationError::from_err(e, &controller))?;
+
+                                    if let Ok(modified) = metadata.modified()
+                                        && let Some(last_modified) =
+                                            archive::system_time_to_zip_date_time(modified)
                                     {
-                                        let mut file = fs::File::open(path).map_err(|e| {
-                                            OperationError::from_err(e, &controller)
-                                        })?;
-                                        let metadata = file.metadata().map_err(|e| {
-                                            OperationError::from_err(e, &controller)
-                                        })?;
+                                        zip_options = zip_options.last_modified_time(last_modified);
+                                    }
 
-                                        if let Ok(modified) = metadata.modified()
-                                            && let Some(last_modified) =
-                                                archive::system_time_to_zip_date_time(modified)
-                                        {
-                                            zip_options =
-                                                zip_options.last_modified_time(last_modified);
+                                    #[cfg(unix)]
+                                    {
+                                        use std::os::unix::fs::MetadataExt;
+                                        let mode = metadata.mode();
+                                        zip_options = zip_options.unix_permissions(mode);
+                                    }
+
+                                    if path.is_file() {
+                                        let total = metadata.len();
+                                        if total >= 4 * 1024 * 1024 * 1024 {
+                                            // The large file option must be enabled for files above 4 GiB
+                                            zip_options = zip_options.large_file(true);
                                         }
+                                        archive.start_file(relative_path, zip_options).map_err(
+                                            |e| OperationError::from_err(e, &controller),
+                                        )?;
+                                        let mut current = 0;
+                                        loop {
+                                            futures::executor::block_on(async {
+                                                controller.check().await.map_err(|s| {
+                                                    OperationError::from_state(s, &controller)
+                                                })
+                                            })?;
 
-                                        #[cfg(unix)]
-                                        {
-                                            use std::os::unix::fs::MetadataExt;
-                                            let mode = metadata.mode();
-                                            zip_options = zip_options.unix_permissions(mode);
-                                        }
-
-                                        if path.is_file() {
-                                            let total = metadata.len();
-                                            if total >= 4 * 1024 * 1024 * 1024 {
-                                                // The large file option must be enabled for files above 4 GiB
-                                                zip_options = zip_options.large_file(true);
+                                            let count = file.read(&mut buffer).map_err(|e| {
+                                                OperationError::from_err(e, &controller)
+                                            })?;
+                                            if count == 0 {
+                                                break;
                                             }
-                                            archive
-                                                .start_file(relative_path, zip_options)
-                                                .map_err(|e| {
-                                                    OperationError::from_err(e, &controller)
-                                                })?;
-                                            let mut current = 0;
-                                            loop {
-                                                futures::executor::block_on(async {
-                                                    controller.check().await.map_err(|s| {
-                                                        OperationError::from_state(s, &controller)
-                                                    })
-                                                })?;
+                                            archive.write_all(&buffer[..count]).map_err(|e| {
+                                                OperationError::from_err(e, &controller)
+                                            })?;
+                                            current += count;
 
-                                                let count =
-                                                    file.read(&mut buffer).map_err(|e| {
-                                                        OperationError::from_err(e, &controller)
-                                                    })?;
-                                                if count == 0 {
-                                                    break;
-                                                }
-                                                archive.write_all(&buffer[..count]).map_err(
-                                                    |e| OperationError::from_err(e, &controller),
-                                                )?;
-                                                current += count;
-
-                                                let file_progress = current as f32 / total as f32;
-                                                let total_progress =
-                                                    (i as f32 + file_progress) / total_paths as f32;
-                                                controller.set_progress(total_progress);
-                                            }
-                                        } else {
-                                            archive
-                                                .add_directory(relative_path, zip_options)
-                                                .map_err(|e| {
-                                                    OperationError::from_err(e, &controller)
-                                                })?;
+                                            let file_progress = current as f32 / total as f32;
+                                            let total_progress =
+                                                (i as f32 + file_progress) / total_paths as f32;
+                                            controller.set_progress(total_progress);
                                         }
+                                    } else {
+                                        archive.add_directory(relative_path, zip_options).map_err(
+                                            |e| OperationError::from_err(e, &controller),
+                                        )?;
                                     }
                                 }
 
@@ -1630,6 +1623,69 @@ mod tests {
         entry.read_to_end(&mut payload)?;
         assert_eq!(payload, b"source payload");
         assert!(entries.next().is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn compress_non_utf8_source(
+        archive_type: crate::app::ArchiveType,
+    ) -> io::Result<(
+        tempfile::TempDir,
+        PathBuf,
+        Result<OperationSelection, OperationError>,
+    )> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = empty_fs()?;
+        let source = dir.path().join(std::ffi::OsStr::from_bytes(b"source-\xff"));
+        fs::write(&source, b"source payload")?;
+        let target = dir
+            .path()
+            .join(format!("archive{}", archive_type.extension()));
+        let (tx, mut rx) = mpsc::channel(1);
+        let operation = Operation::Compress {
+            paths: vec![source],
+            to: target.clone(),
+            archive_type,
+            password: None,
+        };
+        let run = async move {
+            operation
+                .perform(&sync::Mutex::new(tx).into(), Controller::default())
+                .await
+        };
+        let drain = async move { while rx.next().await.is_some() {} };
+        let result = future::join(run, drain).await.0;
+        Ok((dir, target, result))
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn tgz_preserves_non_utf8_source_names() -> io::Result<()> {
+        use std::io::Read;
+        use std::os::unix::ffi::OsStrExt;
+
+        let (_dir, target, result) = compress_non_utf8_source(crate::app::ArchiveType::Tgz).await?;
+        assert!(result.is_ok());
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(File::open(target)?));
+        let mut entries = archive.entries()?;
+        let mut entry = entries.next().expect("source missing from archive")?;
+        assert_eq!(entry.path()?.as_os_str().as_bytes(), b"source-\xff");
+        let mut payload = Vec::new();
+        entry.read_to_end(&mut payload)?;
+        assert_eq!(payload, b"source payload");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test(compio::test)]
+    async fn zip_rejects_non_utf8_source_names_without_publishing() -> io::Result<()> {
+        let (_dir, target, result) = compress_non_utf8_source(crate::app::ArchiveType::Zip).await?;
+        assert!(
+            result.is_err(),
+            "ZIP silently omitted an unrepresentable name"
+        );
+        assert!(!target.exists());
         Ok(())
     }
 
