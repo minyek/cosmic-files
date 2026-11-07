@@ -938,8 +938,15 @@ impl App {
             if mime == "application/x-desktop" {
                 #[cfg(feature = "desktop")]
                 {
-                    // Try opening desktop application
-                    Self::launch_desktop_entries(&paths);
+                    // DesktopEntry::from_path reads the .desktop file, which blocks on a slow/removable
+                    // mount; parse off-thread (the spawn_detached launch is already non-blocking).
+                    tasks.push(Task::future(async move {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            Self::launch_desktop_entries(&paths);
+                        })
+                        .await;
+                        cosmic::action::none()
+                    }));
                     continue;
                 }
             } else if mime == "application/x-executable" || mime == "application/vnd.appimage" {
