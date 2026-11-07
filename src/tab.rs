@@ -520,7 +520,9 @@ impl Mode {
 }
 
 struct SearchContext {
-    results_rx: mpsc::Receiver<SearchItem>,
+    // Items are built off-thread in the search worker (item_from_search_item does read_dir /
+    // gvfs / image-header I/O); the GUI-thread drain only inserts the finished Item.
+    results_rx: mpsc::Receiver<Item>,
     ready: Arc<atomic::AtomicBool>,
     last_modified_opt: Arc<RwLock<Option<SystemTime>>>,
 }
@@ -2240,25 +2242,23 @@ impl Tab {
                     if let Some(items) = &mut self.items_opt {
                         if finished || context.ready.swap(false, atomic::Ordering::SeqCst) {
                             let duration = Instant::now();
-                            while let Ok(search_item) = context.results_rx.try_recv() {
+                            while let Ok(item) = context.results_rx.try_recv() {
                                 //TODO: combine this with column_sort logic, they must match!
-                                let index =
-                                    if let SearchItem::Path(_, _, ref metadata) = search_item {
-                                        let item_modified = metadata.modified().ok();
-                                        match items.binary_search_by(|other| {
-                                            item_modified.cmp(&other.metadata.modified())
-                                        }) {
-                                            Ok(index) => index,
-                                            Err(index) => index,
-                                        }
-                                    } else {
-                                        items.len()
-                                    };
+                                // The Item is already built off-thread; trash results append,
+                                // path results sort by modified time.
+                                let index = if matches!(item.metadata, ItemMetadata::Trash { .. }) {
+                                    items.len()
+                                } else {
+                                    let item_modified = item.metadata.modified();
+                                    match items.binary_search_by(|other| {
+                                        item_modified.cmp(&other.metadata.modified())
+                                    }) {
+                                        Ok(index) => index,
+                                        Err(index) => index,
+                                    }
+                                };
 
                                 if index < MAX_SEARCH_RESULTS {
-                                    //TODO: use correct IconSizes
-                                    let item =
-                                        item_from_search_item(search_item, IconSizes::default());
                                     items.insert(index, item);
                                 }
                                 // Ensure that updates make it to the GUI in a timely manner
@@ -5007,7 +5007,16 @@ impl Tab {
                                                 }
                                             }
 
-                                            match results_tx.blocking_send(search_item) {
+                                            // item_from_search_item does read_dir, gvfs stats and
+                                            // image-header reads per result; build the Item here on
+                                            // the worker thread so the GUI-thread SearchReady drain
+                                            // only inserts it.
+                                            //TODO: use correct IconSizes
+                                            let item = item_from_search_item(
+                                                search_item,
+                                                IconSizes::default(),
+                                            );
+                                            match results_tx.blocking_send(item) {
                                                 Ok(()) => {
                                                     if ready.swap(true, atomic::Ordering::SeqCst) {
                                                         true
