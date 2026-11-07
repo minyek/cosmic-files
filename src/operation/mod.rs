@@ -1,3 +1,4 @@
+use compio::runtime::JoinError;
 use cosmic::iced::futures::channel::mpsc::Sender;
 use cosmic::iced::futures::{self, SinkExt, StreamExt, stream};
 use std::borrow::Cow;
@@ -44,8 +45,8 @@ async fn build_replace_item(path: PathBuf) -> Option<Box<crate::item::Item>> {
             log::warn!("{err}");
             None
         }
-        Err(_) => {
-            log::error!("compio runtime spawn failed while building replace item");
+        Err(err) => {
+            log::error!("compio task failed while building replace item: {err}");
             None
         }
     }
@@ -94,7 +95,7 @@ async fn rename_noreplace(from: PathBuf, to: PathBuf) -> io::Result<()> {
             })
         })
         .await
-        .map_err(|_| io::Error::other("compio runtime spawn failed while renaming"))?
+        .map_err(|err| io::Error::other(format!("compio task failed while renaming: {err}")))?
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -280,7 +281,7 @@ async fn copy_or_move(
         Result::<OperationSelection, OperationError>::Ok(context.op_sel)
     })
     .await
-    .map_err(wrap_compio_spawn_error)?
+    .map_err(operation_error_from_join)?
 }
 
 /// Sync file descriptor wrappers to disk.
@@ -938,7 +939,7 @@ impl Operation {
                     },
                 )
                 .await
-                .map_err(wrap_compio_spawn_error)?
+                .map_err(operation_error_from_join)?
             }
             Self::Copy { paths, to } => {
                 copy_or_move(paths, to, Method::Copy, msg_tx, controller).await
@@ -957,7 +958,7 @@ impl Operation {
 
                     compio::runtime::spawn_blocking(|| Trash::trash(path))
                         .await
-                        .map_err(wrap_compio_spawn_error)?
+                        .map_err(operation_error_from_join)?
                         .map_err(|e| OperationError::from_err(e, &controller))?;
                 }
                 Ok(OperationSelection::default())
@@ -982,7 +983,7 @@ impl Operation {
                     Ok(())
                 })
                 .await
-                .map_err(wrap_compio_spawn_error)?
+                .map_err(operation_error_from_join)?
                 .map_err(|e| OperationError::from_err(e, &controller))?;
                 Ok(OperationSelection::default())
             }
@@ -1031,7 +1032,7 @@ impl Operation {
                     Ok(())
                 })
                 .await
-                .map_err(wrap_compio_spawn_error)?
+                .map_err(operation_error_from_join)?
                 .map_err(|e| OperationError::from_err(e, &controller))?;
                 Ok(OperationSelection::default())
             }
@@ -1091,12 +1092,12 @@ impl Operation {
                         Ok::<_, OperationError>(op_sel)
                     })
                     .await
-                    .map_err(wrap_compio_spawn_error)??;
+                    .map_err(operation_error_from_join)??;
 
                     Ok::<_, OperationError>(op_sel)
                 })
                 .await
-                .map_err(wrap_compio_spawn_error)?
+                .map_err(operation_error_from_join)?
             }
             Self::Move {
                 paths,
@@ -1130,7 +1131,7 @@ impl Operation {
                 })
             }
             .await
-            .map_err(wrap_compio_spawn_error)?,
+            .map_err(operation_error_from_join)?,
             Self::NewFile { path } => {
                 let controller_clone = controller.clone();
                 compio::runtime::spawn(async move {
@@ -1149,7 +1150,7 @@ impl Operation {
                 })
             }
             .await
-            .map_err(wrap_compio_spawn_error)?,
+            .map_err(operation_error_from_join)?,
             Self::PermanentlyDelete { paths } => {
                 let total = paths.len();
                 for (idx, path) in paths.into_iter().enumerate() {
@@ -1209,7 +1210,7 @@ impl Operation {
                 })
             }
             .await
-            .map_err(wrap_compio_spawn_error)?,
+            .map_err(operation_error_from_join)?,
             Self::Restore { items } => {
                 let total = items.len();
                 let mut paths = Vec::with_capacity(total);
@@ -1225,7 +1226,7 @@ impl Operation {
 
                     compio::runtime::spawn_blocking(|| Trash::restore(item))
                         .await
-                        .map_err(wrap_compio_spawn_error)?
+                        .map_err(operation_error_from_join)?
                         .map_err(|e| OperationError::from_err(e, &controller))?;
                 }
                 Ok(OperationSelection {
@@ -1264,7 +1265,7 @@ impl Operation {
                     Ok(())
                 })
                 .await
-                .map_err(wrap_compio_spawn_error)?
+                .map_err(operation_error_from_join)?
                 .map_err(|e| OperationError::from_err(e, &controller))?;
                 Ok(OperationSelection::default())
             }
@@ -1291,7 +1292,7 @@ impl Operation {
                     Ok(())
                 })
                 .await
-                .map_err(wrap_compio_spawn_error)?
+                .map_err(operation_error_from_join)?
                 .map_err(|e| OperationError::from_err(e, &controller))?;
                 Ok(OperationSelection {
                     ignored: Vec::new(),
@@ -1306,18 +1307,25 @@ impl Operation {
     }
 }
 
-#[track_caller]
-fn wrap_compio_spawn_error(err: Box<dyn std::any::Any + Send>) -> OperationError {
-    log::error!(
-        "compio runtime spawn failed: {}",
-        std::backtrace::Backtrace::capture()
-    );
-
-    // Preserve error if it's already an OperationError
-    if let Ok(err) = err.downcast() {
-        *err
-    } else {
-        OperationError::from_msg("compio runtime spawn failed")
+/// The error for a compio task that did not run to completion. A panic whose payload is already
+/// an [`OperationError`] passes that error through unchanged.
+fn operation_error_from_join(err: JoinError) -> OperationError {
+    match err {
+        JoinError::Panicked(payload) => {
+            log::error!(
+                "compio task panicked: {}",
+                std::backtrace::Backtrace::capture()
+            );
+            match payload.downcast::<OperationError>() {
+                Ok(err) => *err,
+                Err(_) => OperationError::from_msg("compio task panicked"),
+            }
+        }
+        JoinError::Cancelled => {
+            let err = OperationError::from_msg("compio task was cancelled");
+            log::error!("{err}");
+            err
+        }
     }
 }
 
@@ -1334,7 +1342,10 @@ mod tests {
     use test_log::test;
     use tokio::sync;
 
-    use super::{Controller, Operation, OperationError, OperationSelection, ReplaceResult};
+    use super::{
+        Controller, JoinError, Operation, OperationError, OperationErrorType, OperationSelection,
+        ReplaceResult, operation_error_from_join,
+    };
     use crate::app::test_utils::{
         NAME_LEN, NUM_DIRS, NUM_FILES, NUM_HIDDEN, NUM_NESTED, empty_fs, filter_dirs, filter_files,
         simple_fs,
@@ -2086,5 +2097,40 @@ mod tests {
         assert_eq!(fs::read_to_string(&link)?, "a");
 
         Ok(())
+    }
+
+    // A panic payload that is already an OperationError is passed through unchanged.
+    #[test(compio::test)]
+    async fn a_panicked_task_keeps_its_operation_error() {
+        let err = compio::runtime::spawn_blocking(|| {
+            std::panic::panic_any(OperationError::from_msg("disk full"))
+        })
+        .await
+        .map_err(operation_error_from_join)
+        .expect_err("a panicking task must report an error");
+        assert_eq!(err.to_string(), "disk full");
+    }
+
+    // Any other panic payload becomes an OperationError that reads as a panic, not a cancel.
+    #[test(compio::test)]
+    async fn a_task_panicking_with_another_payload_reports_an_operation_error() {
+        let err = compio::runtime::spawn_blocking(|| panic!("unexpected"))
+            .await
+            .map_err(operation_error_from_join)
+            .expect_err("a panicking task must report an error");
+        assert!(matches!(err.kind, OperationErrorType::Generic(_)));
+        assert_ne!(
+            err.to_string(),
+            operation_error_from_join(JoinError::Cancelled).to_string()
+        );
+    }
+
+    // A cancel is reported as itself, not as a panic.
+    #[test]
+    fn a_cancelled_task_reports_an_operation_error() {
+        let cancelled = operation_error_from_join(JoinError::Cancelled);
+        let panicked = operation_error_from_join(JoinError::Panicked(Box::new(())));
+        assert!(matches!(cancelled.kind, OperationErrorType::Generic(_)));
+        assert_ne!(cancelled.to_string(), panicked.to_string());
     }
 }

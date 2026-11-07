@@ -69,7 +69,7 @@ bstr = "1.12.1"
 
 # Completion-based IO runtime to enable io_uring / IOCP file IO support.
 [dependencies.compio]
-version = "0.18"
+version = "0.19"
 default-features = false
 features = ["fs", "io", "macros", "polling", "runtime"]
 
