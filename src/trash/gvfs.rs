@@ -137,6 +137,9 @@ pub fn item_from_trash_entry(entry: TrashItem, size: TrashItemSize, sizes: IconS
     };
 
     let trashed_path_opt = location_opt.as_ref().and_then(Location::path_opt);
+    let can_thumbnail = trashed_path_opt.is_some()
+        && matches!(size, TrashItemSize::Bytes(_))
+        && matches!(mime.type_(), mime::IMAGE | mime::VIDEO);
     // The original path no longer holds the file, so the dimensions come from the trashed copy.
     let image_dimensions = trashed_path_opt
         .filter(|_| mime.type_() == mime::IMAGE)
@@ -157,7 +160,7 @@ pub fn item_from_trash_entry(entry: TrashItem, size: TrashItemSize, sizes: IconS
         icon_handle_grid,
         icon_handle_list,
         icon_handle_list_condensed,
-        thumbnail_opt: Some(ItemThumbnail::NotImage),
+        thumbnail_opt: (!can_thumbnail).then_some(ItemThumbnail::NotImage),
         dir_size: DirSize::NotDirectory,
         state: ItemState::default(),
     }
