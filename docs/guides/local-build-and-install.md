@@ -98,7 +98,7 @@ Run full gates through the resource-managed detached workflow required by the
 project's operating instructions. Dependencies must be available in the local
 cache for offline builds.
 
-`master` is upstream `e03001c` followed by one commit per fork issue (or per group
+`master` is upstream followed by one commit per fork issue (or per group
 of inseparable issues) and the
 fork's records commits (the 2026-11 history rebuild; the older squash history is
 on the tag `backup/master-pre-history-2026-11`). The old improvement branches

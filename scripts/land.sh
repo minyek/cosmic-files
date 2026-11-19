@@ -13,11 +13,15 @@ MAIN=$1 WT=$2 CODE_MSG=$3 RECORDS_MSG=$4 PUSH=${5:-}
 UPSTREAM_SHAPED='^(src/|tests/|i18n/|res/|Cargo\.toml$|Cargo\.lock$|TESTING\.md$)'
 # The fork's own records. A path on neither list stops the landing: upstream also owns build.rs, the
 # applet and thumbnailer crates, debian/, justfile and .github/, which need a deliberate choice.
-FORK_ONLY='^(docs/|packaging/|README\.md$|CLAUDE\.md$|scripts/(land\.sh|gui_acceptance\.py|remote_acceptance\.py|run_isolated_acceptance\.sh|run_remote_acceptance\.sh|run_scroll_performance\.sh)$|examples/(storage_acceptance|remote_scan_acceptance|scroll_frame_probe)\.rs$)'
+FORK_ONLY='^(docs/|packaging/|README\.md$|CLAUDE\.md$|scripts/(land\.sh|tests/land_test\.sh|gui_acceptance\.py|remote_acceptance\.py|run_isolated_acceptance\.sh|run_remote_acceptance\.sh|run_scroll_performance\.sh)$|examples/(storage_acceptance|remote_scan_acceptance|scroll_frame_probe)\.rs$)'
 
 cd "$WT"
 M=$(git rev-parse refs/heads/master)
-git merge-base --is-ancestor "$M" HEAD || { echo "master moved: merge master into the branch first"; exit 1; }
+git merge-base --is-ancestor "$M" HEAD || {
+    echo "master moved: restack the branch onto it (git rebase --autosquash --onto master <old base>, where <old base> is the branch's own parent), never merge master into it"
+    exit 1
+}
+[ -z "$(git rev-list --merges "$M"..HEAD)" ] || { echo "the branch holds a merge commit: restack it linear (git rebase --autosquash --onto master <old base>) before landing"; exit 1; }
 
 check_code_message() {
     local subject
