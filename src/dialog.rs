@@ -2367,20 +2367,24 @@ mod tests {
         let window_id = window::Id::unique();
         let mut core = Core::default();
         core.set_main_window_id(Some(window_id));
-        let (app, _task) = App::init(
-            core,
-            Flags {
-                kind: DialogKind::SaveFile {
-                    filename: filename.to_string(),
+        // `App::init` blocks on the mounter's reply, which a thread driving a runtime may not do
+        // outside `block_in_place`, so every test that builds a dialog runs on a multi-thread runtime.
+        let (app, _task) = tokio::task::block_in_place(|| {
+            App::init(
+                core,
+                Flags {
+                    kind: DialogKind::SaveFile {
+                        filename: filename.to_string(),
+                    },
+                    path_opt: Some(dir.path().to_path_buf()),
+                    window_id,
+                    config_handler: None,
+                    config: Config::default(),
+                    state_handler: None,
+                    state: crate::config::State::default(),
                 },
-                path_opt: Some(dir.path().to_path_buf()),
-                window_id,
-                config_handler: None,
-                config: Config::default(),
-                state_handler: None,
-                state: crate::config::State::default(),
-            },
-        );
+            )
+        });
         app
     }
 
@@ -2570,7 +2574,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_failed_watch_does_not_resubmit_without_a_new_request() -> std::io::Result<()> {
         use cosmic::Application;
         let dir = tempfile::TempDir::new()?;
@@ -2592,7 +2596,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_picker_result_waits_for_persistence_before_closing() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "new.txt");
@@ -2607,7 +2611,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_picker_leaves_unmounted_parent_paths() -> io::Result<()> {
         let dir = TempDir::new()?;
         let nested = dir.path().join("child");
@@ -2623,7 +2627,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn save_navigation_intent_invalidates_an_earlier_save_check() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "new.txt");
@@ -2636,7 +2640,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_edit_back_to_the_same_name_cannot_revive_a_confirmation() -> io::Result<()> {
         let dir = TempDir::new()?;
         std::fs::write(dir.path().join("report.pdf"), b"pdf")?;
@@ -2651,7 +2655,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn repeated_save_checks_create_only_one_confirmation() -> io::Result<()> {
         let dir = TempDir::new()?;
         std::fs::write(dir.path().join("report.pdf"), b"pdf")?;
@@ -2664,7 +2668,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_save_check_cannot_survive_an_edit_back_to_the_same_name() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "report.pdf");
@@ -2677,7 +2681,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn review_an_old_picker_scan_cannot_replace_a_newer_listing() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "new.txt");
@@ -2691,7 +2695,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_picker_direct_scan_cannot_release_a_newer_watcher_scan() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "new.txt");
@@ -2708,7 +2712,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_failed_picker_scan_releases_only_its_own_request() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "new.txt");
@@ -2926,7 +2930,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn submitting_a_picker_location_opens_the_requested_directory() -> io::Result<()> {
         use crate::location::Location;
         use crate::tab;
@@ -2970,7 +2974,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn confirming_a_replacement_cannot_switch_to_an_edited_name() -> io::Result<()> {
         let dir = TempDir::new()?;
         let mut app = save_dialog(&dir, "first.txt");
@@ -2989,7 +2993,7 @@ mod tests {
         assert!(app.result_opt.is_none());
         Ok(())
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn picker_watch_updates_reconcile_navigation_during_the_worker() -> io::Result<()> {
         use crate::location::Location;
         use cosmic::iced::futures::StreamExt;
