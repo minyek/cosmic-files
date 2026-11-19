@@ -76,4 +76,14 @@ land unclassified
 [ "$STATUS" -ne 0 ] && grep -q 'unclassified path build.rs' <<<"$OUT"
 check "a path on neither list stops the landing" $? "status=$STATUS: $OUT"
 
+# 5. The test script itself is a fork-only path: a branch that edits it lands as a records commit.
+new_repo records
+mkdir -p "$ROOT/records/wt/scripts/tests"
+echo "# test" >"$ROOT/records/wt/scripts/tests/land_test.sh"
+git -C "$ROOT/records/wt" add scripts/tests/land_test.sh
+git -C "$ROOT/records/wt" commit -q -m "wip"
+land records
+[ "$STATUS" -eq 0 ] && ! grep -q unclassified <<<"$OUT" && [ "$(git -C "$ROOT/records/main" rev-parse 'master^{tree}')" = "$(git -C "$ROOT/records/wt" rev-parse 'HEAD^{tree}')" ]
+check "the test script lands as a fork-only path" $? "status=$STATUS: $OUT"
+
 exit "$FAILED"
