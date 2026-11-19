@@ -17,11 +17,18 @@ FORK_ONLY='^(docs/|packaging/|README\.md$|CLAUDE\.md$|scripts/(land\.sh|tests/la
 
 cd "$WT"
 M=$(git rev-parse refs/heads/master)
+# The restack command: <old base> is the parent of the branch's own commits. Backup tags hold every master
+# a sync replaced, so a branch cut before a sync counts its own commits by them.
+restack_command() {
+    local own
+    own=$(git rev-list --count HEAD --not "$M" --tags='backup/main-pre-sync-*')
+    echo "git rebase --autosquash --onto master $(git rev-parse "HEAD~$own")"
+}
 git merge-base --is-ancestor "$M" HEAD || {
-    echo "master moved: restack the branch onto it (git rebase --autosquash --onto master <old base>, where <old base> is the branch's own parent), never merge master into it"
+    echo "master moved: restack the branch onto it ($(restack_command)), never merge master into it"
     exit 1
 }
-[ -z "$(git rev-list --merges "$M"..HEAD)" ] || { echo "the branch holds a merge commit: restack it linear (git rebase --autosquash --onto master <old base>) before landing"; exit 1; }
+[ -z "$(git rev-list --merges "$M"..HEAD)" ] || { echo "the branch holds a merge commit: restack it linear ($(restack_command)) before landing"; exit 1; }
 
 check_code_message() {
     local subject
@@ -78,5 +85,13 @@ RAW=(diff --raw --no-abbrev --no-relative --ignore-submodules=none)
 git -C "$MAIN" merge --ff-only "$TIP"
 echo "master is now $TIP"
 if [ "$PUSH" = --push ]; then
-    git -C "$MAIN" push origin master
+    # Push only where the fork has an upstream and origin is not it (the skill's Landing, step 7).
+    upstream_url=$(git -C "$MAIN" remote get-url upstream 2>/dev/null || true)
+    origin_url=$(git -C "$MAIN" remote get-url origin 2>/dev/null || true)
+    if [ -z "$upstream_url" ] || [ -z "$origin_url" ] || [ "$upstream_url" = "$origin_url" ]; then
+        echo "not pushed: this checkout needs an upstream remote and an origin that is not it"
+    elif ! git -C "$MAIN" push origin master; then
+        echo "push rejected: a sync in another clone replaced origin's master. Tag $TIP as backup/main-pre-sync-<stamp> before anything moves it, and land its commits again once this clone takes the new master"
+        exit 1
+    fi
 fi

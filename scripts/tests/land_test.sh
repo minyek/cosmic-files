@@ -4,8 +4,11 @@
 set -uo pipefail
 
 LAND=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/land.sh
-ROOT=$(mktemp -d -p "${LAND_TEST_TMP:-/mnt/logs/temp/scratch}" land-test.XXXXXX)
+ROOT=$(mktemp -d -p "${LAND_TEST_TMP:-${TMPDIR:?set TMPDIR or LAND_TEST_TMP}}" land-test.XXXXXX) || exit 1
+[[ $ROOT == */land-test.* ]] || exit 1
 trap 'rm -rf "$ROOT"' EXIT
+# The scratch repositories use no user or system git configuration (a signing key, hooks, a template).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 FAILED=0
 
@@ -22,10 +25,10 @@ new_repo() {
     printf 'docs: record\n' >"$dir/records-msg"
 }
 
-# land <name>: run land.sh for that repo; the output is in $OUT, the status in $STATUS.
+# land <name> [--push]: run land.sh for that repo; the output is in $OUT, the status in $STATUS.
 land() {
     local dir=$ROOT/$1
-    OUT=$(bash "$LAND" "$dir/main" "$dir/wt" "$dir/code-msg" "$dir/records-msg" 2>&1)
+    OUT=$(bash "$LAND" "$dir/main" "$dir/wt" "$dir/code-msg" "$dir/records-msg" ${2:+"$2"} 2>&1)
     STATUS=$?
 }
 
@@ -51,6 +54,8 @@ git -C "$ROOT/merged/wt" switch -q feat
 echo two >"$ROOT/merged/wt/src/a.rs"
 git -C "$ROOT/merged/wt" commit -q -am "wip"
 git -C "$ROOT/merged/wt" merge -q --no-ff -m "merge side" side
+echo four >"$ROOT/merged/wt/src/a.rs"
+git -C "$ROOT/merged/wt" commit -q -am "after the merge"
 before=$(git -C "$ROOT/merged/main" rev-parse master)
 land merged
 [ "$STATUS" -ne 0 ] && grep -qi 'merge commit' <<<"$OUT" && [ "$(git -C "$ROOT/merged/main" rev-parse master)" = "$before" ]
@@ -85,5 +90,25 @@ git -C "$ROOT/records/wt" commit -q -m "wip"
 land records
 [ "$STATUS" -eq 0 ] && ! grep -q unclassified <<<"$OUT" && [ "$(git -C "$ROOT/records/main" rev-parse 'master^{tree}')" = "$(git -C "$ROOT/records/wt" rev-parse 'HEAD^{tree}')" ]
 check "the test script lands as a fork-only path" $? "status=$STATUS: $OUT"
+
+# 6. After a sync the branch descends from the old master, which a backup tag keeps: the restack
+#    command names that old master as the base, not the branch's first parent by guesswork.
+new_repo synced
+echo two >"$ROOT/synced/wt/src/a.rs"
+git -C "$ROOT/synced/wt" commit -q -am "wip"
+old_master=$(git -C "$ROOT/synced/main" rev-parse master)
+git -C "$ROOT/synced/main" tag backup/main-pre-sync-20260101T000000Z "$old_master"
+git -C "$ROOT/synced/main" commit -q --amend -m "base, rebased by a sync"
+land synced
+[ "$STATUS" -ne 0 ] && grep -qF "git rebase --autosquash --onto master $old_master" <<<"$OUT"
+check "the restack command names the old master a backup tag keeps" $? "status=$STATUS: $OUT"
+
+# 7. --push with no upstream remote lands locally and says it pushed nothing.
+new_repo nopush
+echo two >"$ROOT/nopush/wt/src/a.rs"
+git -C "$ROOT/nopush/wt" commit -q -am "wip"
+land nopush --push
+[ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT"
+check "--push without an upstream remote pushes nothing" $? "status=$STATUS: $OUT"
 
 exit "$FAILED"

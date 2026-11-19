@@ -14,7 +14,9 @@ Keep it that way, so any fix can be cherry-picked onto upstream with only the co
   boy-scout clean-up stays in the issue's commit only when it is inside the code the issue touches
   and changes no behaviour; any other clean-up is its own issue. Work in progress never reaches
   `master`: no change is added and then changed or removed by a later commit of the same branch.
-- **Landing replaces `/sqmerge` step 7.** Run `/sqmerge` steps 1–6, land with
+- **Landing replaces `/sqmerge` steps 2, 6 and 7.** Run step 1; in place of steps 2 and 6 restack the
+  worktree branch onto `master` by the skill's Landing on fork `main`, never merging `master` into it;
+  run steps 3–5; land with
   `bash scripts/land.sh <main-checkout> <worktree> <code-message-file> <records-message-file> --push`
   in place of step 7, then run steps 8–11. It makes a code commit with only the branch's
   upstream-shaped paths (`src/`, `tests/`, `i18n/`, `res/`, `Cargo.toml`, `Cargo.lock`, `TESTING.md`)
@@ -48,11 +50,13 @@ This fork follows the `fork-upstream-pr-workflow` skill, with the two difference
 - **Remotes.** `upstream` is `pop-os/cosmic-files`, `origin` is the fork.
 - **Fork-only paths** are the `FORK_ONLY` list in `scripts/land.sh`: `docs/`, `packaging/`,
   `README.md`, `CLAUDE.md`, the acceptance scripts and examples, `scripts/land.sh` and
-  `scripts/tests/land_test.sh`. They land as records commits, never in an issue's code commit.
+  `scripts/tests/land_test.sh`. They land as records commits, never in an issue's code commit. One
+  exception stands in the history: the commit "Add the fork's acceptance tooling" is fork-only yet also
+  changes `src/lib.rs`, an upstream-shaped path.
 - **Gate.** The test matrix in [local build and install](docs/guides/local-build-and-install.md)
   (`cargo test --locked --offline --verbose` with `--no-default-features`, the default features and
-  `--all-features`), run detached through `arm-run`; and `bash scripts/tests/land_test.sh` when
-  `scripts/land.sh` changes.
+  `--all-features`), run detached through `arm-run`; and `bash scripts/tests/land_test.sh` (also through
+  `arm-run`) when `scripts/land.sh` changes.
 - **Differences from the skill.** (1) A code commit keeps its `Fork-issue: minyek/cosmic-files#N`
   trailer and the `minyek/cosmic-files#N` form in its body: upstream takes no pull request from this
   fork, so the skill's no-fork-reference rule has no reader, and the trailer is the link from a
@@ -74,9 +78,9 @@ issue, then the fork's records commits. There is no merge commit from upstream.
   needed one for a shared test helper) goes on top as its own commit, as `/sync-upstream` step 5 says.
 - A sync can need `cargo fetch --locked` first: upstream moves dependency revisions, and the gate runs
   `--offline`.
-- A landing after a sync restacks its worktree branch onto the new `master` (the skill's Landing on
-  fork `main`); `scripts/land.sh` refuses a branch that holds a merge commit or does not descend from
-  `master`.
+- A landing restacks its worktree branch onto `master` whenever `master` moved, after a sync too
+  (the skill's Landing on fork `main`); `scripts/land.sh` refuses a branch that holds a merge commit or
+  does not descend from `master`, and prints the restack command.
 
 # Install after merge
 
