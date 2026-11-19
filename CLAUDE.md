@@ -32,14 +32,47 @@ Keep it that way, so any fix can be cherry-picked onto upstream with only the co
   `Assisted-by: Claude`. No session URL and no `Signed-off-by`: that is the user's own sign-off,
   added only if they ever submit. Code and comments carry nothing fork-specific (no issue numbers,
   no `minyek` URL, no `docs/` path).
-- **Syncing upstream.** Keep `/sync-upstream`'s merge. An adaptation the sync forces on fork code
-  that does not conflict lands right after the merge, one commit per adapted issue, by the rules
-  above. A conflict resolution has to live in the merge commit; the affected issue's commit then
-  needs re-resolving whenever it is cherry-picked for a pull request.
 - **Fork tooling is exempt.** Packaging, acceptance scripts and their examples, and docs have no
   issue; they land as records commits.
 - **To prepare a pull request** for an issue: cherry-pick the commits named by its `Depends on:`
   line (recursively) and then its own commit onto the upstream of the day.
+
+# Fork workflow
+
+This fork follows the `fork-upstream-pr-workflow` skill, with the two differences named below.
+
+- **Pull requests.** Upstream (`pop-os/cosmic-files`) does not accept this fork's changes: no pull
+  requests, issues or comments on its behalf (decided 2026-11-03). Fixes land only on `master`.
+  There is no stack index and no PR drafts to keep; `docs/reports/` holds the historical PR
+  descriptions. The branch-per-issue rule above is the skill's one-commit-per-issue shape.
+- **Remotes.** `upstream` is `pop-os/cosmic-files`, `origin` is the fork.
+- **Fork-only paths** are the `FORK_ONLY` list in `scripts/land.sh`: `docs/`, `packaging/`,
+  `README.md`, `CLAUDE.md`, the acceptance scripts and examples, `scripts/land.sh` and
+  `scripts/tests/land_test.sh`. They land as records commits, never in an issue's code commit.
+- **Gate.** The test matrix in [local build and install](docs/guides/local-build-and-install.md)
+  (`cargo test --locked --offline --verbose` with `--no-default-features`, the default features and
+  `--all-features`), run detached through `arm-run`; and `bash scripts/tests/land_test.sh` when
+  `scripts/land.sh` changes.
+- **Differences from the skill.** (1) A code commit keeps its `Fork-issue: minyek/cosmic-files#N`
+  trailer and the `minyek/cosmic-files#N` form in its body: upstream takes no pull request from this
+  fork, so the skill's no-fork-reference rule has no reader, and the trailer is the link from a
+  commit to its issue (decision D11 of the history rebuild). (2) `Cargo.lock` is an upstream-shaped
+  path: a fix that adds or changes a dependency carries its lock change so that its commit builds
+  when cherry-picked. Everything else in the skill applies.
+
+## Syncing from upstream
+
+`/sync-upstream` rebases `master` onto `upstream/master`, which keeps it upstream plus one commit per
+issue, then the fork's records commits. There is no merge commit from upstream.
+
+- A conflict is resolved in the issue's own commit during the rebase, so each issue's commit still
+  applies to upstream on its own.
+- An adaptation the gate needs is committed as `fixup! <subject of the adapted issue's commit>` and
+  folded in the sync worktree before the push by `git rebase --autosquash upstream/master`;
+  `git diff <tip before the fold> HEAD` must print nothing, so the gated tree is the one pushed.
+- A landing after a sync restacks its worktree branch onto the new `master` (the skill's Landing on
+  fork `main`); `scripts/land.sh` refuses a branch that holds a merge commit or does not descend from
+  `master`.
 
 # Install after merge
 
