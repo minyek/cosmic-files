@@ -67,9 +67,13 @@ issue, then the fork's records commits. There is no merge commit from upstream.
 
 - A conflict is resolved in the issue's own commit during the rebase, so each issue's commit still
   applies to upstream on its own.
-- An adaptation the gate needs is committed as `fixup! <subject of the adapted issue's commit>` and
-  folded in the sync worktree before the push by `git rebase --autosquash upstream/master`;
-  `git diff <tip before the fold> HEAD` must print nothing, so the gated tree is the one pushed.
+- An adaptation the gate needs that belongs to one issue's commit is committed as
+  `fixup! <subject of that commit>` and folded in the sync worktree before the push by
+  `git rebase --autosquash upstream/master`; `git diff <tip before the fold> HEAD` must print nothing,
+  so the gated tree is the one pushed. One that spans several issues' commits (the 2026-11-19 sync
+  needed one for a shared test helper) goes on top as its own commit, as `/sync-upstream` step 5 says.
+- A sync can need `cargo fetch --locked` first: upstream moves dependency revisions, and the gate runs
+  `--offline`.
 - A landing after a sync restacks its worktree branch onto the new `master` (the skill's Landing on
   fork `main`); `scripts/land.sh` refuses a branch that holds a merge commit or does not descend from
   `master`.
