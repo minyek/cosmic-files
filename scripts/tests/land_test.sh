@@ -6,6 +6,7 @@ set -uo pipefail
 LAND=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/land.sh
 ROOT=$(mktemp -d -p "${LAND_TEST_TMP:-${TMPDIR:?set TMPDIR or LAND_TEST_TMP}}" land-test.XXXXXX) || exit 1
 [[ $ROOT == */land-test.* ]] || exit 1
+chmod g+rwx "$ROOT"
 trap 'rm -rf "$ROOT"' EXIT
 # The scratch repositories use no user or system git configuration (a signing key, hooks, a template).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1

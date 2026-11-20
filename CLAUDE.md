@@ -11,7 +11,8 @@ to upstream's `App::init` the dialog tests of six issue commits ("Run at most on
 with one queued follow-up", "Resolve navigation and typed locations off the UI thread", "Record recents,
 defaults and picker results off the UI thread, in order", "Update the file watcher off the UI thread",
 "Watch a folder again after its watch failed" and "Show an error when New folder fails in the file
-picker"), so a cherry-pick of any of them takes it too.
+picker"), so a cherry-pick of any of them takes it too, keeping only its hunks for the picked commits'
+tests: applied whole, it conflicts where another of the six owns the test.
 Keep it that way, so any fix can be cherry-picked onto upstream with only the commits it depends on.
 
 - **One issue per branch.** A fix found along the way gets its own issue (related fixes may share
@@ -45,11 +46,12 @@ Keep it that way, so any fix can be cherry-picked onto upstream with only the co
   issue; they land as records commits.
 - **To prepare a pull request** for an issue: cherry-pick the commits named by its `Depends on:`
   line (recursively) and then its own commit onto the upstream of the day; for one of the six
-  issues named under History shape, the dialog test adaptation too.
+  issues named under History shape, the dialog test adaptation too, keeping only its hunks for the
+  picked commits' tests.
 
 # Fork workflow
 
-This fork follows the `fork-upstream-pr-workflow` skill, with the two differences named below.
+This fork follows the `fork-upstream-pr-workflow` skill, with the three differences named below.
 
 - **Pull requests.** Upstream (`pop-os/cosmic-files`) does not accept this fork's changes: no pull
   requests, issues or comments on its behalf (decided 2026-11-03). Fixes land only on `master`.
@@ -70,7 +72,9 @@ This fork follows the `fork-upstream-pr-workflow` skill, with the two difference
   fork, so the skill's no-fork-reference rule has no reader, and the trailer is the link from a
   commit to its issue (decision D11 of the history rebuild). (2) `Cargo.lock` is an upstream-shaped
   path: a fix that adds or changes a dependency carries its lock change so that its commit builds
-  when cherry-picked. Everything else in the skill applies.
+  when cherry-picked. (3) An issue's code commit subject is the plain imperative summary that Code
+  commit messages gives, without the skill's `type(scope):` prefix, as decision D11 of the history
+  rebuild set it for every issue commit. Everything else in the skill applies.
 
 ## Syncing from upstream
 
