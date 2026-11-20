@@ -6,8 +6,12 @@
 # History shape: upstream plus one commit per issue
 
 `master` is upstream plus one self-contained commit per fork issue, then the fork's own records. One
-commit, `test(dialog): build the test dialogs under block_in_place`, adapts six issues' tests to upstream's
-`App::init` and carries no issue of its own; a cherry-pick of any of those six issues takes it too.
+commit, `test(dialog): build the test dialogs under block_in_place`, carries no issue's fix: it adapts
+to upstream's `App::init` the dialog tests of six issue commits ("Run at most one rescan per folder,
+with one queued follow-up", "Resolve navigation and typed locations off the UI thread", "Record recents,
+defaults and picker results off the UI thread, in order", "Update the file watcher off the UI thread",
+"Watch a folder again after its watch failed" and "Show an error when New folder fails in the file
+picker"), so a cherry-pick of any of them takes it too.
 Keep it that way, so any fix can be cherry-picked onto upstream with only the commits it depends on.
 
 - **One issue per branch.** A fix found along the way gets its own issue (related fixes may share
@@ -70,14 +74,14 @@ This fork follows the `fork-upstream-pr-workflow` skill, with the two difference
 
 `/sync-upstream` rebases `master` onto `upstream/master`, which keeps it upstream plus one commit per
 issue, then the fork's records commits. There is no merge commit from upstream.
+Sync only with `/sync-upstream`: GitHub's "Sync fork" button merges upstream into `master` or discards the fork's commits, and `gh repo sync --force` resets `master` to upstream.
 
 - A conflict is resolved in the issue's own commit during the rebase, so each issue's commit still
   applies to upstream on its own.
 - An adaptation the gate needs that belongs to one issue's commit is committed as
   `fixup! <subject of that commit>` and folded in the sync worktree before the push by
   `git rebase --autosquash upstream/master`; `git diff <tip before the fold> HEAD` must print nothing,
-  so the gated tree is the one pushed. One that spans several issues' commits (the 2026-11-19 sync
-  needed one for a shared test helper) goes on top as its own commit, as `/sync-upstream` step 5 says.
+  so the gated tree is the one pushed. One that spans several issues' commits goes on top as its own commit, as `/sync-upstream` step 5 says.
 - A sync can need `cargo fetch --locked` first: upstream moves dependency revisions, and the gate runs
   `--offline`.
 - A landing restacks its worktree branch onto `master` whenever `master` moved, after a sync too

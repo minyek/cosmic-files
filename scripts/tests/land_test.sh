@@ -21,7 +21,7 @@ new_repo() {
     git -C "$dir/main" add src/a.rs
     git -C "$dir/main" commit -q -m "base"
     git -C "$dir/main" worktree add -q -b feat "$dir/wt"
-    printf 'fix: change a\n\nFork-issue: minyek/cosmic-files#1\n' >"$dir/code-msg"
+    printf 'fix: change a\n\nFork-issue: minyek/cosmic-files#1\nAssisted-by: Claude\n' >"$dir/code-msg"
     printf 'docs: record\n' >"$dir/records-msg"
 }
 
@@ -92,7 +92,7 @@ land records
 check "the test script lands as a fork-only path" $? "status=$STATUS: $OUT"
 
 # 6. After a sync the branch descends from the old master, which a backup tag keeps: the restack
-#    command names that old master as the base, not the branch's first parent by guesswork.
+#    command names that old master as the base.
 new_repo synced
 echo two >"$ROOT/synced/wt/src/a.rs"
 git -C "$ROOT/synced/wt" commit -q -am "wip"
@@ -103,12 +103,92 @@ land synced
 [ "$STATUS" -ne 0 ] && grep -qF "git rebase --autosquash --onto master $old_master" <<<"$OUT"
 check "the restack command names the old master a backup tag keeps" $? "status=$STATUS: $OUT"
 
-# 7. --push with no upstream remote lands locally and says it pushed nothing.
-new_repo nopush
-echo two >"$ROOT/nopush/wt/src/a.rs"
-git -C "$ROOT/nopush/wt" commit -q -am "wip"
-land nopush --push
-[ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT"
+# add_remote <name> <remote>: a bare repository holding the main checkout's master, added as <remote>.
+add_remote() {
+    local dir=$ROOT/$1
+    git init -q --bare "$dir/$2.git"
+    git -C "$dir/main" push -q "$dir/$2.git" master
+    git -C "$dir/main" remote add "$2" "$dir/$2.git"
+}
+
+# push_case <name>: a linear branch ready to land with --push; the remotes are added by the caller.
+push_case() {
+    echo two >"$ROOT/$1/wt/src/a.rs"
+    git -C "$ROOT/$1/wt" commit -q -am "wip"
+}
+
+# 7. --push with an origin but no upstream remote lands locally and leaves origin's master as it was.
+new_repo noupstream
+add_remote noupstream origin
+push_case noupstream
+before=$(git -C "$ROOT/noupstream/origin.git" rev-parse master)
+land noupstream --push
+[ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT" && [ "$(git -C "$ROOT/noupstream/origin.git" rev-parse master)" = "$before" ]
 check "--push without an upstream remote pushes nothing" $? "status=$STATUS: $OUT"
+
+# 8. --push with an upstream but no origin remote lands locally and pushes nothing.
+new_repo noorigin
+add_remote noorigin upstream
+push_case noorigin
+before=$(git -C "$ROOT/noorigin/upstream.git" rev-parse master)
+land noorigin --push
+[ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT" && [ "$(git -C "$ROOT/noorigin/upstream.git" rev-parse master)" = "$before" ]
+check "--push without an origin remote pushes nothing" $? "status=$STATUS: $OUT"
+
+# 9. --push where origin is the upstream itself never pushes to it.
+new_repo same
+add_remote same origin
+git -C "$ROOT/same/main" remote add upstream "$ROOT/same/origin.git"
+push_case same
+before=$(git -C "$ROOT/same/origin.git" rev-parse master)
+land same --push
+[ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT" && [ "$(git -C "$ROOT/same/origin.git" rev-parse master)" = "$before" ]
+check "--push where origin is the upstream pushes nothing" $? "status=$STATUS: $OUT"
+
+# 10. --push with a separate upstream pushes master to origin, and only there.
+new_repo pushed
+add_remote pushed origin
+add_remote pushed upstream
+push_case pushed
+before=$(git -C "$ROOT/pushed/upstream.git" rev-parse master)
+land pushed --push
+[ "$STATUS" -eq 0 ] && [ "$(git -C "$ROOT/pushed/origin.git" rev-parse master)" = "$(git -C "$ROOT/pushed/main" rev-parse master)" ] && [ "$(git -C "$ROOT/pushed/upstream.git" rev-parse master)" = "$before" ]
+check "--push with a separate upstream pushes master to origin only" $? "status=$STATUS: $OUT"
+
+# 11. A branch that merged a side branch of its own is told to restack onto master from its own base,
+#     the master commit it was cut from.
+new_repo sidemerge
+echo two >"$ROOT/sidemerge/main/src/a.rs"
+git -C "$ROOT/sidemerge/main" commit -q -am "master moves before the branch is cut"
+git -C "$ROOT/sidemerge/wt" reset -q --hard master
+base=$(git -C "$ROOT/sidemerge/main" rev-parse master)
+git -C "$ROOT/sidemerge/wt" switch -q -c side
+echo side >"$ROOT/sidemerge/wt/src/b.rs"
+git -C "$ROOT/sidemerge/wt" add src/b.rs
+git -C "$ROOT/sidemerge/wt" commit -q -m "side"
+git -C "$ROOT/sidemerge/wt" switch -q feat
+echo three >"$ROOT/sidemerge/wt/src/a.rs"
+git -C "$ROOT/sidemerge/wt" commit -q -am "wip"
+git -C "$ROOT/sidemerge/wt" merge -q --no-ff -m "merge side" side
+land sidemerge
+[ "$STATUS" -ne 0 ] && grep -qF "git rebase --autosquash --onto master $base" <<<"$OUT"
+check "a merged side branch is restacked from the branch's own base" $? "status=$STATUS: $OUT"
+
+# 12. A code message with a Signed-off-by line, or without the Assisted-by trailer, is refused.
+new_repo signed
+push_case signed
+printf 'fix: change a\n\nFork-issue: minyek/cosmic-files#1\nAssisted-by: Claude\nSigned-off-by: t <t@example.invalid>\n' >"$ROOT/signed/code-msg"
+before=$(git -C "$ROOT/signed/main" rev-parse master)
+land signed
+[ "$STATUS" -ne 0 ] && grep -q 'Signed-off-by' <<<"$OUT" && [ "$(git -C "$ROOT/signed/main" rev-parse master)" = "$before" ]
+check "a code message with Signed-off-by is refused" $? "status=$STATUS: $OUT"
+
+new_repo unassisted
+push_case unassisted
+printf 'fix: change a\n\nFork-issue: minyek/cosmic-files#1\n' >"$ROOT/unassisted/code-msg"
+before=$(git -C "$ROOT/unassisted/main" rev-parse master)
+land unassisted
+[ "$STATUS" -ne 0 ] && grep -q 'Assisted-by' <<<"$OUT" && [ "$(git -C "$ROOT/unassisted/main" rev-parse master)" = "$before" ]
+check "a code message without Assisted-by is refused" $? "status=$STATUS: $OUT"
 
 exit "$FAILED"
