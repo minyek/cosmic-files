@@ -5,7 +5,9 @@
 
 # History shape: upstream plus one commit per issue
 
-`master` is upstream plus one self-contained commit per fork issue, then the fork's own records.
+`master` is upstream plus one self-contained commit per fork issue, then the fork's own records. One
+commit, `test(dialog): build the test dialogs under block_in_place`, adapts six issues' tests to upstream's
+`App::init` and carries no issue of its own; a cherry-pick of any of those six issues takes it too.
 Keep it that way, so any fix can be cherry-picked onto upstream with only the commits it depends on.
 
 - **One issue per branch.** A fix found along the way gets its own issue (related fixes may share

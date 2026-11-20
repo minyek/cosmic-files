@@ -16,7 +16,9 @@
 - History shape (since 2026-11, the history rebuild): `master` is upstream, then one
   self-contained commit per issue, then the fork's records commits (tooling, packaging, evidence,
   docs). 44 of the 50 code commits hold one issue; six hold two to four issues that could not
-  be separated without inventing code, and name each of them in a `Fork-issue` trailer.
+  be separated without inventing code, and name each of them in a `Fork-issue` trailer. One further commit, `test(dialog): build the test dialogs under
+  block_in_place`, is the 2026-11-19 sync's adaptation of six issues' tests; it is its own commit on top
+  because folding it into six commits conflicted. Reword it with those six `Fork-issue` trailers at the next sync.
   The pre-rebuild history is kept on the tag `backup/master-pre-history-2026-11`. `CLAUDE.md` holds
   the rule that keeps this shape and the landing script.
 - Cherry-pick recipe, should a pull request ever be possible: read the issue's commit's
