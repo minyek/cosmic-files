@@ -100,7 +100,7 @@ if [ "$PUSH" = --push ]; then
     if [ -z "$upstream_url" ] || [ -z "$origin_url" ] || [ "$upstream_url" = "$origin_url" ]; then
         echo "not pushed: this checkout needs an upstream remote and an origin that is not it"
     elif ! git -C "$MAIN" push origin master; then
-        echo "push failed (git's reason is above). If git rejected it as non-fast-forward, a sync in another clone replaced origin's master: tag $TIP as backup/main-pre-sync-<stamp> before anything moves it, and land its commits again once this clone takes the new master"
+        echo "push failed (git's reason is above). If git rejected it (non-fast-forward or fetch first), another clone moved origin's master, by a landing or a sync: tag $TIP as backup/main-pre-sync-<stamp> before anything moves it, and land its commits again once this clone takes origin's master"
         exit 1
     fi
 fi

@@ -30,9 +30,10 @@ Keep it that way, so any fix can be cherry-picked onto upstream with only the co
   `CLAUDE.md`, and the fork's acceptance scripts and examples); a branch with only one kind lands as
   one commit. A path on neither list (upstream's `build.rs`, applet, `debian/`, `.github/` and so
   on) stops the landing until it is added to one. It
-  keeps step 7's guards: `master` must be an ancestor of the branch, the landed changes must equal
-  the branch's, the main checkout must be on `master`, which moves only by `merge --ff-only`, and
-  the push is plain.
+  keeps step 7's guards: `master` must be an ancestor of the branch and the branch must hold no
+  merge commit, the landed changes must equal the branch's, the main checkout must be on `master`,
+  which moves only by `merge --ff-only`, and `--push` pushes plainly to `origin`, only where an
+  `upstream` remote exists and `origin` is not it.
 - **Code commit messages.** Subject: an imperative summary with no `(#N)`, since upstream uses that
   for its own pull requests. Body: the issue's problem, cause and fix, the tests that pin it, and
   `Depends on:` the issues of the commits it needs. Write fork issues as `minyek/cosmic-files#N`,
@@ -43,7 +44,8 @@ Keep it that way, so any fix can be cherry-picked onto upstream with only the co
 - **Fork tooling is exempt.** Packaging, acceptance scripts and their examples, and docs have no
   issue; they land as records commits.
 - **To prepare a pull request** for an issue: cherry-pick the commits named by its `Depends on:`
-  line (recursively) and then its own commit onto the upstream of the day.
+  line (recursively) and then its own commit onto the upstream of the day; for one of the six
+  issues named under History shape, the dialog test adaptation too.
 
 # Fork workflow
 
@@ -74,14 +76,16 @@ This fork follows the `fork-upstream-pr-workflow` skill, with the two difference
 
 `/sync-upstream` rebases `master` onto `upstream/master`, which keeps it upstream plus one commit per
 issue, then the fork's records commits. There is no merge commit from upstream.
-Sync only with `/sync-upstream`: GitHub's "Sync fork" button merges upstream into `master` or discards the fork's commits, and `gh repo sync --force` resets `master` to upstream.
+Sync only with `/sync-upstream`: GitHub's "Sync fork" button merges upstream into `master` or
+discards the fork's commits, and `gh repo sync --force` resets `master` to upstream.
 
 - A conflict is resolved in the issue's own commit during the rebase, so each issue's commit still
   applies to upstream on its own.
 - An adaptation the gate needs that belongs to one issue's commit is committed as
   `fixup! <subject of that commit>` and folded in the sync worktree before the push by
   `git rebase --autosquash upstream/master`; `git diff <tip before the fold> HEAD` must print nothing,
-  so the gated tree is the one pushed. One that spans several issues' commits goes on top as its own commit, as `/sync-upstream` step 5 says.
+  so the gated tree is the one pushed. One that spans several issues' commits goes on top as its own
+  commit, as `/sync-upstream` step 5 says.
 - A sync can need `cargo fetch --locked` first: upstream moves dependency revisions, and the gate runs
   `--offline`.
 - A landing restacks its worktree branch onto `master` whenever `master` moved, after a sync too

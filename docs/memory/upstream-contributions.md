@@ -24,7 +24,8 @@
   the rule that keeps this shape and the landing script.
 - Cherry-pick recipe, should a pull request ever be possible: read the issue's commit's
   `Depends on:` line, cherry-pick those commits (and theirs, recursively) in `master` order onto
-  the upstream of the day, then the issue's own commit. Every commit was checked to apply this way
-  onto `e03001c` and to build (`docs/archive/history-rebuild/`).
+  the upstream of the day, then the issue's own commit, then, for one of the six issues
+  `CLAUDE.md` names, the dialog test adaptation. Every commit before that adaptation was checked
+  to apply this way onto `e03001c` and to build (`docs/archive/history-rebuild/`).
 - Older notes that plan upstream pull requests (the untracked `BRANCH-LAYOUT.md` and the PR
   descriptions under `docs/reports/`) are historical.

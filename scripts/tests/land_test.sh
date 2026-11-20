@@ -111,8 +111,9 @@ add_remote() {
     git -C "$dir/main" remote add "$2" "$dir/$2.git"
 }
 
-# push_case <name>: a linear branch ready to land with --push; the remotes are added by the caller.
-push_case() {
+# commit_change <name>: one commit on the branch, which leaves it linear and ready to land; a push case
+# adds its remotes first.
+commit_change() {
     echo two >"$ROOT/$1/wt/src/a.rs"
     git -C "$ROOT/$1/wt" commit -q -am "wip"
 }
@@ -120,7 +121,7 @@ push_case() {
 # 7. --push with an origin but no upstream remote lands locally and leaves origin's master as it was.
 new_repo noupstream
 add_remote noupstream origin
-push_case noupstream
+commit_change noupstream
 before=$(git -C "$ROOT/noupstream/origin.git" rev-parse master)
 land noupstream --push
 [ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT" && [ "$(git -C "$ROOT/noupstream/origin.git" rev-parse master)" = "$before" ]
@@ -129,7 +130,7 @@ check "--push without an upstream remote pushes nothing" $? "status=$STATUS: $OU
 # 8. --push with an upstream but no origin remote lands locally and pushes nothing.
 new_repo noorigin
 add_remote noorigin upstream
-push_case noorigin
+commit_change noorigin
 before=$(git -C "$ROOT/noorigin/upstream.git" rev-parse master)
 land noorigin --push
 [ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT" && [ "$(git -C "$ROOT/noorigin/upstream.git" rev-parse master)" = "$before" ]
@@ -139,7 +140,7 @@ check "--push without an origin remote pushes nothing" $? "status=$STATUS: $OUT"
 new_repo same
 add_remote same origin
 git -C "$ROOT/same/main" remote add upstream "$ROOT/same/origin.git"
-push_case same
+commit_change same
 before=$(git -C "$ROOT/same/origin.git" rev-parse master)
 land same --push
 [ "$STATUS" -eq 0 ] && grep -q 'not pushed' <<<"$OUT" && [ "$(git -C "$ROOT/same/origin.git" rev-parse master)" = "$before" ]
@@ -149,7 +150,7 @@ check "--push where origin is the upstream pushes nothing" $? "status=$STATUS: $
 new_repo pushed
 add_remote pushed origin
 add_remote pushed upstream
-push_case pushed
+commit_change pushed
 before=$(git -C "$ROOT/pushed/upstream.git" rev-parse master)
 land pushed --push
 [ "$STATUS" -eq 0 ] && [ "$(git -C "$ROOT/pushed/origin.git" rev-parse master)" = "$(git -C "$ROOT/pushed/main" rev-parse master)" ] && [ "$(git -C "$ROOT/pushed/upstream.git" rev-parse master)" = "$before" ]
@@ -176,7 +177,7 @@ check "a merged side branch is restacked from the branch's own base" $? "status=
 
 # 12. A code message with a Signed-off-by line, or without the Assisted-by trailer, is refused.
 new_repo signed
-push_case signed
+commit_change signed
 printf 'fix: change a\n\nFork-issue: minyek/cosmic-files#1\nAssisted-by: Claude\nSigned-off-by: t <t@example.invalid>\n' >"$ROOT/signed/code-msg"
 before=$(git -C "$ROOT/signed/main" rev-parse master)
 land signed
@@ -184,11 +185,25 @@ land signed
 check "a code message with Signed-off-by is refused" $? "status=$STATUS: $OUT"
 
 new_repo unassisted
-push_case unassisted
+commit_change unassisted
 printf 'fix: change a\n\nFork-issue: minyek/cosmic-files#1\n' >"$ROOT/unassisted/code-msg"
 before=$(git -C "$ROOT/unassisted/main" rev-parse master)
 land unassisted
 [ "$STATUS" -ne 0 ] && grep -q 'Assisted-by' <<<"$OUT" && [ "$(git -C "$ROOT/unassisted/main" rev-parse master)" = "$before" ]
 check "a code message without Assisted-by is refused" $? "status=$STATUS: $OUT"
+
+# 13. A rejected push exits non-zero and says so: master has landed locally, and origin's master,
+#     which another clone moved, stays where that clone left it.
+new_repo rejected
+add_remote rejected origin
+add_remote rejected upstream
+other=$(git -C "$ROOT/rejected/origin.git" commit-tree -p master -m "landed in another clone" 'master^{tree}')
+git -C "$ROOT/rejected/origin.git" update-ref refs/heads/master "$other"
+commit_change rejected
+land rejected --push
+[ "$STATUS" -ne 0 ] && grep -q 'push failed' <<<"$OUT" \
+    && [ "$(git -C "$ROOT/rejected/origin.git" rev-parse master)" = "$other" ] \
+    && [ "$(git -C "$ROOT/rejected/main" rev-parse 'master^{tree}')" = "$(git -C "$ROOT/rejected/wt" rev-parse 'HEAD^{tree}')" ]
+check "a rejected push exits non-zero and leaves origin's master to the other clone" $? "status=$STATUS: $OUT"
 
 exit "$FAILED"
